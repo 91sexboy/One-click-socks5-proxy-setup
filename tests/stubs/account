@@ -1,0 +1,106 @@
+#!/bin/sh
+# tests/stubs/account - stateful stub for the account tools, dispatching on $0.
+# Installed under the names: id useradd userdel adduser deluser
+#                            groupadd groupdel addgroup delgroup getent
+#
+# It maintains real "databases" so account existence genuinely changes when a
+# create or delete succeeds. This is what lets the H4 tests prove that removal
+# was verified rather than merely attempted.
+#
+# Markers in $S5_TEST_ROOT:
+#   stub_userdel_fail   -> userdel/deluser exit non-zero and change nothing
+#   stub_groupdel_fail  -> groupdel/delgroup exit non-zero and change nothing
+#   stub_no_userdel     -> pretend the tool exits 0 but the user survives
+#   stub_no_deluser     -> deluser is absent (simulated by exiting 127)
+
+T="$S5_TEST_ROOT/transcript"
+PW="$S5_TEST_ROOT/stub_passwd"
+GR="$S5_TEST_ROOT/stub_group"
+me=${0##*/}
+
+printf '%s' "$me" >>"$T"
+for a in "$@"; do printf ' %s' "$a" >>"$T"; done
+printf '\n' >>"$T"
+
+: >>"$PW"
+: >>"$GR"
+
+has_user() { grep -qx -- "$1" "$PW" 2>/dev/null; }
+has_group() { grep -qx -- "$1" "$GR" 2>/dev/null; }
+# The identity the script created is uid/gid 900. When stub_foreign_identity
+# is present the same NAMES answer to different numbers, which is exactly the
+# name-reuse scenario the fingerprint check exists to catch.
+getent_uid() {
+    if [ -f "$S5_TEST_ROOT/stub_foreign_identity" ]; then printf '999'; else printf '900'; fi
+}
+getent_gid() {
+    if [ -f "$S5_TEST_ROOT/stub_foreign_identity" ]; then printf '998'; else printf '900'; fi
+}
+add_line() { printf '%s\n' "$2" >>"$1"; }
+del_line() {
+    grep -vx -- "$2" "$1" >"$1.new" 2>/dev/null || : >"$1.new"
+    mv "$1.new" "$1"
+}
+
+# last non-option argument = the account/group name
+name=""
+for a in "$@"; do
+    case "$a" in
+    -*) ;;
+    *) name=$a ;;
+    esac
+done
+
+case "$me" in
+id)
+    if has_user "$name"; then exit 0; fi
+    exit 1
+    ;;
+getent)
+    if [ -f "$S5_TEST_ROOT/stub_getent_error" ]; then exit 3; fi
+    if [ "${1:-}" = "group" ]; then
+        if has_group "${2:-}"; then
+            printf '%s:x:%s:\n' "${2:-}" "$(getent_gid "${2:-}")"
+            exit 0
+        fi
+        exit 2
+    fi
+    if [ "${1:-}" = "passwd" ]; then
+        if has_user "${2:-}"; then
+            printf '%s:x:%s:%s::/nonexistent:/usr/sbin/nologin\n' \
+                "$2" "$(getent_uid "$2")" "$(getent_gid "${2:-}")"
+            exit 0
+        fi
+        exit 2
+    fi
+    # `getent hosts <name>` and every other database: behave as if resolution
+    # works, so the DNS-failure diagnosis path is not triggered accidentally.
+    if [ -f "$S5_TEST_ROOT/stub_dns_fail" ]; then
+        exit 2
+    fi
+    printf '203.0.113.1 %s\n' "${2:-}"
+    exit 0
+    ;;
+useradd | adduser)
+    if [ -f "$S5_TEST_ROOT/stub_no_deluser" ] && [ "$me" = "adduser" ]; then exit 127; fi
+    add_line "$PW" "$name"
+    exit 0
+    ;;
+groupadd | addgroup)
+    add_line "$GR" "$name"
+    exit 0
+    ;;
+userdel | deluser)
+    if [ "$me" = "deluser" ] && [ -f "$S5_TEST_ROOT/stub_no_deluser" ]; then exit 127; fi
+    if [ -f "$S5_TEST_ROOT/stub_userdel_fail" ]; then exit 1; fi
+    if [ -f "$S5_TEST_ROOT/stub_no_userdel" ]; then exit 0; fi
+    del_line "$PW" "$name"
+    exit 0
+    ;;
+groupdel | delgroup)
+    if [ -f "$S5_TEST_ROOT/stub_groupdel_fail" ]; then exit 1; fi
+    del_line "$GR" "$name"
+    exit 0
+    ;;
+esac
+exit 0

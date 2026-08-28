@@ -1,0 +1,15 @@
+#!/sbin/openrc-run
+
+name="socks5-manager"
+description="socks5-manager SOCKS5 proxy (3proxy 0.9.9.0)"
+command="@PREFIX@/3proxy"
+command_args="@SYSCONFDIR@/3proxy.cfg"
+command_user="socks5proxy:socks5proxy"
+supervisor="supervise-daemon"
+output_logger="logger -t socks5-manager -p daemon.info"
+error_logger="logger -t socks5-manager -p daemon.err"
+
+depend() {
+	after firewall
+	use dns logger
+}

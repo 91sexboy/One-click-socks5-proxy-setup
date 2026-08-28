@@ -1,0 +1,28 @@
+[Unit]
+Description=socks5-manager SOCKS5 proxy (3proxy 0.9.9.0)
+Documentation=https://github.com/3proxy/3proxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=socks5proxy
+Group=socks5proxy
+ExecStart=@PREFIX@/3proxy @SYSCONFDIR@/3proxy.cfg
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,51 @@
+#!/bin/sh
+# tests/stubs/git - test stub for git. Records argv to the transcript and
+# simulates clone / checkout / rev-parse. Never touches the network.
+#
+# Behaviour is driven by marker files inside $S5_TEST_ROOT:
+#   stub_clone_fail       -> clone exits non-zero
+#   stub_checkout_fail    -> checkout exits non-zero
+#   stub_head             -> contents are returned by rev-parse HEAD
+
+T="$S5_TEST_ROOT/transcript"
+printf 'git' >>"$T"
+for a in "$@"; do printf ' %s' "$a" >>"$T"; done
+printf '\n' >>"$T"
+
+if [ "${1:-}" = "clone" ]; then
+    if [ -f "$S5_TEST_ROOT/stub_clone_fail" ]; then
+        printf 'fatal: stub clone failure\n' >&2
+        exit 128
+    fi
+    last=""
+    for a in "$@"; do last=$a; done
+    mkdir -p "$last/bin" "$last/src" "$last/scripts" "$last/man"
+    printf '# stub Makefile.Linux\n' >"$last/Makefile.Linux"
+    printf '# stub Makefile.inc\n' >"$last/Makefile.inc"
+    # An upstream post-install script that must never be executed by socks5.sh.
+    printf '#!/bin/sh\ntouch "%s/POSTINSTALL_RAN"\n' "$S5_TEST_ROOT" >"$last/scripts/postinstall.sh"
+    chmod 0755 "$last/scripts/postinstall.sh"
+    printf '#!/bin/sh\ntouch "%s/SERVICEINSTALL_RAN"\n' "$S5_TEST_ROOT" >"$last/scripts/3proxy.service.in"
+    exit 0
+fi
+
+if [ "${1:-}" = "-C" ]; then
+    shift 2
+    case "${1:-}" in
+    checkout)
+        if [ -f "$S5_TEST_ROOT/stub_checkout_fail" ]; then
+            printf 'error: stub checkout failure\n' >&2
+            exit 1
+        fi
+        exit 0
+        ;;
+    rev-parse)
+        if [ -f "$S5_TEST_ROOT/stub_head" ]; then
+            cat "$S5_TEST_ROOT/stub_head"
+        fi
+        exit 0
+        ;;
+    esac
+fi
+
+exit 0

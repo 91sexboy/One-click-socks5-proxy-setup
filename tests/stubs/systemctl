@@ -1,0 +1,79 @@
+#!/bin/sh
+# tests/stubs/systemctl - test stub. Records argv plus whether the config file
+# already existed at call time, so tests can prove the service is never started
+# before the configuration is in place.
+#
+# Markers in $S5_TEST_ROOT: stub_start_fail, stub_enable_fail
+# State: svc_active - empty when stopped, holding the listening port when up.
+
+T="$S5_TEST_ROOT/transcript"
+cfg=no
+if [ -n "${S5_STUB_CFG:-}" ] && [ -f "$S5_STUB_CFG" ]; then cfg=yes; fi
+unit=no
+if [ -n "${S5_STUB_UNIT:-}" ] && [ -f "$S5_STUB_UNIT" ]; then unit=yes; fi
+
+printf 'systemctl' >>"$T"
+for a in "$@"; do printf ' %s' "$a" >>"$T"; done
+printf ' cfgpresent=%s unitpresent=%s\n' "$cfg" "$unit" >>"$T"
+
+# Record WHICH port the service came up on, read out of the configuration that
+# was just written. svc_active used to be an empty marker, so the port probe
+# built on it could only answer "is the service up?" and never "is THIS port in
+# use?" -- every port on the machine read as occupied while the service ran, and
+# a caller that probed the wrong port passed unnoticed.
+svc_up() {
+    _p=''
+    if [ -n "${S5_STUB_CFG:-}" ] && [ -f "$S5_STUB_CFG" ]; then
+        _p=$(sed -n 's/^socks -4 -u2 -p\([0-9][0-9]*\) .*/\1/p' "$S5_STUB_CFG" | head -n 1)
+    fi
+    printf '%s\n' "$_p" >"$S5_TEST_ROOT/svc_active"
+}
+
+case "${1:-}" in
+daemon-reload)
+    if [ -f "$S5_TEST_ROOT/stub_daemon_reload_fail" ]; then exit 1; fi
+    ;;
+start)
+    if [ -f "$S5_TEST_ROOT/stub_start_fail" ]; then
+        printf 'Job for the unit failed.\n' >&2
+        exit 1
+    fi
+    svc_up
+    ;;
+restart)
+    if [ -f "$S5_TEST_ROOT/stub_start_fail" ]; then exit 1; fi
+    svc_up
+    ;;
+stop)
+    if [ -f "$S5_TEST_ROOT/stub_stop_fail" ]; then exit 1; fi
+    if [ -f "$S5_TEST_ROOT/stub_stop_leaves_active" ]; then exit 0; fi
+    # Model a manager that refuses operations for a unit it does not know:
+    # on this project's reference host both stop and disable of a never-loaded
+    # unit name exit 1. Without this, a unit that was flagged but never
+    # written could be "stopped" and "disabled" into a clean teardown.
+    if [ "$unit" != yes ]; then exit 1; fi
+    rm -f "$S5_TEST_ROOT/svc_active"
+    ;;
+disable)
+    if [ -f "$S5_TEST_ROOT/stub_disable_fail" ]; then exit 1; fi
+    # Same manager-realism as stop above: a unit the manager never loaded
+    # cannot be disabled either.
+    if [ "$unit" != yes ]; then exit 1; fi
+    ;;
+enable)
+    if [ -f "$S5_TEST_ROOT/stub_enable_fail" ]; then exit 1; fi
+    ;;
+is-active)
+    if [ -f "$S5_TEST_ROOT/stub_active_query_fail" ]; then exit 2; fi
+    if [ -f "$S5_TEST_ROOT/svc_active" ]; then
+        printf 'active\n'
+        exit 0
+    fi
+    printf 'inactive\n'
+    exit 3
+    ;;
+is-enabled)
+    printf 'enabled\n'
+    ;;
+esac
+exit 0

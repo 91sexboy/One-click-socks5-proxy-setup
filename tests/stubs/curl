@@ -1,0 +1,53 @@
+#!/bin/sh
+# tests/stubs/curl - test stub. Records argv, captures stdin, and simulates a
+# SOCKS5 proxy check: it succeeds only when the credentials supplied on stdin
+# match $S5_TEST_ROOT/expected_creds.
+#
+# Because the real script must pass credentials on stdin only, the transcript
+# (argv) can be asserted to be secret-free.
+#
+# Markers in $S5_TEST_ROOT: stub_curl_all_fail, stub_no_egress
+
+T="$S5_TEST_ROOT/transcript"
+printf 'curl' >>"$T"
+for a in "$@"; do printf ' %s' "$a" >>"$T"; done
+printf '\n' >>"$T"
+
+if [ "${1:-}" = "--config" ] && [ "${2:-}" = "-" ]; then
+    IN="$S5_TEST_ROOT/curl_stdin"
+    cat >>"$IN"
+    if [ -f "$S5_TEST_ROOT/stub_curl_all_fail" ]; then
+        printf 'curl: (97) proxy handshake failed\n' >&2
+        exit 97
+    fi
+    # An arbitrary NON-97 failure on the proxy path. s5_selftest_bad treats only
+    # curl 97 (CURLE_PROXY) as proof that the *proxy* refused the credential;
+    # anything else is "inconclusive, refusing to continue". Without this marker
+    # the stub could emit only 0 or 97 here, so that discrimination -- the entire
+    # reason the bad-credential probe means anything -- had no input that reached
+    # it and could be deleted with the suite still green.
+    if [ -f "$S5_TEST_ROOT/stub_curl_code" ]; then
+        _cc=$(cat "$S5_TEST_ROOT/stub_curl_code")
+        printf 'curl: (%s) simulated non-proxy failure\n' "$_cc" >&2
+        exit "$_cc"
+    fi
+    # Simulates a broken proxy that accepts ANY credentials, so the
+    # bad-credential rejection check can be proven to actually fail.
+    if [ -f "$S5_TEST_ROOT/stub_curl_accept_all" ]; then
+        exit 0
+    fi
+    got=$(grep '^proxy-user' "$IN" | tail -n 1 | sed -e 's/^[^=]*=[[:space:]]*//' -e 's/^"//' -e 's/"$//')
+    want=$(cat "$S5_TEST_ROOT/expected_creds" 2>/dev/null || printf '')
+    if [ -n "$want" ] && [ "$got" = "$want" ]; then
+        exit 0
+    fi
+    printf 'curl: (97) proxy authentication failed\n' >&2
+    exit 97
+fi
+
+# direct-egress probe (no proxy)
+if [ -f "$S5_TEST_ROOT/stub_no_egress" ]; then
+    printf 'curl: (7) failed to connect\n' >&2
+    exit 7
+fi
+exit 0

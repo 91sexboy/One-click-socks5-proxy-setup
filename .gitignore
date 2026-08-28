@@ -1,0 +1,7 @@
+# Byte-code left behind by the `python3 -m py_compile` syntax checks in
+# tests/unit/test_docs.sh. Regenerated on every run; never part of a release.
+__pycache__/
+*.pyc
+
+# Every test scratch tree is created with `mktemp -d` (tests/lib/assert.sh,
+# tests/protocol/start_engine.sh), so nothing else generated belongs here.

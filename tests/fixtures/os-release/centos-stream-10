@@ -1,0 +1,6 @@
+NAME="CentOS Stream"
+VERSION="10 (Coughlan)"
+ID="centos"
+ID_LIKE="rhel fedora"
+VERSION_ID="10"
+PRETTY_NAME="CentOS Stream 10 (Coughlan)"

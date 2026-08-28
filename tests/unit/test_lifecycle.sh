@@ -1,0 +1,264 @@
+#!/bin/sh
+# tests/unit/test_lifecycle.sh - Task 7: status, show, restart, uninstall,
+# the no-argument menu, precise firewall rollback and idempotency.
+
+S5T_NAME=test_lifecycle
+. "${S5_REPO_ROOT}/tests/lib/assert.sh"
+. "${S5_REPO_ROOT}/tests/lib/stub.sh"
+. "${S5_REPO_ROOT}/tests/lib/env.sh"
+
+s5env_setup
+s5env_load
+
+USER_OK=lifeuser
+PASS_OK='LifePass_1234~x'
+printf '%s:%s' "$USER_OK" "$PASS_OK" >"$S5_TEST_ROOT/expected_creds"
+S5_LOGSINK="$S5_TEST_ROOT/logsink"
+export S5_LOGSINK
+: >"$S5_LOGSINK"
+
+# Plant resources this script must never touch.
+mkdir -p "$S5_TEST_ROOT/usr/bin" "$S5_TEST_ROOT/etc/3proxy"
+printf 'foreign system 3proxy\n' >"$S5_TEST_ROOT/usr/bin/3proxy"
+printf 'foreign 3proxy config with its own users\n' >"$S5_TEST_ROOT/etc/3proxy/3proxy.cfg"
+printf 'unrelated config\n' >"$S5_TEST_ROOT/etc/unrelated.conf"
+
+# An already-active iptables firewall with a pre-existing foreign rule.
+t_stub_script iptables 'case "${1:-}" in
+-S) echo '-A INPUT -p tcp --dport 22 -j ACCEPT'; exit 0 ;;
+-C) [ -f "$S5_TEST_ROOT/iptables_rule" ] && exit 0 || exit 1 ;;
+-I) : >"$S5_TEST_ROOT/iptables_rule"; exit 0 ;;
+-D) rm -f "$S5_TEST_ROOT/iptables_rule"; exit 0 ;;
+*) exit 0 ;;
+esac'
+
+# ==========================================================================
+# Install once so the lifecycle commands have something to act on
+# ==========================================================================
+mkdir -p "$S5_UNITDIR"
+s5env_answers 'y
+41080
+lifeuser
+LifePass_1234~x
+LifePass_1234~x
+y
+y
+'
+t_run s5_cmd_install <"$S5_TEST_ROOT/answers"
+assert_eq "install for lifecycle tests succeeded" 0 "$T_STATUS"
+assert_file_exists "config present" "$S5_CFG"
+s5_state_load
+assert_eq "install records no firewall ownership" "" "$(s5_state_get firewall)"
+# No firewall functionality exists at all (owner decision), so an install run
+# must not invoke any firewall backend -- not even a read-only detection query.
+t_assert_cmd_never_called "install runs no firewall command at all" \
+    iptables ufw firewall-cmd nft
+assert_not_contains "install log sink has no password" "$PASS_OK" "$(cat "$S5_LOGSINK")"
+
+# ==========================================================================
+# status
+# ==========================================================================
+s5env_reset_transcript
+t_run s5_cmd_status
+assert_eq "status exits 0 when installed" 0 "$T_STATUS"
+assert_contains "status shows the port" "41080" "$T_OUT"
+assert_contains "status shows the username" "lifeuser" "$T_OUT"
+assert_contains "status shows the engine version" "0.9.9.0" "$T_OUT"
+assert_contains "status shows the pinned commit" "da99424e" "$T_OUT"
+assert_contains "status shows the install origin" "source-build" "$T_OUT"
+assert_contains "status reports the service running" "running" "$T_OUT"
+assert_not_contains "status never prints the password" "$PASS_OK" "$T_OUT"
+
+# Service-manager query errors are not proof that the proxy is inactive. Status
+# must distinguish an unobservable active state instead of saying "not running".
+s5env_reset_transcript
+: >"$S5_TEST_ROOT/stub_active_query_fail"
+t_run s5_cmd_status
+assert_eq "status remains usable when service state cannot be queried" 0 "$T_STATUS"
+assert_contains "status names the unverified service state" "not verified" "$T_OUT"
+assert_not_contains "status does not call an unverified service inactive" "not running" "$T_OUT"
+rm -f "$S5_TEST_ROOT/stub_active_query_fail"
+
+# Install and restart diagnostics must preserve the same tri-state distinction as
+# status/teardown: a manager query failure is not an observed inactive service.
+: >"$S5_TEST_ROOT/stub_active_query_fail"
+t_run s5_cmd_restart
+assert_ne "restart fails when active state cannot be queried" 0 "$T_STATUS"
+assert_contains "restart names an unverified active state" "could not verify" "$T_OUT"
+assert_not_contains "restart does not mislabel a query error inactive" "not active" "$T_OUT"
+rm -f "$S5_TEST_ROOT/stub_active_query_fail"
+
+# OpenRC's stopped-service status is exit 3 (not exit 1). Treat that documented
+# inactive result as definitely stopped; otherwise every OpenRC teardown retains
+# all resources as if the service state were unobservable.
+t_stub rc-service 3
+S5_INIT=openrc
+t_run s5_service_active
+assert_eq "OpenRC exit 3 means definitely inactive" 1 "$T_STATUS"
+S5_INIT=systemd
+
+# v1 records no firewall ownership at all, and `status` therefore never queries a
+# backend. The old recorded-ownership tri-state cases are gone with the keys.
+s5env_reset_transcript
+t_run s5_cmd_status
+assert_eq "status remains usable with no firewall recorded" 0 "$T_STATUS"
+assert_contains "status reports the firewall untouched" \
+    "not modified by this script" "$T_OUT"
+assert_not_contains "status does not call an unverified rule absent" "NO LONGER PRESENT" "$T_OUT"
+t_assert_cmd_never_called "status queries no firewall backend" iptables ufw firewall-cmd
+# The stub installed at the top of this file stays in place for the rest of the
+# run. It is deliberately still a *mutating* stub even though nothing should call
+# it: the "never called" assertions below can only observe a command that is
+# stubbed, so removing it would make them pass vacuously.
+
+# ==========================================================================
+# show : root only, full credentials, terminal only
+# ==========================================================================
+# `show` is allowed to reveal the credential only on a real terminal. The unit
+# harness captures stdout through a pipe, so redirected output must refuse rather
+# than persist a plaintext password in a file or CI log.
+s5env_reset_transcript
+: >"$S5_LOGSINK"
+S5_ASSUME_ROOT=1
+t_run s5_cmd_show
+assert_ne "show refuses when stdout is redirected" 0 "$T_STATUS"
+assert_not_contains "redirected show output contains no password" "$PASS_OK" "$T_OUT"
+assert_contains "redirected show explains the terminal requirement" \
+    "terminal" "$T_OUT"
+assert_not_contains "redirected show log diagnostic contains no password" "$PASS_OK" "$(cat "$S5_LOGSINK")"
+
+S5_ASSUME_ROOT=0
+t_run s5_cmd_show
+assert_ne "show refuses for non-root" 0 "$T_STATUS"
+assert_not_contains "non-root show leaks no password" "$PASS_OK" "$T_OUT"
+S5_ASSUME_ROOT=1
+
+# ==========================================================================
+# restart
+# ==========================================================================
+s5env_reset_transcript
+t_run s5_cmd_restart
+assert_eq "restart exits 0" 0 "$T_STATUS"
+t_assert_called "restart uses the service manager" 'systemctl restart'
+t_assert_never_called "restart does not reinstall the unit" 'systemctl enable'
+t_assert_never_called "restart does not rebuild" 'make -f'
+assert_not_contains "restart never prints the password" "$PASS_OK" "$T_OUT"
+
+# there is no reload and no reconfigure subcommand in v1
+t_run env -u S5_LIB_ONLY sh "$S5_SRC" reload
+assert_eq "reload is an unknown subcommand" 64 "$T_STATUS"
+t_run env -u S5_LIB_ONLY sh "$S5_SRC" reconfigure
+assert_eq "reconfigure is an unknown subcommand" 64 "$T_STATUS"
+
+# ==========================================================================
+# no-argument menu
+# ==========================================================================
+s5env_reset_transcript
+s5env_answers '1
+'
+t_run s5_cmd_auto <"$S5_TEST_ROOT/answers"
+assert_eq "menu choice 1 runs status" 0 "$T_STATUS"
+assert_contains "menu showed the options" "restart" "$T_OUT"
+assert_contains "menu ran status" "41080" "$T_OUT"
+
+s5env_answers '5
+'
+t_run s5_cmd_auto <"$S5_TEST_ROOT/answers"
+assert_eq "menu quit exits 0" 0 "$T_STATUS"
+
+s5env_answers '99
+'
+t_run s5_cmd_auto <"$S5_TEST_ROOT/answers"
+assert_ne "invalid menu choice is rejected" 0 "$T_STATUS"
+
+# ==========================================================================
+# uninstall : removes only what this script created
+# ==========================================================================
+s5env_reset_transcript
+: >"$S5_LOGSINK"
+s5_state_load
+recorded_bin=$S5_BIN
+s5env_answers 'y
+'
+t_run s5_cmd_uninstall <"$S5_TEST_ROOT/answers"
+assert_eq "uninstall exits 0" 0 "$T_STATUS"
+
+# ours is gone
+assert_file_absent "config removed" "$S5_CFG"
+assert_file_absent "credentials removed" "$S5_USERSCFG"
+assert_file_absent "config dir removed" "$S5_SYSCONFDIR"
+assert_file_absent "binary removed" "$recorded_bin"
+assert_file_absent "unit removed" "$S5_UNIT"
+assert_file_absent "state removed" "$S5_STATE"
+
+# the service was stopped and disabled
+t_assert_called "service stopped" 'systemctl stop'
+t_assert_called "service disabled" 'systemctl disable'
+
+# the account we created is removed
+t_assert_called "service account removed" 'userdel'
+if s5_account_exists; then t_bad "account must be verifiably gone"; else t_ok; fi
+
+# v1 created no firewall rule, so uninstall must not touch the firewall at all --
+# in particular it must never delete a rule the administrator owns.
+t_assert_never_called "uninstall deletes no iptables rule" 'iptables -D'
+t_assert_never_called "uninstall deletes no ufw rule" 'ufw delete'
+t_assert_never_called "uninstall removes no firewalld port" 'remove-port'
+t_assert_never_called "never flushes iptables" 'iptables -F'
+t_assert_never_called "never flushes a chain" '[-]X'
+t_assert_never_called "never touches the sshd port rule" 'dport 22'
+
+# nothing foreign was touched
+assert_file_exists "foreign system 3proxy survives" "$S5_TEST_ROOT/usr/bin/3proxy"
+assert_file_exists "foreign 3proxy config survives" "$S5_TEST_ROOT/etc/3proxy/3proxy.cfg"
+assert_file_exists "unrelated config survives" "$S5_TEST_ROOT/etc/unrelated.conf"
+assert_dir_exists "systemd unit directory itself survives" "$S5_UNITDIR"
+
+# no system package is ever removed
+t_assert_never_called "no apt removal" 'apt-get remove'
+t_assert_never_called "no apt purge" 'apt-get purge'
+t_assert_never_called "no apk del" 'apk del'
+t_assert_never_called "no dnf remove" 'dnf remove'
+assert_contains "uninstall states that packages were kept" "packages" "$T_OUT"
+assert_not_contains "uninstall never prints the password" "$PASS_OK" "$T_OUT"
+assert_not_contains "uninstall log sink has no password" "$PASS_OK" "$(cat "$S5_LOGSINK")"
+
+# ==========================================================================
+# uninstall is idempotent
+# ==========================================================================
+s5env_reset_transcript
+s5env_answers 'y
+'
+t_run s5_cmd_uninstall <"$S5_TEST_ROOT/answers"
+assert_eq "second uninstall exits 0" 0 "$T_STATUS"
+assert_contains "second uninstall says there is nothing to remove" "nothing" "$T_OUT"
+t_assert_never_called "second uninstall removes no account" 'userdel'
+t_assert_never_called "second uninstall touches no firewall" 'iptables -D'
+
+# status and show after uninstall
+t_run s5_cmd_status
+assert_ne "status reports not installed" 0 "$T_STATUS"
+assert_contains "status says not installed" "not installed" "$T_OUT"
+t_run s5_cmd_show
+assert_ne "show reports not installed" 0 "$T_STATUS"
+t_run s5_cmd_restart
+assert_ne "restart reports not installed" 0 "$T_STATUS"
+
+# a fresh install works after uninstall (no leftover collision)
+s5env_reset_transcript
+rm -f "$S5_TEST_ROOT/svc_active"
+s5env_answers 'y
+41081
+seconduser
+SecondPass_123~x
+SecondPass_123~x
+y
+n
+'
+printf '%s:%s' seconduser 'SecondPass_123~x' >"$S5_TEST_ROOT/expected_creds"
+t_run s5_cmd_install <"$S5_TEST_ROOT/answers"
+assert_eq "reinstall after uninstall succeeds" 0 "$T_STATUS"
+assert_eq "reinstall wrote fresh credentials" "seconduser:CL:SecondPass_123~x" "$(cat "$S5_USERSCFG")"
+assert_eq "still exactly one credential line" 1 "$(grep -c '' "$S5_USERSCFG")"
+
+t_summary
