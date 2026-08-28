@@ -121,56 +121,71 @@ s5_guard_environment() {
     if [ "$_s5_tm" = "1" ]; then
         if [ -z "${S5_TEST_ROOT:-}" ]; then
             printf '%s: S5_TEST_MODE=1 requires S5_TEST_ROOT to be set\n' "$0" >&2
+            printf '%s: S5_TEST_MODE=1 需要设置 S5_TEST_ROOT\n' "$0" >&2
             exit 2
         fi
         case "$S5_TEST_ROOT" in
         /*) ;;
         *)
             printf '%s: S5_TEST_ROOT must be an absolute path\n' "$0" >&2
+            printf '%s: S5_TEST_ROOT 必须是绝对路径\n' "$0" >&2
             exit 2
             ;;
         esac
         if ! s5_test_root_ok "$S5_TEST_ROOT"; then
             printf '%s: refusing to run: unsafe S5_TEST_ROOT path: %s\n' "$0" \
                 "$S5_TEST_ROOT" >&2
+            printf '%s: 拒绝运行：S5_TEST_ROOT 路径不安全：%s\n' "$0" \
+                "$S5_TEST_ROOT" >&2
             exit 2
         fi
         if [ -L "$S5_TEST_ROOT" ]; then
             printf '%s: refusing to run: S5_TEST_ROOT must not be a symbolic link: %s\n' \
                 "$0" "$S5_TEST_ROOT" >&2
+            printf '%s: 拒绝运行：S5_TEST_ROOT 不能是符号链接：%s\n' \
+                "$0" "$S5_TEST_ROOT" >&2
             exit 2
         fi
         if [ ! -d "$S5_TEST_ROOT" ]; then
             printf '%s: S5_TEST_ROOT is not a directory: %s\n' "$0" "$S5_TEST_ROOT" >&2
+            printf '%s: S5_TEST_ROOT 不是目录：%s\n' "$0" "$S5_TEST_ROOT" >&2
             exit 2
         fi
         if [ ! -f "$S5_TEST_ROOT/.s5-test-root" ]; then
             printf '%s: refusing to run: sentinel .s5-test-root not found in %s\n' \
                 "$0" "$S5_TEST_ROOT" >&2
+            printf '%s: 拒绝运行：在 %s 中找不到哨兵文件 .s5-test-root\n' \
+                "$0" "$S5_TEST_ROOT" >&2
             exit 2
         fi
         if [ -n "${S5_PREFIX:-}" ] && ! s5_test_path_ok "$S5_PREFIX"; then
             printf '%s: refusing to run: S5_PREFIX escapes S5_TEST_ROOT\n' "$0" >&2
+            printf '%s: 拒绝运行：S5_PREFIX 超出了 S5_TEST_ROOT 范围\n' "$0" >&2
             exit 2
         fi
         if [ -n "${S5_SYSCONFDIR:-}" ] && ! s5_test_path_ok "$S5_SYSCONFDIR"; then
             printf '%s: refusing to run: S5_SYSCONFDIR escapes S5_TEST_ROOT\n' "$0" >&2
+            printf '%s: 拒绝运行：S5_SYSCONFDIR 超出了 S5_TEST_ROOT 范围\n' "$0" >&2
             exit 2
         fi
         if [ -n "${S5_STATEDIR:-}" ] && ! s5_test_path_ok "$S5_STATEDIR"; then
             printf '%s: refusing to run: S5_STATEDIR escapes S5_TEST_ROOT\n' "$0" >&2
+            printf '%s: 拒绝运行：S5_STATEDIR 超出了 S5_TEST_ROOT 范围\n' "$0" >&2
             exit 2
         fi
         if [ -n "${S5_UNITDIR:-}" ] && ! s5_test_path_ok "$S5_UNITDIR"; then
             printf '%s: refusing to run: S5_UNITDIR escapes S5_TEST_ROOT\n' "$0" >&2
+            printf '%s: 拒绝运行：S5_UNITDIR 超出了 S5_TEST_ROOT 范围\n' "$0" >&2
             exit 2
         fi
         if [ -n "${S5_INITDIR:-}" ] && ! s5_test_path_ok "$S5_INITDIR"; then
             printf '%s: refusing to run: S5_INITDIR escapes S5_TEST_ROOT\n' "$0" >&2
+            printf '%s: 拒绝运行：S5_INITDIR 超出了 S5_TEST_ROOT 范围\n' "$0" >&2
             exit 2
         fi
         if [ -n "${S5_BUILD_DIR:-}" ] && ! s5_test_path_ok "$S5_BUILD_DIR"; then
             printf '%s: refusing to run: S5_BUILD_DIR escapes S5_TEST_ROOT\n' "$0" >&2
+            printf '%s: 拒绝运行：S5_BUILD_DIR 超出了 S5_TEST_ROOT 范围\n' "$0" >&2
             exit 2
         fi
         # S5_LOGSINK and S5_TMPMODE_LOG are files this script WRITES. Unlike
@@ -180,10 +195,12 @@ s5_guard_environment() {
         # observations anywhere on the host filesystem.
         if [ -n "${S5_LOGSINK:-}" ] && ! s5_test_path_ok "$S5_LOGSINK"; then
             printf '%s: refusing to run: S5_LOGSINK escapes S5_TEST_ROOT\n' "$0" >&2
+            printf '%s: 拒绝运行：S5_LOGSINK 超出了 S5_TEST_ROOT 范围\n' "$0" >&2
             exit 2
         fi
         if [ -n "${S5_TMPMODE_LOG:-}" ] && ! s5_test_path_ok "$S5_TMPMODE_LOG"; then
             printf '%s: refusing to run: S5_TMPMODE_LOG escapes S5_TEST_ROOT\n' "$0" >&2
+            printf '%s: 拒绝运行：S5_TMPMODE_LOG 超出了 S5_TEST_ROOT 范围\n' "$0" >&2
             exit 2
         fi
         return 0
@@ -191,6 +208,8 @@ s5_guard_environment() {
 
     if [ "$_s5_tm" != "0" ]; then
         printf '%s: refusing to run: test-mode variable S5_TEST_MODE has invalid value "%s"\n' \
+            "$0" "$_s5_tm" >&2
+        printf '%s: 拒绝运行：测试模式变量 S5_TEST_MODE 的值无效："%s"\n' \
             "$0" "$_s5_tm" >&2
         exit 2
     fi
@@ -214,7 +233,10 @@ s5_guard_environment() {
     if [ -n "$s5_found_overrides" ]; then
         printf '%s: refusing to run: test-mode variable(s) set outside test mode:%s\n' \
             "$0" "$s5_found_overrides" >&2
+        printf '%s: 拒绝运行：在测试模式之外设置了测试模式变量：%s\n' \
+            "$0" "$s5_found_overrides" >&2
         printf '%s: unset them, or set S5_TEST_MODE=1 with a valid S5_TEST_ROOT\n' "$0" >&2
+        printf '%s: 请清除它们，或设置 S5_TEST_MODE=1 并提供有效的 S5_TEST_ROOT\n' "$0" >&2
         exit 2
     fi
     return 0
@@ -248,10 +270,12 @@ s5_cmd_hint() {
 # The summary's closing line: how to see the credentials again.
 s5_redisplay_hint() {
     if [ -n "$S5_SELF" ]; then
-        s5_say "  Re-display these details later with: $S5_SELF show"
+        _rdh=$(s5_msg show.redisplay_with "$S5_SELF")
+        s5_say "$_rdh"
+        _rdh='' 
     else
-        s5_say "  Re-display these details later by re-running the install"
-        s5_say "  command and choosing 'show' from the menu."
+        s5_say_msg show.redisplay_rerun
+        s5_say_msg show.redisplay_rerun2
     fi
 }
 
@@ -347,6 +371,2857 @@ s5_say() {
     printf '%s\n' "$1"
 }
 
+# ---------------------------------------------------------------------------
+# Bilingual message catalog (Round 16).
+#
+# Every script-owned operator message is being migrated into one keyed
+# catalog. Each key is declared by a `# @s5-msg <key> <arity>` marker and owns
+# BOTH locales in the same case arm, so an untranslated key cannot be added
+# without the parity test seeing it. The catalog has hard rules:
+#
+#   * keys are literals at every call site -- no computed keys;
+#   * each key has a declared arity, enforced at runtime;
+#   * formats are catalog-owned literals; caller data is %s DATA only, so no
+#     argument can ever become a printf format or be executed;
+#   * arity/locale failures print the key and the counts ONLY -- never
+#     argument values, which may carry secrets;
+#   * _s5_i18n_* scratch names are reserved for this section.
+#
+# MIGRATION STAGING: the language selector is NOT wired into s5_main yet.
+# Normal runtime stays coherently English (the default below); tests set
+# S5_LANG directly. The selector is activated only after every message
+# domain has been migrated and the untranslated-literal audit reaches zero.
+# ---------------------------------------------------------------------------
+unset S5_LANG _s5_i18n_text
+S5_LANG=en
+
+s5_msg() {
+    # Messages are complete lines; the trailing newline belongs to the
+    # channel adapters so prompts can stay on one line.
+    _s5_i18n_key=$1
+    shift
+    case "$_s5_i18n_key" in
+    # @s5-msg i18n.sample_plain 1
+    i18n.sample_plain)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error i18n.sample_plain 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '示例纯文本 %s' "${1}" ;;
+        en) printf 'sample plain text %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg i18n.sample_prompt 1
+    i18n.sample_prompt)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error i18n.sample_prompt 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '请输入 [%s]:' "${1}" ;;
+        en) printf 'please enter [%s]:' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg i18n.sample_note 1
+    i18n.sample_note)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error i18n.sample_note 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '已选择端口 %s' "${1}" ;;
+        en) printf 'selected port %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg i18n.sample_error 1
+    i18n.sample_error)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error i18n.sample_error 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '示例错误 %s' "${1}" ;;
+        en) printf 'sample error %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg detect.unsupported 2
+    detect.unsupported)
+        [ "$#" -eq 2 ] || { s5_msg_contract_error detect.unsupported 2 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '不支持此系统：ID=%s VERSION_ID=%s（支持：Ubuntu 22.04+、Debian 12+、Alpine 3.20+、CentOS Stream 9+）' "${1}" "${2}" ;;
+        en) printf 'unsupported system: ID=%s VERSION_ID=%s (supported: Ubuntu 22.04+, Debian 12+, Alpine 3.20+, CentOS Stream 9+)' "${1}" "${2}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg detect.likely_compatible 2
+    detect.likely_compatible)
+        [ "$#" -eq 2 ] || { s5_msg_contract_error detect.likely_compatible 2 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf 'ID=%s VERSION_ID=%s 可能与 3proxy 兼容，但本脚本不支持。支持：Ubuntu 22.04+、Debian 12+、Alpine 3.20+、CentOS Stream 9+。' "${1}" "${2}" ;;
+        en) printf 'ID=%s VERSION_ID=%s is likely compatible with 3proxy, but it is not supported by this script. Supported: Ubuntu 22.04+, Debian 12+, Alpine 3.20+, CentOS Stream 9+.' "${1}" "${2}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg input.port_range 2
+    input.port_range)
+        [ "$#" -eq 2 ] || { s5_msg_contract_error input.port_range 2 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '端口必须在 %s 到 %s 之间' "${1}" "${2}" ;;
+        en) printf 'port must be between %s and %s' "${1}" "${2}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg input.port_leading_zero 0
+    input.port_leading_zero)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error input.port_leading_zero 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '端口不能有前导零' ;;
+        en) printf 'port must not have leading zeros' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg install.warning_cleartext 0
+    install.warning_cleartext)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error install.warning_cleartext 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '  * SOCKS5 用户名/密码认证（RFC 1929）在网络上以明文传输。' ;;
+        en) printf '  * SOCKS5 username/password authentication (RFC 1929) is sent in CLEARTEXT' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg install.warning_cleartext2 0
+    install.warning_cleartext2)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error install.warning_cleartext2 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '    在网络上。SOCKS5 不提供传输加密，也不提供完整性保护。它不是 VPN。' ;;
+        en) printf '    on the wire. SOCKS5 provides NO transport encryption and NO integrity' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg install.warning_cleartext3 0
+    install.warning_cleartext3)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error install.warning_cleartext3 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '' ;;
+        en) printf '    protection. It is NOT a VPN.' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg install.warning_firewall 0
+    install.warning_firewall)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error install.warning_firewall 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '  * 你需要自行负责本地防火墙以及云服务商的安全组规则。' ;;
+        en) printf '  * You are responsible for your own local firewall and for your cloud' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg install.warning_firewall2 0
+    install.warning_firewall2)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error install.warning_firewall2 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '' ;;
+        en) printf "    provider's security group rules." ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg install.warning_anyone 0
+    install.warning_anyone)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error install.warning_anyone 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '  * 任何获得凭据并能访问该端口的人都可以使用此代理，' ;;
+        en) printf '  * ANYONE who learns the credentials and can reach the port can use this' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg install.warning_anyone2 0
+    install.warning_anyone2)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error install.warning_anyone2 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '    其流量将看似来自本服务器。' ;;
+        en) printf '    proxy, and their traffic will appear to originate from this server.' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg install.warning_protocols 0
+    install.warning_protocols)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error install.warning_protocols 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '仅启用带用户名/密码的 SOCKS5 和 CONNECT。不支持 SOCKS4、SOCKS4a、BIND 和 UDP ASSOCIATE。' ;;
+        en) printf 'Only SOCKS5 with username/password and CONNECT is enabled. SOCKS4, SOCKS4a,' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg install.warning_protocols2 0
+    install.warning_protocols2)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error install.warning_protocols2 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '' ;;
+        en) printf 'BIND and UDP ASSOCIATE are not supported.' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg install.warning_header 0
+    install.warning_header)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error install.warning_header 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '=============================== 请仔细阅读 ===============================' ;;
+        en) printf '=============================== PLEASE READ ===============================' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg install.warning_packages_kept 0
+    install.warning_packages_kept)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error install.warning_packages_kept 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '这些软件包在卸载后仍会保留。' ;;
+        en) printf 'These packages are kept after uninstall.' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg install.warning_packages 1
+    install.warning_packages)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error install.warning_packages 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '将安装的软件包：%s' "${1}" ;;
+        en) printf 'Packages to install: %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg install.warning_listens 1
+    install.warning_listens)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error install.warning_listens 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '即将安装一个监听 %s 的 SOCKS5 代理。' "${1}" ;;
+        en) printf 'This installs a SOCKS5 proxy that listens on %s.' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg install.warning_detected 4
+    install.warning_detected)
+        [ "$#" -eq 4 ] || { s5_msg_contract_error install.warning_detected 4 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '检测到的目标系统：%s %s（%s，%s）。' "${1}" "${2}" "${3}" "${4}" ;;
+        en) printf 'Detected target: %s %s (%s, %s).' "${1}" "${2}" "${3}" "${4}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg install.confirm 0
+    install.confirm)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error install.confirm 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '确认开始安装？' ;;
+        en) printf 'Continue with the installation?' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg input.port_prompt 2
+    input.port_prompt)
+        [ "$#" -eq 2 ] || { s5_msg_contract_error input.port_prompt 2 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf 'SOCKS5 端口 [回车 = 随机 %s-%s]：' "${1}" "${2}" ;;
+        en) printf 'SOCKS5 port [Enter = random %s-%s]: ' "${1}" "${2}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg input.port_eof 0
+    input.port_eof)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error input.port_eof 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '读取端口时输入意外结束' ;;
+        en) printf 'unexpected end of input while reading the port' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg input.port_in_use 1
+    input.port_in_use)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error input.port_in_use 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '端口 %s 已被占用' "${1}" ;;
+        en) printf 'port %s is already in use' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg input.port_probe_failed 1
+    input.port_probe_failed)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error input.port_probe_failed 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法确定端口 %s 是否空闲：监听状态探测失败' "${1}" ;;
+        en) printf 'cannot determine whether port %s is free: the listen-state probe failed' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg input.port_too_many 0
+    input.port_too_many)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error input.port_too_many 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无效端口输入次数过多' ;;
+        en) printf 'too many invalid port entries' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg input.username_prompt 0
+    input.username_prompt)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error input.username_prompt 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf 'SOCKS5 用户名 [回车 = 随机]：' ;;
+        en) printf 'SOCKS5 username [Enter = random]: ' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg input.username_eof 0
+    input.username_eof)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error input.username_eof 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '读取用户名时输入意外结束' ;;
+        en) printf 'unexpected end of input while reading the username' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg input.username_gen_failed 0
+    input.username_gen_failed)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error input.username_gen_failed 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法生成随机用户名' ;;
+        en) printf 'could not generate a random username' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg input.username_too_many 0
+    input.username_too_many)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error input.username_too_many 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无效用户名输入次数过多' ;;
+        en) printf 'too many invalid username entries' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg input.password_prompt 1
+    input.password_prompt)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error input.password_prompt 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf 'SOCKS5 密码 [回车 = 生成 %s 位随机字符]：' "${1}" ;;
+        en) printf 'SOCKS5 password [Enter = generate %s random chars]: ' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg input.password_eof 0
+    input.password_eof)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error input.password_eof 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '读取密码时输入意外结束' ;;
+        en) printf 'unexpected end of input while reading the password' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg input.password_gen_failed 0
+    input.password_gen_failed)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error input.password_gen_failed 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法生成随机密码' ;;
+        en) printf 'could not generate a random password' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg input.password_gen_log 1
+    input.password_gen_log)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error input.password_gen_log 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '已生成 %s 位随机密码' "${1}" ;;
+        en) printf 'generated a random %s-character password' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg input.password_too_many 0
+    input.password_too_many)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error input.password_too_many 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '密码输入失败次数过多' ;;
+        en) printf 'too many failed password attempts' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg validation.username_len 3
+    validation.username_len)
+        [ "$#" -eq 3 ] || { s5_msg_contract_error validation.username_len 3 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '用户名长度必须是 %s-%s 个字符（当前 %s）' "${1}" "${2}" "${3}" ;;
+        en) printf 'username must be %s-%s characters long (got %s)' "${1}" "${2}" "${3}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg validation.username_charset 0
+    validation.username_charset)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error validation.username_charset 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '用户名只能包含 A-Z a-z 0-9 下划线和连字符' ;;
+        en) printf 'username may contain only A-Z a-z 0-9 underscore and hyphen' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg validation.password_len 3
+    validation.password_len)
+        [ "$#" -eq 3 ] || { s5_msg_contract_error validation.password_len 3 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '密码长度必须是 %s-%s 个字符（当前 %s）' "${1}" "${2}" "${3}" ;;
+        en) printf 'password must be %s-%s characters long (got %s)' "${1}" "${2}" "${3}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg validation.password_charset 0
+    validation.password_charset)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error validation.password_charset 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '密码只能包含 A-Z a-z 0-9 点、下划线、波浪线和连字符' ;;
+        en) printf 'password may contain only A-Z a-z 0-9 dot underscore tilde and hyphen' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg input.log_random_port 1
+    input.log_random_port)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error input.log_random_port 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '已选择随机端口 %s' "${1}" ;;
+        en) printf 'selected random port %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg usage.line_usage 1
+    usage.line_usage)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error usage.line_usage 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '用法：%s [command]' "${1}" ;;
+        en) printf 'Usage: %s [command]' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg usage.line_commands 0
+    usage.line_commands)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error usage.line_commands 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '命令：' ;;
+        en) printf 'Commands:' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg usage.cmd_install 0
+    usage.cmd_install)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error usage.cmd_install 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '  install      交互式安装 SOCKS5 代理' ;;
+        en) printf '  install      Interactively install the SOCKS5 proxy' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg usage.cmd_status 0
+    usage.cmd_status)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error usage.cmd_status 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '  status       查看服务、端口和版本信息' ;;
+        en) printf '  status       Show service, port and version information' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg usage.cmd_show 0
+    usage.cmd_show)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error usage.cmd_show 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '  show         重新显示完整连接信息（仅限 root）' ;;
+        en) printf '  show         Re-display the full connection details (root only)' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg usage.cmd_restart 0
+    usage.cmd_restart)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error usage.cmd_restart 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '  restart      重启代理服务' ;;
+        en) printf '  restart      Restart the proxy service' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg usage.cmd_uninstall 0
+    usage.cmd_uninstall)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error usage.cmd_uninstall 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '  uninstall    删除本脚本创建的所有内容' ;;
+        en) printf '  uninstall    Remove everything this script created' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg usage.line_no_command 0
+    usage.line_no_command)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error usage.line_no_command 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '不带命令运行：未安装时执行安装，已安装时显示管理菜单。' ;;
+        en) printf 'With no command: installs if absent, otherwise shows a management menu.' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg usage.line_protocol 0
+    usage.line_protocol)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error usage.line_protocol 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '协议支持：仅 SOCKS5，仅带 RFC 1929 用户名/密码认证和 CONNECT。' ;;
+        en) printf 'Protocol support: SOCKS5 only, with RFC 1929 username/password authentication' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg usage.line_protocol2 0
+    usage.line_protocol2)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error usage.line_protocol2 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf 'SOCKS4/4a/4.5、未认证 SOCKS5、BIND 和 UDP ASSOCIATE 均被拒绝。' ;;
+        en) printf 'and CONNECT only. SOCKS4/4a/4.5, unauthenticated SOCKS5, BIND and UDP ASSOCIATE' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg usage.line_protocol3 0
+    usage.line_protocol3)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error usage.line_protocol3 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf 'SOCKS5 不是加密 VPN。' ;;
+        en) printf 'are rejected. SOCKS5 is not an encrypted VPN.' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg rollback.foreign_item 1
+    rollback.foreign_item)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error rollback.foreign_item 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '    %s' "${1}" ;;
+        en) printf '    %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+
+    # @s5-msg show.redisplay_with 1
+    show.redisplay_with)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error show.redisplay_with 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '  稍后重新查看这些信息：%s show' "${1}" ;;
+        en) printf '  Re-display these details later with: %s show' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg show.redisplay_rerun 0
+    show.redisplay_rerun)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error show.redisplay_rerun 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf "  稍后重新运行安装命令，并从菜单中选择 'show'，" ;;
+        en) printf '  Re-display these details later by re-running the install' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg show.redisplay_rerun2 0
+    show.redisplay_rerun2)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error show.redisplay_rerun2 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '  即可再次查看这些信息。' ;;
+        en) printf "  command and choosing 'show' from the menu." ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg collision.remove_or_rename 0
+    collision.remove_or_rename)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error collision.remove_or_rename 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '请删除或重命名它们，或' ;;
+        en) printf 'Remove or rename them, or' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg uninstall.label_file 1
+    uninstall.label_file)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error uninstall.label_file 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '  文件     ：%s' "${1}" ;;
+        en) printf '  file      : %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg uninstall.label_directory 1
+    uninstall.label_directory)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error uninstall.label_directory 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '  目录     ：%s' "${1}" ;;
+        en) printf '  directory : %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg uninstall.label_account 1
+    uninstall.label_account)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error uninstall.label_account 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '  账户     ：%s' "${1}" ;;
+        en) printf '  account   : %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg card.warn_local 0
+    card.warn_local)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error card.warn_local 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '  警告：未能确认公网出口地址；显示的是本机地址，可能无法从公网访问。' ;;
+        en) printf '  WARNING: the public egress address could not be confirmed; the local address shown may not be reachable from the internet.' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg card.warn_placeholder 0
+    card.warn_placeholder)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error card.warn_placeholder 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '  警告：无法确定服务器地址。请把下面的 SERVER_IPV4 替换为服务器的公网 IPv4。' ;;
+        en) printf "  WARNING: the server address could not be determined. Replace SERVER_IPV4 below with your server's public IPv4." ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg card.ready_header 0
+    card.ready_header)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error card.ready_header 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '================= SOCKS5 代理已就绪 =================' ;;
+        en) printf '================= SOCKS5 proxy is ready =================' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg card.details_header 0
+    card.details_header)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error card.details_header 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '================= SOCKS5 连接信息 =================' ;;
+        en) printf '================= SOCKS5 connection details =================' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg card.label_server 0
+    card.label_server)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error card.label_server 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '  服务器地址     ：' ;;
+        en) printf '  Server address : ' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg card.label_port 0
+    card.label_port)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error card.label_port 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '  端口           ：' ;;
+        en) printf '  Port           : ' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg card.label_username 0
+    card.label_username)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error card.label_username 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '  用户名         ：' ;;
+        en) printf '  Username       : ' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg card.label_password 0
+    card.label_password)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error card.label_password 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '  密码           ：' ;;
+        en) printf '  Password       : ' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg card.label_firewall 0
+    card.label_firewall)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error card.label_firewall 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '  本地防火墙     ：' ;;
+        en) printf '  Local firewall : ' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg card.firewall_untouched 0
+    card.firewall_untouched)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error card.firewall_untouched 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '本脚本未做任何修改' ;;
+        en) printf 'not modified by this script' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg card.cloud_provider 1
+    card.cloud_provider)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error card.cloud_provider 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '  云服务商       ：你还必须在自己的云安全组 / 网络 ACL 中' ;;
+        en) printf '  Cloud provider : you must ALSO allow inbound TCP %s in your' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg card.cloud_provider2 0
+    card.cloud_provider2)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error card.cloud_provider2 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '                   允许入站 TCP 流量。' ;;
+        en) printf '                   cloud security group / network ACL.' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg card.remember_sgp 1
+    card.remember_sgp)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error card.remember_sgp 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '  请记住在你的云安全组中允许入站 TCP %s。' "${1}" ;;
+        en) printf '  Remember to allow inbound TCP %s in your cloud security group.' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg card.warning_encrypted 0
+    card.warning_encrypted)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error card.warning_encrypted 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '  警告：SOCKS5 认证和流量未加密。' ;;
+        en) printf '  WARNING: SOCKS5 authentication and traffic are NOT encrypted.' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg card.warning_vpn 0
+    card.warning_vpn)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error card.warning_vpn 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '           SOCKS5 不是 VPN。任何持有这些凭据并能访问' ;;
+        en) printf '           SOCKS5 is not a VPN. Anyone with these credentials who can' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg card.warning_vpn2 0
+    card.warning_vpn2)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error card.warning_vpn2 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '           该端口的人都可以使用此代理。' ;;
+        en) printf '           reach the port can use this proxy.' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg card.warning_vpn_short 0
+    card.warning_vpn_short)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error card.warning_vpn_short 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '           SOCKS5 不是 VPN。' ;;
+        en) printf '           SOCKS5 is not a VPN.' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg card.rule_end 0
+    card.rule_end)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error card.rule_end 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '========================================================' ;;
+        en) printf '========================================================' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg card.rule_end_details 0
+    card.rule_end_details)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error card.rule_end_details 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '============================================================' ;;
+        en) printf '============================================================' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg status.label_service 0
+    status.label_service)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error status.label_service 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '  服务     ：' ;;
+        en) printf '  service   : ' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg status.label_port 0
+    status.label_port)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error status.label_port 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '  端口     ：' ;;
+        en) printf '  port      : ' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg status.label_username 0
+    status.label_username)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error status.label_username 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '  用户名   ：' ;;
+        en) printf '  username  : ' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg status.label_engine 0
+    status.label_engine)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error status.label_engine 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '  引擎     ：' ;;
+        en) printf '  engine    : ' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg status.label_origin 0
+    status.label_origin)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error status.label_origin 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '  来源     ：' ;;
+        en) printf '  origin    : ' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg status.label_binary 0
+    status.label_binary)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error status.label_binary 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '  二进制   ：' ;;
+        en) printf '  binary    : ' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg status.label_firewall 0
+    status.label_firewall)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error status.label_firewall 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '  防火墙   ：' ;;
+        en) printf '  firewall  : ' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+
+    # @s5-msg collision.refuse_overwrite 0
+    collision.refuse_overwrite)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error collision.refuse_overwrite 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '拒绝覆盖本脚本未创建的资源。' ;;
+        en) printf 'Refusing to overwrite resources this script did not create.' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg rollback.rm_file_failed 1
+    rollback.rm_file_failed)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error rollback.rm_file_failed 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法删除 %s' "${1}" ;;
+        en) printf 'could not remove %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg rollback.keep_symlink 1
+    rollback.keep_symlink)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error rollback.keep_symlink 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '保留 %s：它是符号链接' "${1}" ;;
+        en) printf 'keeping %s: it is a symbolic link' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg rollback.keep_foreign_files 1
+    rollback.keep_foreign_files)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error rollback.keep_foreign_files 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '保留 %s：它包含本脚本未创建的文件：' "${1}" ;;
+        en) printf 'keeping %s: it contains files this script did not create:' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg rollback.rm_dir_failed 1
+    rollback.rm_dir_failed)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error rollback.rm_dir_failed 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法删除目录 %s' "${1}" ;;
+        en) printf 'could not remove the directory %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg rollback.stop_failed 0
+    rollback.stop_failed)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error rollback.stop_failed 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法停止代理服务；拒绝删除其资源' ;;
+        en) printf 'could not stop the proxy service; refusing to remove its resources' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg rollback.still_active 0
+    rollback.still_active)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error rollback.still_active 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '代理服务仍在运行；拒绝删除其资源' ;;
+        en) printf 'the proxy service is still active; refusing to remove its resources' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg rollback.stop_unverified 0
+    rollback.stop_unverified)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error rollback.stop_unverified 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法确认代理服务已停止；拒绝删除其资源' ;;
+        en) printf 'could not verify that the proxy service stopped; refusing to remove its resources' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg rollback.removed_account 1
+    rollback.removed_account)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error rollback.removed_account 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '已删除 %s 服务账户' "${1}" ;;
+        en) printf 'removed the %s service account' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg rollback.reload_after_remove 0
+    rollback.reload_after_remove)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error rollback.reload_after_remove 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '删除 unit 后无法重新加载 systemd 管理器' ;;
+        en) printf 'could not reload the systemd manager after removing its unit' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg rollback.starting 0
+    rollback.starting)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error rollback.starting 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '安装失败；正在删除本次运行创建的资源' ;;
+        en) printf 'installation failed; removing the resources created by this run' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg rollback.no_state 0
+    rollback.no_state)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error rollback.no_state 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '没有可用的状态文件；无法自动回滚' ;;
+        en) printf 'no usable state file; nothing could be rolled back automatically' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg rollback.incomplete 1
+    rollback.incomplete)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error rollback.incomplete 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '回滚未完成；状态文件保留在 %s，可以重试' "${1}" ;;
+        en) printf 'rollback was incomplete; the state file is kept at %s so you can retry' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg rollback.state_dir_foreign 1
+    rollback.state_dir_foreign)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error rollback.state_dir_foreign 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '回滚无法删除 %s：它包含本脚本未创建的文件' "${1}" ;;
+        en) printf 'rollback cannot remove %s: it contains files this script did not create' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg rollback.rm_state_failed 1
+    rollback.rm_state_failed)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error rollback.rm_state_failed 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法删除状态文件 %s' "${1}" ;;
+        en) printf 'rollback could not remove the state file %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg rollback.complete 0
+    rollback.complete)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error rollback.complete 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '回滚完成；未删除任何软件包' ;;
+        en) printf 'rollback complete; no packages were removed' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg rollback.restore_failed 1
+    rollback.restore_failed)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error rollback.restore_failed 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '删除状态目录后无法恢复状态文件 %s' "${1}" ;;
+        en) printf 'rollback could not restore its state file after removing %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg rollback.rm_dir_retained 1
+    rollback.rm_dir_retained)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error rollback.rm_dir_retained 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法删除状态目录 %s；状态已保留以便重试' "${1}" ;;
+        en) printf 'rollback could not remove the state directory; the state file is kept at %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg card.refusing_display 0
+    card.refusing_display)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error card.refusing_display 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '拒绝显示代理密码：stdout 不是终端' ;;
+        en) printf 'refusing to display the proxy password: stdout is not a terminal' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg card.completed_no_display 0
+    card.completed_no_display)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error card.completed_no_display 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '安装已完成；由于 stdout 不是终端，凭据未显示。' ;;
+        en) printf 'Installation completed; credentials were not displayed because stdout is not a terminal.' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg install.starting_service 1
+    install.starting_service)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error install.starting_service 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '正在启动 %s' "${1}" ;;
+        en) printf 'starting %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg install.start_failed 0
+    install.start_failed)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error install.start_failed 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '服务启动失败' ;;
+        en) printf 'the service failed to start' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg install.not_active_after_start 0
+    install.not_active_after_start)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error install.not_active_after_start 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '启动后服务未处于运行状态' ;;
+        en) printf 'the service is not active after start' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg install.active_unverified 0
+    install.active_unverified)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error install.active_unverified 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法确认启动后服务处于运行状态' ;;
+        en) printf 'could not verify that the service is active after start' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg install.verifying_bad 0
+    install.verifying_bad)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error install.verifying_bad 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '正在验证无效凭据会被拒绝' ;;
+        en) printf 'verifying that invalid credentials are refused' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg install.verifying_good 0
+    install.verifying_good)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error install.verifying_good 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '正在验证有效凭据可以工作' ;;
+        en) printf 'verifying that valid credentials work' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg install.selftest_failed 1
+    install.selftest_failed)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error install.selftest_failed 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '有效凭据的自检失败（%s）' "${1}" ;;
+        en) printf 'the self-test with valid credentials failed (%s)' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg install.aborted 0
+    install.aborted)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error install.aborted 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '操作员请求中止安装' ;;
+        en) printf "installation aborted at the operator's request" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg show.username_invalid 1
+    show.username_invalid)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error show.username_invalid 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '%s 中的用户名无效；拒绝显示' "${1}" ;;
+        en) printf 'the username in %s is not valid; refusing to display it' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg show.password_invalid 1
+    show.password_invalid)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error show.password_invalid 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '%s 中的密码无效；拒绝显示' "${1}" ;;
+        en) printf 'the password in %s is not valid; refusing to display it' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg show.requires_root 0
+    show.requires_root)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error show.requires_root 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf 'show 会显示代理密码，因此需要 root 权限' ;;
+        en) printf "'show' displays the proxy password and therefore requires root" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg show.cred_unreadable 1
+    show.cred_unreadable)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error show.cred_unreadable 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法从 %s 读取有效凭据' "${1}" ;;
+        en) printf 'cannot read valid credentials from %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg restart.requires_root 0
+    restart.requires_root)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error restart.requires_root 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '重启服务需要 root 权限' ;;
+        en) printf 'restarting the service requires root' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg restart.failed 0
+    restart.failed)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error restart.failed 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '服务重启失败' ;;
+        en) printf 'the service failed to restart' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg restart.not_active 0
+    restart.not_active)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error restart.not_active 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '重启后服务未处于运行状态' ;;
+        en) printf 'the service is not active after restart' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg restart.active_unverified 0
+    restart.active_unverified)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error restart.active_unverified 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法确认重启后服务处于运行状态' ;;
+        en) printf 'could not verify that the service is active after restart' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg uninstall.requires_root 0
+    uninstall.requires_root)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error uninstall.requires_root 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '卸载需要 root 权限' ;;
+        en) printf 'uninstalling requires root privileges' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg uninstall.state_invalid 0
+    uninstall.state_invalid)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error uninstall.state_invalid 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '状态文件无法通过校验；拒绝删除任何内容' ;;
+        en) printf 'the state file could not be validated; refusing to delete anything' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg uninstall.state_invalid_hint 1
+    uninstall.state_invalid_hint)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error uninstall.state_invalid_hint 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '请手动检查 %s，然后自行删除本项目的资源' "${1}" ;;
+        en) printf "inspect %s by hand, then remove the project's resources yourself" "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg uninstall.removing_only 0
+    uninstall.removing_only)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error uninstall.removing_only 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '只会删除本脚本记录创建的固定资源：' ;;
+        en) printf 'This will remove only the fixed resources this script recorded creating:' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg uninstall.no_firewall_removed 0
+    uninstall.no_firewall_removed)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error uninstall.no_firewall_removed 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '不会删除任何防火墙规则：本脚本从未创建过。' ;;
+        en) printf 'No firewall rule is removed: this script never created one.' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg uninstall.packages_kept 0
+    uninstall.packages_kept)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error uninstall.packages_kept 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '已安装的软件包不会被删除。' ;;
+        en) printf 'Installed packages are NOT removed.' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg uninstall.aborted 0
+    uninstall.aborted)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error uninstall.aborted 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '操作员请求中止卸载' ;;
+        en) printf "uninstall aborted at the operator's request" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg uninstall.incomplete 1
+    uninstall.incomplete)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error uninstall.incomplete 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '卸载未完成；状态文件保留在 %s' "${1}" ;;
+        en) printf 'uninstall did NOT complete; the state file is kept at %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg uninstall.resolve_then 0
+    uninstall.resolve_then)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error uninstall.resolve_then 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '请先解决上面列出的问题，然后' ;;
+        en) printf 'resolve the problems listed above, then' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg uninstall.keep_state_foreign 1
+    uninstall.keep_state_foreign)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error uninstall.keep_state_foreign 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '保留 %s：它包含本脚本未创建的文件：' "${1}" ;;
+        en) printf 'keeping %s: it contains files this script did not create:' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg uninstall.rm_state_failed 1
+    uninstall.rm_state_failed)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error uninstall.rm_state_failed 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法删除状态文件 %s' "${1}" ;;
+        en) printf 'could not remove the state file %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg uninstall.complete 0
+    uninstall.complete)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error uninstall.complete 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '卸载完成；未删除任何系统软件包' ;;
+        en) printf 'uninstall complete; no system packages were removed' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg uninstall.restore_failed 1
+    uninstall.restore_failed)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error uninstall.restore_failed 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '状态目录仍存在，无法恢复 %s' "${1}" ;;
+        en) printf 'could not restore %s after the state directory remained' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg uninstall.rm_dir_retained 1
+    uninstall.rm_dir_retained)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error uninstall.rm_dir_retained 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法删除状态目录 %s；状态已保留以便重试' "${1}" ;;
+        en) printf 'could not remove the state directory %s; state was retained for retry' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg menu.title 0
+    menu.title)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error menu.title 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf 'socks5-manager 管理菜单' ;;
+        en) printf 'socks5-manager management menu' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg menu.option_status 0
+    menu.option_status)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error menu.option_status 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '  1) status     查看服务、端口和版本' ;;
+        en) printf '  1) status     show service, port and version' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg menu.option_show 0
+    menu.option_show)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error menu.option_show 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '  2) show       重新显示完整连接信息（仅限 root）' ;;
+        en) printf '  2) show       re-display the full connection details (root only)' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg menu.option_restart 0
+    menu.option_restart)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error menu.option_restart 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '  3) restart    重启代理服务' ;;
+        en) printf '  3) restart    restart the proxy service' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg menu.option_uninstall 0
+    menu.option_uninstall)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error menu.option_uninstall 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '  4) uninstall  删除本脚本创建的所有内容' ;;
+        en) printf '  4) uninstall  remove everything this script created' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg menu.option_quit 0
+    menu.option_quit)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error menu.option_quit 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '  5) quit       退出' ;;
+        en) printf '  5) quit' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg menu.eof 0
+    menu.eof)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error menu.eof 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '输入意外结束' ;;
+        en) printf 'unexpected end of input' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg menu.nothing_to_do 0
+    menu.nothing_to_do)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error menu.nothing_to_do 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无事可做' ;;
+        en) printf 'nothing to do' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg menu.invalid_choice 1
+    menu.invalid_choice)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error menu.invalid_choice 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无效选择：%s' "${1}" ;;
+        en) printf 'invalid choice: %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg usage.unknown_subcommand 1
+    usage.unknown_subcommand)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error usage.unknown_subcommand 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '未知子命令：%s' "${1}" ;;
+        en) printf 'unknown subcommand: %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+
+    # @s5-msg collision.path_exists 1
+    collision.path_exists)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error collision.path_exists 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '%s 已存在且不是本脚本创建的' "${1}" ;;
+        en) printf '%s already exists and was not created by this script' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg collision.user_exists 1
+    collision.user_exists)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error collision.user_exists 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '%s 账户已存在且不是本脚本创建的' "${1}" ;;
+        en) printf 'the %s account already exists and was not created by this script' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg collision.group_exists 1
+    collision.group_exists)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error collision.group_exists 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '%s 组已存在且不是本脚本创建的' "${1}" ;;
+        en) printf 'the %s group already exists and was not created by this script' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+
+    # @s5-msg account.remove_uid_missing 1
+    account.remove_uid_missing)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error account.remove_uid_missing 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '状态文件未记录可用的账户 uid；如果 %s 是你的，请手动删除' "${1}" ;;
+        en) printf 'the state does not record a usable account uid; remove %s manually if it is yours' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg account.remove_gid_missing 1
+    account.remove_gid_missing)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error account.remove_gid_missing 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '状态文件未记录可用的组 gid；如果 %s 是你的，请手动删除' "${1}" ;;
+        en) printf 'the state does not record a usable group gid; remove %s manually if it is yours' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg account.current_uid_unknown 1
+    account.current_uid_unknown)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error account.current_uid_unknown 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法确定 %s 的当前 uid' "${1}" ;;
+        en) printf 'could not determine the current uid of %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg account.current_gid_unknown 1
+    account.current_gid_unknown)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error account.current_gid_unknown 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法确定 %s 的当前 gid' "${1}" ;;
+        en) printf 'could not determine the current gid of %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg account.remove_uid_reused 3
+    account.remove_uid_reused)
+        [ "$#" -eq 3 ] || { s5_msg_contract_error account.remove_uid_reused 3 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '拒绝删除 %s：该名称现在对应 uid %s，而不是本脚本创建的 uid %s（名称被复用）' "${1}" "${2}" "${3}" ;;
+        en) printf 'refusing to remove %s: the name now answers to uid %s, not the uid %s this script created (the name was reused)' "${1}" "${2}" "${3}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg account.remove_gid_reused 3
+    account.remove_gid_reused)
+        [ "$#" -eq 3 ] || { s5_msg_contract_error account.remove_gid_reused 3 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '拒绝删除 %s：该名称现在对应 gid %s，而不是本脚本创建的 gid %s（名称被复用）' "${1}" "${2}" "${3}" ;;
+        en) printf 'refusing to remove %s: the name now answers to gid %s, not the gid %s this script created (the name was reused)' "${1}" "${2}" "${3}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg account.remove_user_failed 1
+    account.remove_user_failed)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error account.remove_user_failed 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '删除尝试后 %s 账户仍然存在' "${1}" ;;
+        en) printf 'the %s account still exists after the removal attempt' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg account.remove_group_failed 1
+    account.remove_group_failed)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error account.remove_group_failed 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '删除尝试后 %s 组仍然存在' "${1}" ;;
+        en) printf 'the %s group still exists after the removal attempt' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg account.remove_user_unknown 1
+    account.remove_user_unknown)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error account.remove_user_unknown 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法确定 %s 账户是否已被删除' "${1}" ;;
+        en) printf 'could not determine whether the %s account was removed' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg account.remove_group_unknown 1
+    account.remove_group_unknown)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error account.remove_group_unknown 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法确定 %s 组是否已被删除' "${1}" ;;
+        en) printf 'could not determine whether the %s group was removed' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg account.exists_unknown 1
+    account.exists_unknown)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error account.exists_unknown 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法确定 %s 账户是否存在' "${1}" ;;
+        en) printf 'could not determine whether the %s account exists' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg account.group_exists_unknown2 1
+    account.group_exists_unknown2)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error account.group_exists_unknown2 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法确定 %s 组是否存在' "${1}" ;;
+        en) printf 'could not determine whether the %s group exists' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg selftest.security_accepted 0
+    selftest.security_accepted)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error selftest.security_accepted 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '安全错误：代理接受了本应被拒绝的凭据' ;;
+        en) printf 'SECURITY: the proxy accepted credentials that should have been refused' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg selftest.inconclusive 2
+    selftest.inconclusive)
+        [ "$#" -eq 2 ] || { s5_msg_contract_error selftest.inconclusive 2 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '结论不明：错误凭据探测以 curl 状态 %s 失败，而不是 %s（代理握手错误）' "${1}" "${2}" ;;
+        en) printf 'inconclusive: the bad-credential probe failed with curl status %s, not %s (proxy handshake error)' "${1}" "${2}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg selftest.rejection_unproven 0
+    selftest.rejection_unproven)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error selftest.rejection_unproven 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法证明代理拒绝无效凭据；拒绝继续' ;;
+        en) printf "the proxy's rejection of invalid credentials could not be proven; refusing to continue" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg network.cause_dns 0
+    network.cause_dns)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error network.cause_dns 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '  原因：此服务器无法解析 DNS 名称。' ;;
+        en) printf '  Cause: this server cannot resolve DNS names.' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg network.cause_no_egress 0
+    network.cause_no_egress)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error network.cause_no_egress 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '  原因：此服务器没有出站网络访问。' ;;
+        en) printf '  Cause: this server has no outbound network access.' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg network.cause_proxy_refused 0
+    network.cause_proxy_refused)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error network.cause_proxy_refused 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '  原因：出站网络正常，因此是代理本身拒绝了请求。' ;;
+        en) printf '  Cause: outbound network works, so the proxy itself refused the request.' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg network.cause_check_sgp 0
+    network.cause_check_sgp)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error network.cause_check_sgp 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '  如果客户端也无法访问该端口，请检查你的云安全组。' ;;
+        en) printf '  If clients also cannot reach the port, check your cloud security group.' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg network.cause_unknown 0
+    network.cause_unknown)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error network.cause_unknown 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '  原因：无法确定。' ;;
+        en) printf '  Cause: undetermined.' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg service.reload_failed 1
+    service.reload_failed)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error service.reload_failed 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '写入 %s 后无法重新加载 systemd 管理器' "${1}" ;;
+        en) printf 'could not reload the systemd manager after writing %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg service.enable_failed 1
+    service.enable_failed)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error service.enable_failed 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法启用 %s.service' "${1}" ;;
+        en) printf 'could not enable %s.service' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg service.rcupdate_failed 1
+    service.rcupdate_failed)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error service.rcupdate_failed 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法将 %s 加入默认运行级别' "${1}" ;;
+        en) printf 'could not add %s to the default runlevel' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg service.unsupported_init 1
+    service.unsupported_init)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error service.unsupported_init 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '不支持的 init 系统：%s' "${1}" ;;
+        en) printf 'unsupported init system: %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg service.disable_failed 1
+    service.disable_failed)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error service.disable_failed 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法禁用 %s.service' "${1}" ;;
+        en) printf 'could not disable %s.service' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg service.rcdel_failed 1
+    service.rcdel_failed)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error service.rcdel_failed 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法将 %s 从默认运行级别移除' "${1}" ;;
+        en) printf 'could not remove %s from the default runlevel' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg service.wait_no_probe 1
+    service.wait_no_probe)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error service.wait_no_probe 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法验证端口 %s 正在监听（找不到 ss 和 netstat）' "${1}" ;;
+        en) printf 'cannot verify that port %s is listening (neither ss nor netstat found)' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg service.wait_exited 1
+    service.wait_exited)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error service.wait_exited 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '服务在端口 %s 开始监听前已退出' "${1}" ;;
+        en) printf 'the service exited before port %s was listening' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg service.wait_timeout 1
+    service.wait_timeout)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error service.wait_timeout 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '服务未能在 15 秒内开始在端口 %s 上监听' "${1}" ;;
+        en) printf 'the service did not begin listening on port %s within 15 seconds' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg install.user_appeared 1
+    install.user_appeared)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error install.user_appeared 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '%s 账户在冲突检查之后出现；拒绝收养它' "${1}" ;;
+        en) printf 'the %s account appeared after the collision check; refusing to adopt it' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg install.group_appeared 1
+    install.group_appeared)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error install.group_appeared 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '%s 组在冲突检查之后出现；拒绝收养它' "${1}" ;;
+        en) printf 'the %s group appeared after the collision check; refusing to adopt it' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg install.acct_exists_unknown 0
+    install.acct_exists_unknown)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error install.acct_exists_unknown 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法确定服务账户是否存在' ;;
+        en) printf 'could not determine whether the service account exists' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg install.grp_exists_unknown 0
+    install.grp_exists_unknown)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error install.grp_exists_unknown 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法确定服务组是否存在' ;;
+        en) printf 'could not determine whether the service group exists' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg install.uid_unknown 0
+    install.uid_unknown)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error install.uid_unknown 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法确定分配给新账户的 uid' ;;
+        en) printf 'could not determine the uid assigned to the new account' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg install.gid_unknown 0
+    install.gid_unknown)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error install.gid_unknown 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法确定分配给新组的 gid' ;;
+        en) printf 'could not determine the gid assigned to the new group' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg install.pkg_no_deps 1
+    install.pkg_no_deps)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error install.pkg_no_deps 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '没有适用于包管理器 %s 的依赖列表' "${1}" ;;
+        en) printf 'no dependency list for package manager: %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg install.pkg_meta_failed 0
+    install.pkg_meta_failed)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error install.pkg_meta_failed 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '软件包元数据更新失败；拒绝使用过期索引安装' ;;
+        en) printf 'package metadata update failed; refusing to install from stale indexes' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg install.pkg_install_failed 0
+    install.pkg_install_failed)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error install.pkg_install_failed 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '软件包安装失败' ;;
+        en) printf 'package installation failed' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg install.pkg_unknown 1
+    install.pkg_unknown)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error install.pkg_unknown 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '未知的包管理器：%s' "${1}" ;;
+        en) printf 'unknown package manager: %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+
+    # @s5-msg build.rm_refuse_empty 0
+    build.rm_refuse_empty)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error build.rm_refuse_empty 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '拒绝删除构建目录：<empty>' ;;
+        en) printf 'refusing to remove build directory: <empty>' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg build.rm_failed 1
+    build.rm_failed)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error build.rm_failed 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法删除构建目录 %s' "${1}" ;;
+        en) printf 'could not remove build directory %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg build.rm_still_exists 1
+    build.rm_still_exists)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error build.rm_still_exists 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '删除后构建目录仍然存在：%s' "${1}" ;;
+        en) printf 'build directory still exists after removal: %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg build.rm_unexpected 1
+    build.rm_unexpected)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error build.rm_unexpected 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '拒绝删除非预期的构建目录：%s' "${1}" ;;
+        en) printf 'refusing to remove unexpected build directory: %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg build.tmp_in_prefix 0
+    build.tmp_in_prefix)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error build.tmp_in_prefix 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法在安装前缀目录中创建临时文件' ;;
+        en) printf 'cannot create a temporary file in the install prefix' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg build.copy_failed 0
+    build.copy_failed)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error build.copy_failed 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法将编译好的二进制复制到安装位置' ;;
+        en) printf 'cannot copy the built binary to the install location' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg build.install_failed 1
+    build.install_failed)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error build.install_failed 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法在 %s 安装二进制' "${1}" ;;
+        en) printf 'cannot install the binary at %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg build.mktmpdir_failed 0
+    build.mktmpdir_failed)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error build.mktmpdir_failed 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法创建构建目录' ;;
+        en) printf 'cannot create a build directory' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg build.fetching 2
+    build.fetching)
+        [ "$#" -eq 2 ] || { s5_msg_contract_error build.fetching 2 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '正在从 %s 获取 3proxy %s' "${1}" "${2}" ;;
+        en) printf 'fetching 3proxy %s from %s' "${1}" "${2}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg build.clone_failed 0
+    build.clone_failed)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error build.clone_failed 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf 'git clone 失败' ;;
+        en) printf 'git clone failed' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg build.checkout_pinned 1
+    build.checkout_pinned)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error build.checkout_pinned 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '正在检出固定提交 %s' "${1}" ;;
+        en) printf 'checking out pinned commit %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg build.checkout_failed 0
+    build.checkout_failed)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error build.checkout_failed 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '检出固定提交失败' ;;
+        en) printf 'git checkout of the pinned commit failed' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg build.head_mismatch 2
+    build.head_mismatch)
+        [ "$#" -eq 2 ] || { s5_msg_contract_error build.head_mismatch 2 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf 'HEAD 校验失败：期望 %s，实际 %s' "${1}" "${2}" ;;
+        en) printf 'HEAD verification failed: expected %s, got %s' "${1}" "${2}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg build.head_verified 0
+    build.head_verified)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error build.head_verified 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf 'HEAD 已通过固定提交校验' ;;
+        en) printf 'HEAD verified against the pinned commit' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg build.make_failed 0
+    build.make_failed)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error build.make_failed 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '编译失败（make -f Makefile.Linux）' ;;
+        en) printf 'build failed (make -f Makefile.Linux)' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg build.no_artifact 0
+    build.no_artifact)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error build.no_artifact 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '编译没有产生常规的 bin/3proxy 产物' ;;
+        en) printf 'build produced no regular bin/3proxy artifact' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg build.not_executable 0
+    build.not_executable)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error build.not_executable 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '编译出的 bin/3proxy 不可执行' ;;
+        en) printf 'built bin/3proxy is not executable' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg build.installed 1
+    build.installed)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error build.installed 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '已安装 %s' "${1}" ;;
+        en) printf 'installed %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg render.cfg_bad_port 0
+    render.cfg_bad_port)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error render.cfg_bad_port 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法渲染配置：端口无效' ;;
+        en) printf 'cannot render configuration: invalid port' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg render.cfg_bad_username 0
+    render.cfg_bad_username)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error render.cfg_bad_username 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法渲染配置：用户名无效' ;;
+        en) printf 'cannot render configuration: invalid username' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg render.users_bad_username 0
+    render.users_bad_username)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error render.users_bad_username 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '拒绝渲染凭据：用户名无效' ;;
+        en) printf 'refusing to render credentials: username is not valid' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg render.users_bad_password 0
+    render.users_bad_password)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error render.users_bad_password 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '拒绝渲染凭据：密码无效' ;;
+        en) printf 'refusing to render credentials: password is not valid' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg account.group_create_failed 1
+    account.group_create_failed)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error account.group_create_failed 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '创建 %s 组失败' "${1}" ;;
+        en) printf 'failed to create the %s group' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg account.group_exists_unknown 1
+    account.group_exists_unknown)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error account.group_exists_unknown 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法确定 %s 组是否存在' "${1}" ;;
+        en) printf 'could not determine whether the %s group exists' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg account.user_create_failed 1
+    account.user_create_failed)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error account.user_create_failed 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '创建 %s 账户失败' "${1}" ;;
+        en) printf 'failed to create the %s account' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg static.not_found 1
+    static.not_found)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error static.not_found 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '静态检查：找不到配置：%s' "${1}" ;;
+        en) printf 'static check: configuration not found: %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg static.missing_log 0
+    static.missing_log)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error static.missing_log 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf "静态检查：缺少 'log'" ;;
+        en) printf "static check: missing 'log'" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg static.missing_auth_strong 0
+    static.missing_auth_strong)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error static.missing_auth_strong 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf "静态检查：缺少 'auth strong'" ;;
+        en) printf "static check: missing 'auth strong'" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg static.one_flush 0
+    static.one_flush)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error static.one_flush 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '静态检查：应恰好有一个 flush 指令' ;;
+        en) printf 'static check: expected exactly one flush directive' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg static.missing_allow_connect 0
+    static.missing_allow_connect)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error static.missing_allow_connect 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf "静态检查：缺少显式的 'allow ... CONNECT' 规则" ;;
+        en) printf "static check: missing an explicit 'allow ... CONNECT' rule" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg static.one_terminal_deny 0
+    static.one_terminal_deny)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error static.one_terminal_deny 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '静态检查：应恰好有一个终端 deny' ;;
+        en) printf 'static check: expected exactly one terminal deny' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg static.missing_socks_line 0
+    static.missing_socks_line)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error static.missing_socks_line 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf "静态检查：缺少 'socks -4 -u2 -p<端口> -i<地址>'" ;;
+        en) printf "static check: missing 'socks -4 -u2 -p<port> -i<address>'" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg static.one_credentials_include 0
+    static.one_credentials_include)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error static.one_credentials_include 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '静态检查：应恰好有一个凭据包含' ;;
+        en) printf 'static check: expected exactly one credentials include' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg static.one_socks_line 2
+    static.one_socks_line)
+        [ "$#" -eq 2 ] || { s5_msg_contract_error static.one_socks_line 2 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '静态检查：应恰好有一行 socks -4 -u2 -p%s -i%s' "${1}" "${2}" ;;
+        en) printf 'static check: expected exactly one socks -4 -u2 -p%s -i%s line' "${1}" "${2}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg static.one_allow_rule 1
+    static.one_allow_rule)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error static.one_allow_rule 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '静态检查：应恰好有一条 allow %s * * * CONNECT 规则' "${1}" ;;
+        en) printf 'static check: expected exactly one allow %s * * * CONNECT rule' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg static.flush_before_deny 0
+    static.flush_before_deny)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error static.flush_before_deny 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '静态检查：flush 必须位于所有目标 deny 规则之前' ;;
+        en) printf 'static check: flush must precede all destination deny rules' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg static.deny_after_allow 0
+    static.deny_after_allow)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error static.deny_after_allow 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '静态检查：终端 deny 必须位于 allow 规则之后' ;;
+        en) printf 'static check: terminal deny must follow the allow rule' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg static.missing_deny_rules 1
+    static.missing_deny_rules)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error static.missing_deny_rules 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '静态检查：缺少目标 deny 规则：%s' "${1}" ;;
+        en) printf 'static check: missing destination deny rule(s):%s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg static.no_deny_rules 0
+    static.no_deny_rules)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error static.no_deny_rules 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '静态检查：未找到任何目标 deny 规则' ;;
+        en) printf 'static check: no destination deny rules found' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg static.deny_before_allow 0
+    static.deny_before_allow)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error static.deny_before_allow 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '静态检查：目标 deny 规则必须位于 allow 规则之前' ;;
+        en) printf 'static check: destination deny rules must precede the allow rule' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg static.deny_count 2
+    static.deny_count)
+        [ "$#" -eq 2 ] || { s5_msg_contract_error static.deny_count 2 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '静态检查：应有 %s 条目标 deny 规则，实际 %s 条' "${1}" "${2}" ;;
+        en) printf 'static check: expected %s destination deny rules, found %s' "${1}" "${2}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg static.socks_count 1
+    static.socks_count)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error static.socks_count 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '静态检查：应恰好有一行 socks 服务行，实际 %s 行' "${1}" ;;
+        en) printf 'static check: expected exactly one socks service line, found %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg static.forbidden_directive 1
+    static.forbidden_directive)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error static.forbidden_directive 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '静态检查：出现禁止的指令：%s' "${1}" ;;
+        en) printf 'static check: forbidden directive present: %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg static.weak_auth 0
+    static.weak_auth)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error static.weak_auth 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '静态检查：出现弱认证指令' ;;
+        en) printf 'static check: weak authentication directive present' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg static.forbidden_op 0
+    static.forbidden_op)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error static.forbidden_op 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '静态检查：出现禁止的操作（BIND 或 UDPASSOC）' ;;
+        en) printf 'static check: forbidden operation present (BIND or UDPASSOC)' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg static.cred_not_regular 0
+    static.cred_not_regular)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error static.cred_not_regular 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '静态检查：凭据文件必须是常规文件且不能是符号链接' ;;
+        en) printf 'static check: credentials file must be a regular non-symbolic-link file' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg static.cred_mode 1
+    static.cred_mode)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error static.cred_mode 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '静态检查：凭据文件必须是 0600 或 0640 模式，实际为 %s' "${1}" ;;
+        en) printf 'static check: credentials file must be mode 0600 or 0640, found %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg static.cred_owner 2
+    static.cred_owner)
+        [ "$#" -eq 2 ] || { s5_msg_contract_error static.cred_owner 2 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '静态检查：凭据文件的属主必须是 root:%s，实际为 %s' "${1}" "${2}" ;;
+        en) printf 'static check: credentials file must be owned by root:%s, found %s' "${1}" "${2}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg static.cred_unreadable 0
+    static.cred_unreadable)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error static.cred_unreadable 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '静态检查：无法读取凭据文件' ;;
+        en) printf 'static check: cannot read credentials file' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg static.cred_one_line 0
+    static.cred_one_line)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error static.cred_one_line 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '静态检查：凭据文件必须恰好包含所配置用户名的一条凭据' ;;
+        en) printf 'static check: credentials file must contain exactly one credential for the configured username' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+
+    # @s5-msg fs.write_symlink 1
+    fs.write_symlink)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error fs.write_symlink 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '拒绝写入 %s：它是符号链接' "${1}" ;;
+        en) printf 'refusing to write %s: it is a symbolic link' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg fs.write_not_regular 1
+    fs.write_not_regular)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error fs.write_not_regular 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '拒绝写入 %s：不是普通文件' "${1}" ;;
+        en) printf 'refusing to write %s: not a regular file' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg fs.write_mode0600 1
+    fs.write_mode0600)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error fs.write_mode0600 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法将 %s 设置为 0600 模式' "${1}" ;;
+        en) printf 'cannot set mode 0600 on %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg fs.use_symlink 1
+    fs.use_symlink)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error fs.use_symlink 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '拒绝使用 %s：它是符号链接' "${1}" ;;
+        en) printf 'refusing to use %s: it is a symbolic link' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg fs.use_not_dir 1
+    fs.use_not_dir)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error fs.use_not_dir 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '拒绝使用 %s：它不是目录' "${1}" ;;
+        en) printf 'refusing to use %s: it is not a directory' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg fs.create_failed 1
+    fs.create_failed)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error fs.create_failed 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法创建 %s' "${1}" ;;
+        en) printf 'cannot create %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg fs.restrict_0700 1
+    fs.restrict_0700)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error fs.restrict_0700 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法将 %s 限制为 0700 模式' "${1}" ;;
+        en) printf 'cannot restrict %s to mode 0700' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg fs.atomic_dir_missing 2
+    fs.atomic_dir_missing)
+        [ "$#" -eq 2 ] || { s5_msg_contract_error fs.atomic_dir_missing 2 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法写入 %s：目录 %s 不存在' "${1}" "${2}" ;;
+        en) printf 'cannot write %s: directory %s does not exist' "${1}" "${2}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg fs.atomic_symlink 1
+    fs.atomic_symlink)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error fs.atomic_symlink 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '拒绝写入 %s：它是符号链接' "${1}" ;;
+        en) printf 'refusing to write %s: it is a symbolic link' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg fs.atomic_mktemp_failed 1
+    fs.atomic_mktemp_failed)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error fs.atomic_mktemp_failed 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法在 %s 中创建临时文件' "${1}" ;;
+        en) printf 'cannot create a temporary file in %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg fs.atomic_write_tmp 1
+    fs.atomic_write_tmp)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error fs.atomic_write_tmp 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法写入 %s' "${1}" ;;
+        en) printf 'cannot write %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg fs.atomic_install 1
+    fs.atomic_install)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error fs.atomic_install 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法安装 %s' "${1}" ;;
+        en) printf 'cannot install %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg fs.atomic_mode 2
+    fs.atomic_mode)
+        [ "$#" -eq 2 ] || { s5_msg_contract_error fs.atomic_mode 2 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法对 %s 设置模式 %s' "${1}" "${2}" ;;
+        en) printf 'cannot set mode %s on %s' "${1}" "${2}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg fs.atomic_owner 2
+    fs.atomic_owner)
+        [ "$#" -eq 2 ] || { s5_msg_contract_error fs.atomic_owner 2 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法对 %s 设置属主 %s' "${1}" "${2}" ;;
+        en) printf 'cannot set ownership %s on %s' "${1}" "${2}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg state.disallowed_char 1
+    state.disallowed_char)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error state.disallowed_char 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf 'state：'%s' 的值包含不允许的字符' "${1}" ;;
+        en) printf "state: value for '%s' contains a disallowed character" "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg state.flag_not_1 1
+    state.flag_not_1)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error state.flag_not_1 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf 'state：标志 '%s' 必须恰好为 1' "${1}" ;;
+        en) printf "state: flag '%s' must be exactly 1" "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg state.port_not_numeric 0
+    state.port_not_numeric)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error state.port_not_numeric 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf 'state：端口不是数字' ;;
+        en) printf 'state: port is not numeric' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg state.port_leading_zero 0
+    state.port_leading_zero)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error state.port_leading_zero 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf 'state：端口不能有前导零' ;;
+        en) printf 'state: port must not have leading zeros' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg state.port_out_of_range 0
+    state.port_out_of_range)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error state.port_out_of_range 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf 'state：端口超出范围' ;;
+        en) printf 'state: port out of range' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg state.username_invalid 0
+    state.username_invalid)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error state.username_invalid 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf 'state：用户名无效' ;;
+        en) printf 'state: username is not valid' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg state.commit_len 0
+    state.commit_len)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error state.commit_len 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf 'state：commit 必须恰好是 40 个十六进制字符' ;;
+        en) printf 'state: commit must be exactly 40 hexadecimal characters' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg state.commit_not_hex 0
+    state.commit_not_hex)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error state.commit_not_hex 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf 'state：commit 不是十六进制对象名' ;;
+        en) printf 'state: commit is not a hex object name' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg state.unknown_init 1
+    state.unknown_init)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error state.unknown_init 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf 'state：未知的 init 系统 '%s'' "${1}" ;;
+        en) printf "state: unknown init system '%s'" "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg state.not_numeric 1
+    state.not_numeric)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error state.not_numeric 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf 'state：%s 必须是数字' "${1}" ;;
+        en) printf 'state: %s must be numeric' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg state.unknown_status 1
+    state.unknown_status)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error state.unknown_status 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf 'state：未知状态 '%s'' "${1}" ;;
+        en) printf "state: unknown status '%s'" "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg state.read_symlink 1
+    state.read_symlink)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error state.read_symlink 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '拒绝读取 %s：它是符号链接' "${1}" ;;
+        en) printf 'refusing to read %s: it is a symbolic link' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg state.read_not_regular 1
+    state.read_not_regular)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error state.read_not_regular 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '拒绝读取 %s：不是普通文件' "${1}" ;;
+        en) printf 'refusing to read %s: not a regular file' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg state.read_failed 1
+    state.read_failed)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error state.read_failed 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法读取状态文件 %s' "${1}" ;;
+        en) printf 'cannot read the state file %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg state.read_mode 2
+    state.read_mode)
+        [ "$#" -eq 2 ] || { s5_msg_contract_error state.read_mode 2 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '拒绝读取 %s：状态文件必须是 0600 模式（实际为 %s）' "${1}" "${2}" ;;
+        en) printf 'refusing to read %s: state file must be mode 0600 (found %s)' "${1}" "${2}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg state.read_error 1
+    state.read_error)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error state.read_error 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法读取状态文件 %s' "${1}" ;;
+        en) printf 'could not read the state file %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg state.line_malformed 1
+    state.line_malformed)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error state.line_malformed 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf 'state：第 %s 行格式错误（缺少字段分隔符）' "${1}" ;;
+        en) printf 'state: line %s is malformed (no field separator)' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg state.unknown_key 2
+    state.unknown_key)
+        [ "$#" -eq 2 ] || { s5_msg_contract_error state.unknown_key 2 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf 'state：第 %s 行出现未知键 '%s'' "${1}" "${2}" ;;
+        en) printf "state: unknown key '%s' on line %s" "${1}" "${2}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg state.duplicate_key 2
+    state.duplicate_key)
+        [ "$#" -eq 2 ] || { s5_msg_contract_error state.duplicate_key 2 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf 'state：第 %s 行出现重复键 '%s'' "${1}" "${2}" ;;
+        en) printf "state: duplicate key '%s' on line %s" "${1}" "${2}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg state.corrupt 0
+    state.corrupt)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error state.corrupt 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '状态文件已损坏；拒绝据此操作' ;;
+        en) printf 'state file is corrupt; refusing to act on it' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg state.complete_missing 1
+    state.complete_missing)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error state.complete_missing 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf 'state：声称已安装完成但缺少：%s' "${1}" ;;
+        en) printf 'state: claims to be complete but is missing:%s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg state.mktemp_failed 1
+    state.mktemp_failed)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error state.mktemp_failed 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法在 %s 中创建临时状态文件' "${1}" ;;
+        en) printf 'cannot create a temporary state file in %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg state.write_failed 0
+    state.write_failed)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error state.write_failed 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法写入状态文件' ;;
+        en) printf 'cannot write the state file' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg state.install_failed 0
+    state.install_failed)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error state.install_failed 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法安装状态文件' ;;
+        en) printf 'cannot install the state file' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg state.record_unknown_key 1
+    state.record_unknown_key)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error state.record_unknown_key 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf 'state：拒绝记录未知键 '%s'' "${1}" ;;
+        en) printf "state: refusing to record unknown key '%s'" "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg state.persist_failed 1
+    state.persist_failed)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error state.persist_failed 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf 'state：无法持久化 '%s'；中止以避免产生孤立资源' "${1}" ;;
+        en) printf "state: could not persist '%s'; aborting to avoid orphaned resources" "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+
+    # @s5-msg detect.unsupported_arch 1
+    detect.unsupported_arch)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error detect.unsupported_arch 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '不支持此架构：%s（仅支持 x86_64/amd64 和 aarch64/arm64）' "${1}" ;;
+        en) printf 'unsupported architecture: %s (only x86_64/amd64 and aarch64/arm64 are supported)' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg detect.cannot_read_osrelease 1
+    detect.cannot_read_osrelease)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error detect.cannot_read_osrelease 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法读取 %s：不能识别此系统' "${1}" ;;
+        en) printf 'cannot read %s: unable to identify this system' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg detect.no_probe_package 1
+    detect.no_probe_package)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error detect.no_probe_package 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '没有适用于此包管理器的监听探测软件包：%s' "${1}" ;;
+        en) printf 'no port-probe package for package manager: %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg detect.missing_commands 1
+    detect.missing_commands)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error detect.missing_commands 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '缺少必需命令：%s' "${1}" ;;
+        en) printf 'required command(s) not found:%s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg detect.no_base_utilities 0
+    detect.no_base_utilities)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error detect.no_base_utilities 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '没有上述基础工具无法继续' ;;
+        en) printf 'cannot continue without the base utilities listed above' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg detect.require_root 0
+    detect.require_root)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error detect.require_root 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '安装需要 root 权限；请用 sudo 重新运行' ;;
+        en) printf 'installation requires root privileges; re-run with sudo' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg detect.pkgmgr_missing 1
+    detect.pkgmgr_missing)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error detect.pkgmgr_missing 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '检测到的包管理器（%s）未安装在此系统上' "${1}" ;;
+        en) printf 'the detected package manager (%s) is not installed on this system' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg detect.pkgmgr_missing_hint 0
+    detect.pkgmgr_missing_hint)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error detect.pkgmgr_missing_hint 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '请安装它，或使用受支持的镜像后重试' ;;
+        en) printf 'install it, or use a supported image, then retry' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg input.port_not_decimal 0
+    input.port_not_decimal)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error input.port_not_decimal 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '端口必须是十进制数字' ;;
+        en) printf 'port must be a decimal number' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg input.random_chars_failed 2
+    input.random_chars_failed)
+        [ "$#" -eq 2 ] || { s5_msg_contract_error input.random_chars_failed 2 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法从 /dev/urandom 读取 %s 个随机字符（实际得到 %s）' "${1}" "${2}" ;;
+        en) printf 'could not draw %s random characters from /dev/urandom (got %s)' "${1}" "${2}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg input.random_int_range 1
+    input.random_int_range)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error input.random_int_range 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf 's5_random_int：count 超出支持范围：%s' "${1}" ;;
+        en) printf 's5_random_int: count out of supported range: %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg network.no_probe_cmd 0
+    network.no_probe_cmd)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error network.no_probe_cmd 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法确定端口是否空闲（找不到 ss 和 netstat）' ;;
+        en) printf 'cannot determine whether a port is free (neither ss nor netstat found)' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg network.no_probe_hint 0
+    network.no_probe_hint)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error network.no_probe_hint 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '请安装 iproute2（提供 ss）或 net-tools（提供 netstat）后重试' ;;
+        en) printf 'install iproute2 (for ss) or net-tools (for netstat), then retry' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg network.port_free_unknown 1
+    network.port_free_unknown)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error network.port_free_unknown 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法确定端口 %s 是否空闲（找不到 ss 和 netstat）' "${1}" ;;
+        en) printf 'cannot determine whether port %s is free (neither ss nor netstat found)' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg network.port_probe_cmd_failed 2
+    network.port_probe_cmd_failed)
+        [ "$#" -eq 2 ] || { s5_msg_contract_error network.port_probe_cmd_failed 2 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法确定端口 %s 是否空闲：%s 失败' "${1}" "${2}" ;;
+        en) printf 'cannot determine whether port %s is free: %s failed' "${1}" "${2}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg network.random_port_probe_failed 1
+    network.random_port_probe_failed)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error network.random_port_probe_failed 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法确定端口 %s 是否空闲：监听状态探测失败' "${1}" ;;
+        en) printf 'cannot determine whether port %s is free: the listen-state probe failed' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg network.no_free_port 2
+    network.no_free_port)
+        [ "$#" -eq 2 ] || { s5_msg_contract_error network.no_free_port 2 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '在 %s-%s 范围内尝试 50 次后仍未找到空闲端口' "${1}" "${2}" ;;
+        en) printf 'no free port found in %s-%s after 50 attempts' "${1}" "${2}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg input.term_save_failed 0
+    input.term_save_failed)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error input.term_save_failed 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法保存终端状态；拒绝读取密码' ;;
+        en) printf 'cannot save terminal state; refusing to read a password' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg input.term_echo_failed 0
+    input.term_echo_failed)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error input.term_echo_failed 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法关闭终端回显；拒绝读取密码' ;;
+        en) printf 'cannot disable terminal echo; refusing to read a password' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg selftest.interrupted 1
+    selftest.interrupted)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error selftest.interrupted 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '被 SIG%s 中断；正在清理' "${1}" ;;
+        en) printf 'interrupted by SIG%s; cleaning up' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+
+    # @s5-msg input.log_random_username 1
+    input.log_random_username)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error input.log_random_username 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '已生成随机用户名 %s' "${1}" ;;
+        en) printf 'generated random username %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+
+    *)
+        printf 's5: internal message error: unknown key %s\n' "$_s5_i18n_key" >&2
+        return 1
+        ;;
+    esac
+    _s5_i18n_key=''
+    return 0
+}
+
+# Contract failures are fixed bilingual text naming only the key and the
+# expected/received counts. Argument values are never printed: any of them
+# may carry a credential.
+s5_msg_contract_error() {
+    printf 's5: internal message error: key %s expects %s arguments, got %s\n' \
+        "$1" "$2" "$3" >&2
+    printf 's5: 内部消息错误：键 %s 需要 %s 个参数，实际 %s 个\n' \
+        "$1" "$2" "$3" >&2
+    _s5_i18n_key=''
+    return 0
+}
+
+s5_msg_locale_error() {
+    printf 's5: internal message error: no language selected\n' >&2
+    printf 's5: 内部消息错误：未选择语言\n' >&2
+    _s5_i18n_key=''
+    return 0
+}
+
+# Keyed channel adapters: same channels, prefixes, redaction and sink as the
+# raw wrappers above. Callers pass a literal key plus that key's data.
+s5_log_msg() {
+    _s5_i18n_text=$(s5_msg "$@") || { _s5_i18n_text=''; return 1; }
+    s5_log "$_s5_i18n_text"
+    _s5_i18n_text=''
+}
+
+s5_warn_msg() {
+    _s5_i18n_text=$(s5_msg "$@") || { _s5_i18n_text=''; return 1; }
+    s5_warn "$_s5_i18n_text"
+    _s5_i18n_text=''
+}
+
+s5_err_msg() {
+    _s5_i18n_text=$(s5_msg "$@") || { _s5_i18n_text=''; return 1; }
+    s5_err "$_s5_i18n_text"
+    _s5_i18n_text=''
+}
+
+s5_say_msg() {
+    _s5_i18n_text=$(s5_msg "$@") || { _s5_i18n_text=''; return 1; }
+    s5_say "$_s5_i18n_text"
+    _s5_i18n_text=''
+}
+
+# Prompts render to stderr without a newline, like the raw prompt printf
+# sites, so stdout stays clean for piped/redirected operation.
+s5_prompt_msg() {
+    _s5_i18n_text=$(s5_msg "$@") || { _s5_i18n_text=''; return 1; }
+    printf '%s' "$_s5_i18n_text" >&2
+    _s5_i18n_text=''
+}
+
+# ---------------------------------------------------------------------------
+# Language selection (Round 16, DORMANT until T13).
+#
+# Every invocation of the final product will ask this once, before any
+# command dispatch: blank or 1 selects Chinese, 2 selects English, anything
+# else re-prompts (bounded, like every other prompt), EOF fails without
+# dispatching. The prompt is bilingual by necessity -- no locale exists
+# until the operator answers. The choice lives only in S5_LANG for this
+# process: it is never exported, persisted, or written to state.
+#
+# NOT WIRED INTO s5_main YET: the message migration is staged, and wiring
+# the selector now would expose a Chinese menu followed by English errors.
+# Tests call it directly.
+# ---------------------------------------------------------------------------
+s5_select_language() {
+    _sla=0
+    while [ "$_sla" -lt 5 ]; do
+        _sla=$((_sla + 1))
+        printf '请选择语言 / Please select language:\n' >&2
+        printf '  1. 中文\n' >&2
+        printf '  2. English\n' >&2
+        printf '请选择 [1-2，默认 1] / Select [1-2, default 1]: ' >&2
+        _slin=''
+        if ! read -r _slin; then
+            printf '\n' >&2
+            printf '未选择语言，退出 / No language selected, exiting\n' >&2
+            _slin=''
+            return 1
+        fi
+        case "$_slin" in
+        '' | 1)
+            S5_LANG=zh
+            _slin=''
+            return 0
+            ;;
+        2)
+            S5_LANG=en
+            _slin=''
+            return 0
+            ;;
+        *)
+            printf '无效选择，请输入 1 或 2 / Invalid choice, enter 1 or 2\n' >&2
+            ;;
+        esac
+    done
+    printf '无效输入次数过多，退出 / Too many invalid entries, exiting\n' >&2
+    _slin=''
+    return 1
+}
+
 # s5_modelog <label> <path> : record an observed mode. Test mode only; this is
 # how the regression tests observe that a secret file is 0600 at write time and
 # that the config directory is never briefly group/world readable.
@@ -425,7 +3300,7 @@ s5_cleanup() {
 }
 
 s5_on_signal() {
-    s5_warn "interrupted by SIG$1; cleaning up"
+    s5_warn_msg selftest.interrupted "$1"
     s5_cleanup
     trap - EXIT
     exit "$2"
@@ -497,7 +3372,7 @@ s5_map_arch() {
         return 0
         ;;
     *)
-        s5_err "unsupported architecture: $1 (only x86_64/amd64 and aarch64/arm64 are supported)"
+        s5_err_msg detect.unsupported_arch "$1"
         return "$EX_UNSUPPORTED"
         ;;
     esac
@@ -509,7 +3384,7 @@ s5_map_arch() {
 s5_detect_platform() {
     _osf=${S5_OSRELEASE:-/etc/os-release}
     if [ ! -r "$_osf" ]; then
-        s5_err "cannot read $_osf: unable to identify this system"
+        s5_err_msg detect.cannot_read_osrelease "$_osf"
         return "$EX_UNSUPPORTED"
     fi
 
@@ -550,12 +3425,12 @@ s5_detect_platform() {
         fi
         ;;
     rhel | rocky | almalinux)
-        s5_err "ID=$S5_OS_ID VERSION_ID=$S5_OS_VERSION_ID is likely compatible with 3proxy, but it is not supported by this script. Supported: Ubuntu 22.04+, Debian 12+, Alpine 3.20+, CentOS Stream 9+."
+        s5_err_msg detect.likely_compatible "$S5_OS_ID" "$S5_OS_VERSION_ID"
         return "$EX_UNSUPPORTED"
         ;;
     esac
 
-    s5_err "unsupported system: ID=$S5_OS_ID VERSION_ID=$S5_OS_VERSION_ID (supported: Ubuntu 22.04+, Debian 12+, Alpine 3.20+, CentOS Stream 9+)"
+    s5_err_msg detect.unsupported "$S5_OS_ID" "$S5_OS_VERSION_ID"
     return "$EX_UNSUPPORTED"
 }
 
@@ -587,7 +3462,7 @@ s5_runtime_deps() {
         apt | apk) _rtprobe=iproute2 ;;
         dnf | yum) _rtprobe=iproute ;;
         *)
-            s5_err "no port-probe package for package manager: ${S5_PKGMGR:-unknown}"
+            s5_err_msg detect.no_probe_package "${S5_PKGMGR:-unknown}"
             return 1
             ;;
         esac
@@ -620,7 +3495,7 @@ s5_require_commands() {
         fi
     done
     if [ -n "$_miss" ]; then
-        s5_err "required command(s) not found:$_miss"
+        s5_err_msg detect.missing_commands "$_miss"
         return 1
     fi
     return 0
@@ -651,7 +3526,7 @@ s5_precheck() {
     # command list that must reach s5_require_commands as separate words.
     # shellcheck disable=SC2086
     if ! s5_require_commands $S5_BASE_COMMANDS; then
-        s5_err "cannot continue without the base utilities listed above"
+        s5_err_msg detect.no_base_utilities
         return "$EX_FAIL"
     fi
     if ! s5_detect_platform; then
@@ -659,12 +3534,12 @@ s5_precheck() {
     fi
     S5_ARCHNAME=$(s5_map_arch "$(uname -m)") || return "$EX_UNSUPPORTED"
     if ! s5_is_root; then
-        s5_err "installation requires root privileges; re-run with sudo"
+        s5_err_msg detect.require_root
         return "$EX_FAIL"
     fi
     if ! s5_pkgmgr_available; then
-        s5_err "the detected package manager ($S5_PKGMGR) is not installed on this system"
-        s5_err "install it, or use a supported image, then retry"
+        s5_err_msg detect.pkgmgr_missing "$S5_PKGMGR"
+        s5_err_msg detect.pkgmgr_missing_hint
         return "$EX_FAIL"
     fi
     return 0
@@ -688,7 +3563,7 @@ S5_READ_VALUE=''
 s5_valid_port() {
     case "${1:-}" in
     '' | *[!0-9]*)
-        s5_err "port must be a decimal number"
+        s5_err_msg input.port_not_decimal
         return 1
         ;;
     esac
@@ -699,7 +3574,7 @@ s5_valid_port() {
     # begins with a zero (the minimum is 1024), so 0* is the whole class.
     case "$1" in
     0*)
-        s5_err "port must not have leading zeros"
+        s5_err_msg input.port_leading_zero
         return 1
         ;;
     esac
@@ -707,11 +3582,11 @@ s5_valid_port() {
     # diagnose an oversized integer and return false; two false comparisons used
     # to accept an arbitrarily long digit string as a valid port.
     if [ "${#1}" -gt 5 ]; then
-        s5_err "port must be between $S5_PORT_MIN and $S5_PORT_MAX"
+        s5_err_msg input.port_range "$S5_PORT_MIN" "$S5_PORT_MAX"
         return 1
     fi
     if [ "$1" -lt "$S5_PORT_MIN" ] || [ "$1" -gt "$S5_PORT_MAX" ]; then
-        s5_err "port must be between $S5_PORT_MIN and $S5_PORT_MAX"
+        s5_err_msg input.port_range "$S5_PORT_MIN" "$S5_PORT_MAX"
         return 1
     fi
     return 0
@@ -721,12 +3596,12 @@ s5_valid_username() {
     _vu=${1:-}
     _vul=${#_vu}
     if [ "$_vul" -lt "$S5_USER_MIN" ] || [ "$_vul" -gt "$S5_USER_MAX" ]; then
-        s5_err "username must be $S5_USER_MIN-$S5_USER_MAX characters long (got $_vul)"
+        s5_err_msg validation.username_len "$S5_USER_MIN" "$S5_USER_MAX" "$_vul"
         return 1
     fi
     case "$_vu" in
     *[!A-Za-z0-9_-]*)
-        s5_err "username may contain only A-Z a-z 0-9 underscore and hyphen"
+        s5_err_msg validation.username_charset
         return 1
         ;;
     esac
@@ -738,12 +3613,12 @@ s5_valid_password() {
     _vp=${1:-}
     _vpl=${#_vp}
     if [ "$_vpl" -lt "$S5_PASS_MIN" ] || [ "$_vpl" -gt "$S5_PASS_MAX" ]; then
-        s5_err "password must be $S5_PASS_MIN-$S5_PASS_MAX characters long (got $_vpl)"
+        s5_err_msg validation.password_len "$S5_PASS_MIN" "$S5_PASS_MAX" "$_vpl"
         return 1
     fi
     case "$_vp" in
     *[!A-Za-z0-9._~-]*)
-        s5_err "password may contain only A-Z a-z 0-9 dot underscore tilde and hyphen"
+        s5_err_msg validation.password_charset
         return 1
         ;;
     esac
@@ -766,7 +3641,7 @@ s5_random_string() {
     _rgn=$1
     _rgv=$(LC_ALL=C tr -dc "$2" </dev/urandom 2>/dev/null | head -c "$_rgn")
     if [ "${#_rgv}" -ne "$_rgn" ]; then
-        s5_err "could not draw $_rgn random characters from /dev/urandom (got ${#_rgv})"
+        s5_err_msg input.random_chars_failed "$_rgn" "${#_rgv}"
         return 1
     fi
     printf '%s' "$_rgv"
@@ -791,7 +3666,7 @@ s5_random_username() {
 s5_random_int() {
     _ricnt=$1
     if [ "$_ricnt" -lt 1 ] || [ "$_ricnt" -gt 100000 ]; then
-        s5_err "s5_random_int: count out of supported range: $_ricnt"
+        s5_err_msg input.random_int_range "$_ricnt"
         return 1
     fi
     while :; do
@@ -830,8 +3705,8 @@ s5_probe_cmd() {
 # still answers "not free" in that situation; the callers below use this instead
 # of repeating that answer as though a port had really been seen in use.
 s5_err_no_probe() {
-    s5_err "cannot determine whether a port is free (neither ss nor netstat found)"
-    s5_err "install iproute2 (for ss) or net-tools (for netstat), then retry"
+    s5_err_msg network.no_probe_cmd
+    s5_err_msg network.no_probe_hint
 }
 
 # s5_port_free <port> : true when nothing is listening. Never binds.
@@ -842,7 +3717,7 @@ s5_port_free() {
         return $?
     fi
     if ! _pfc=$(s5_probe_cmd); then
-        s5_warn "cannot determine whether port $1 is free (neither ss nor netstat found)"
+        s5_warn_msg network.port_free_unknown "$1"
         return 1
     fi
     case "$_pfc" in
@@ -851,7 +3726,7 @@ s5_port_free() {
     *) return 1 ;;
     esac
     if [ "$_pfr" -ne 0 ]; then
-        s5_warn "cannot determine whether port $1 is free: $_pfc failed"
+        s5_warn_msg network.port_probe_cmd_failed "$1" "$_pfc"
         return 2
     fi
     if printf '%s\n' "$_pfout" | grep -q "[:.]$1[[:space:]]"; then
@@ -896,12 +3771,12 @@ s5_random_port() {
             ;;
         1) ;;
         *)
-            s5_err "cannot determine whether port $_rpp is free: the listen-state probe failed"
+            s5_err_msg network.random_port_probe_failed "$_rpp"
             return 1
             ;;
         esac
     done
-    s5_err "no free port found in $S5_RANDPORT_MIN-$S5_RANDPORT_MAX after 50 attempts"
+    s5_err_msg network.no_free_port "$S5_RANDPORT_MIN" "$S5_RANDPORT_MAX"
     return 1
 }
 
@@ -913,12 +3788,12 @@ s5_read_secret() {
     _rsok=0
     if [ -t 0 ]; then
         if ! s5_term_save; then
-            s5_err "cannot save terminal state; refusing to read a password"
+            s5_err_msg input.term_save_failed
             return 1
         fi
         stty -echo 2>/dev/null || {
             s5_term_restore
-            s5_err "cannot disable terminal echo; refusing to read a password"
+            s5_err_msg input.term_echo_failed
             return 1
         }
         if read -r S5_READ_VALUE; then _rsok=1; fi
@@ -945,17 +3820,16 @@ s5_prompt_port() {
     _ppa=0
     while [ "$_ppa" -lt 5 ]; do
         _ppa=$((_ppa + 1))
-        printf 'SOCKS5 port [Enter = random %s-%s]: ' \
-            "$S5_RANDPORT_MIN" "$S5_RANDPORT_MAX" >&2
+        s5_prompt_msg input.port_prompt "$S5_RANDPORT_MIN" "$S5_RANDPORT_MAX" 
         _ppin=''
         if ! read -r _ppin; then
-            s5_err "unexpected end of input while reading the port"
+            s5_err_msg input.port_eof
             return 1
         fi
         if [ -z "$_ppin" ]; then
             _pprand=$(s5_random_port) || return 1
             S5_PORT=$_pprand
-            s5_log "selected random port $S5_PORT"
+            s5_log_msg input.log_random_port "$S5_PORT"
             return 0
         fi
         if ! s5_valid_port "$_ppin"; then
@@ -969,18 +3843,18 @@ s5_prompt_port() {
         case "$_ppr" in
         0) ;;
         1)
-            s5_err "port $_ppin is already in use"
+            s5_err_msg input.port_in_use "$_ppin"
             continue
             ;;
         *)
-            s5_err "cannot determine whether port $_ppin is free: the listen-state probe failed"
+            s5_err_msg input.port_probe_failed "$_ppin"
             continue
             ;;
         esac
         S5_PORT=$_ppin
         return 0
     done
-    s5_err "too many invalid port entries"
+    s5_err_msg input.port_too_many
     return 1
 }
 
@@ -988,19 +3862,19 @@ s5_prompt_username() {
     _una=0
     while [ "$_una" -lt 5 ]; do
         _una=$((_una + 1))
-        printf 'SOCKS5 username [Enter = random]: ' >&2
+        s5_prompt_msg input.username_prompt
         _unin=''
         if ! read -r _unin; then
-            s5_err "unexpected end of input while reading the username"
+            s5_err_msg input.username_eof
             return 1
         fi
         if [ -z "$_unin" ]; then
             if ! S5_USERNAME=$(s5_random_username); then
                 S5_USERNAME=''
-                s5_err "could not generate a random username"
+                s5_err_msg input.username_gen_failed
                 return 1
             fi
-            s5_log "generated random username $S5_USERNAME"
+            s5_log_msg input.log_random_username "$S5_USERNAME"
             return 0
         fi
         if ! s5_valid_username "$_unin"; then
@@ -1009,7 +3883,7 @@ s5_prompt_username() {
         S5_USERNAME=$_unin
         return 0
     done
-    s5_err "too many invalid username entries"
+    s5_err_msg input.username_too_many
     return 1
 }
 
@@ -1017,9 +3891,9 @@ s5_prompt_password() {
     _pwa=0
     while [ "$_pwa" -lt 5 ]; do
         _pwa=$((_pwa + 1))
-        printf 'SOCKS5 password [Enter = generate %s random chars]: ' "$S5_PASS_GEN_LEN" >&2
+        s5_prompt_msg input.password_prompt "$S5_PASS_GEN_LEN"
         if ! s5_read_secret; then
-            s5_err "unexpected end of input while reading the password"
+            s5_err_msg input.password_eof
             return 1
         fi
         _pw1=$S5_READ_VALUE
@@ -1029,38 +3903,27 @@ s5_prompt_password() {
             # unless a string of exactly that length was really produced.
             if ! S5_PASSWORD=$(s5_random_password); then
                 S5_PASSWORD=''
-                s5_err "could not generate a random password"
+                s5_err_msg input.password_gen_failed
                 return 1
             fi
             S5_SECRET=$S5_PASSWORD
-            s5_log "generated a random $S5_PASS_GEN_LEN-character password"
+            s5_log_msg input.password_gen_log "$S5_PASS_GEN_LEN"
             return 0
         fi
         if ! s5_valid_password "$_pw1"; then
             _pw1=''
             continue
         fi
-        printf 'Confirm password: ' >&2
-        if ! s5_read_secret; then
-            _pw1=''
-            s5_err "unexpected end of input while confirming the password"
-            return 1
-        fi
-        _pw2=$S5_READ_VALUE
-        S5_READ_VALUE=''
-        if [ "$_pw1" != "$_pw2" ]; then
-            _pw1=''
-            _pw2=''
-            s5_err "passwords do not match"
-            continue
-        fi
+        # Read once, no confirmation: the final credential card reprints the
+        # adopted password to the terminal, which is where a typo becomes
+        # visible -- the old confirm prompt only protected against typos
+        # before that card existed.
         S5_PASSWORD=$_pw1
         S5_SECRET=$S5_PASSWORD
         _pw1=''
-        _pw2=''
         return 0
     done
-    s5_err "too many failed password attempts"
+    s5_err_msg input.password_too_many
     return 1
 }
 
@@ -1076,15 +3939,15 @@ s5_prompt_password() {
 # a secret into, and that it is mode 0600.
 s5_secure_tmp() {
     if [ -L "$1" ]; then
-        s5_err "refusing to write $1: it is a symbolic link"
+        s5_err_msg fs.write_symlink "$1"
         return 1
     fi
     if [ ! -f "$1" ]; then
-        s5_err "refusing to write $1: not a regular file"
+        s5_err_msg fs.write_not_regular "$1"
         return 1
     fi
     if ! chmod 0600 "$1"; then
-        s5_err "cannot set mode 0600 on $1"
+        s5_err_msg fs.write_mode0600 "$1"
         return 1
     fi
     return 0
@@ -1099,7 +3962,7 @@ s5_secure_tmp() {
 # directories and shared administrator-owned paths such as /etc/init.d.
 _s5_mkdir_component() {
     if [ -L "$1" ]; then
-        s5_err "refusing to use $1: it is a symbolic link"
+        s5_err_msg fs.use_symlink "$1"
         return 1
     fi
     if [ -d "$1" ]; then
@@ -1110,19 +3973,19 @@ _s5_mkdir_component() {
         return 0
     fi
     if [ -e "$1" ]; then
-        s5_err "refusing to use $1: it is not a directory"
+        s5_err_msg fs.use_not_dir "$1"
         return 1
     fi
     if ! _s5_mkdir_component "$(dirname "$1")" "$2" "$3" "$4"; then
         return 1
     fi
     if ! mkdir "$1"; then
-        s5_err "cannot create $1"
+        s5_err_msg fs.create_failed "$1"
         return 1
     fi
     # Restrict the new inode before applying its intended traversable mode.
     if ! chmod 0700 "$1"; then
-        s5_err "cannot restrict $1 to mode 0700"
+        s5_err_msg fs.restrict_0700 "$1"
         return 1
     fi
     s5_modelog "dir-created:$1" "$1"
@@ -1139,7 +4002,7 @@ _s5_mkdir_component() {
 
 s5_mkdir_secure() {
     if [ -L "$1" ]; then
-        s5_err "refusing to use $1: it is a symbolic link"
+        s5_err_msg fs.use_symlink "$1"
         return 1
     fi
     # Existing directories may be shared with the host administrator. Do not
@@ -1156,15 +4019,15 @@ s5_atomic_write() {
     _awm=$3
     _awd=$(dirname "$_awp")
     if [ ! -d "$_awd" ]; then
-        s5_err "cannot write $_awp: directory $_awd does not exist"
+        s5_err_msg fs.atomic_dir_missing "$_awp" "$_awd"
         return 1
     fi
     if [ -L "$_awp" ]; then
-        s5_err "refusing to write $_awp: it is a symbolic link"
+        s5_err_msg fs.atomic_symlink "$_awp"
         return 1
     fi
     if ! _awt=$(mktemp "$_awd/.s5tmp.XXXXXX"); then
-        s5_err "cannot create a temporary file in $_awd"
+        s5_err_msg fs.atomic_mktemp_failed "$_awd"
         return 1
     fi
     if ! s5_secure_tmp "$_awt"; then
@@ -1173,7 +4036,7 @@ s5_atomic_write() {
     fi
     s5_modelog "tmp-created:$_awp" "$_awt"
     if ! cat >"$_awt"; then
-        s5_err "cannot write $_awt"
+        s5_err_msg fs.atomic_write_tmp "$_awt"
         rm -f "$_awt"
         return 1
     fi
@@ -1183,7 +4046,7 @@ s5_atomic_write() {
         return 1
     fi
     if ! mv "$_awt" "$_awp"; then
-        s5_err "cannot install $_awp"
+        s5_err_msg fs.atomic_install "$_awp"
         rm -f "$_awt"
         return 1
     fi
@@ -1193,14 +4056,14 @@ s5_atomic_write() {
 # s5_apply_owner_mode <path> <owner:group> <mode>
 s5_apply_owner_mode() {
     if ! chmod "$3" "$1"; then
-        s5_err "cannot set mode $3 on $1"
+        s5_err_msg fs.atomic_mode "$3" "$1"
         return 1
     fi
     if [ "${S5_TEST_MODE:-0}" = "1" ] && [ "${S5_SKIP_OWNERSHIP:-0}" = "1" ]; then
         return 0
     fi
     if ! chown "$2" "$1"; then
-        s5_err "cannot set ownership $2 on $1"
+        s5_err_msg fs.atomic_owner "$2" "$1"
         return 1
     fi
     return 0
@@ -1254,13 +4117,13 @@ s5_state_key_is_once() {
 s5_state_value_ok() {
     case "$2" in
     *[!A-Za-z0-9._~:/-]*)
-        s5_err "state: value for '$1' contains a disallowed character"
+        s5_err_msg state.disallowed_char "$1"
         return 1
         ;;
     esac
     if s5_state_key_is_flag "$1"; then
         if [ "$2" != "1" ]; then
-            s5_err "state: flag '$1' must be exactly 1"
+            s5_err_msg state.flag_not_1 "$1"
             return 1
         fi
         return 0
@@ -1275,26 +4138,26 @@ s5_state_value_ok() {
         # are decided before any arithmetic runs.
         case "$2" in
         '' | *[!0-9]*)
-            s5_err "state: port is not numeric"
+            s5_err_msg state.port_not_numeric
             return 1
             ;;
         0*)
-            s5_err "state: port must not have leading zeros"
+            s5_err_msg state.port_leading_zero
             return 1
             ;;
         ??????*)
-            s5_err "state: port out of range"
+            s5_err_msg state.port_out_of_range
             return 1
             ;;
         esac
         if [ "$2" -lt "$S5_PORT_MIN" ] || [ "$2" -gt "$S5_PORT_MAX" ]; then
-            s5_err "state: port out of range"
+            s5_err_msg state.port_out_of_range
             return 1
         fi
         ;;
     username)
         if ! s5_valid_username "$2" >/dev/null 2>&1; then
-            s5_err "state: username is not valid"
+            s5_err_msg state.username_invalid
             return 1
         fi
         ;;
@@ -1304,12 +4167,12 @@ s5_state_value_ok() {
         # a shell case pattern means "then anything", so any 8-hex prefix
         # with an allowed trailing character was accepted.
         if [ "${#2}" -ne 40 ]; then
-            s5_err "state: commit must be exactly 40 hexadecimal characters"
+            s5_err_msg state.commit_len
             return 1
         fi
         case "$2" in
         *[!0-9a-f]*)
-            s5_err "state: commit is not a hex object name"
+            s5_err_msg state.commit_not_hex
             return 1
             ;;
         esac
@@ -1318,7 +4181,7 @@ s5_state_value_ok() {
         case "$2" in
         systemd | openrc) ;;
         *)
-            s5_err "state: unknown init system '$2'"
+            s5_err_msg state.unknown_init "$2"
             return 1
             ;;
         esac
@@ -1329,7 +4192,7 @@ s5_state_value_ok() {
         '' | *[!0-9]*) _savok=1 ;;
         esac
         if [ "$_savok" -ne 0 ]; then
-            s5_err "state: $1 must be numeric"
+            s5_err_msg state.not_numeric "$1"
             return 1
         fi
         ;;
@@ -1337,7 +4200,7 @@ s5_state_value_ok() {
         case "$2" in
         complete) ;;
         *)
-            s5_err "state: unknown status '$2'"
+            s5_err_msg state.unknown_status "$2"
             return 1
             ;;
         esac
@@ -1354,25 +4217,25 @@ s5_state_load() {
         return 1
     fi
     if [ -L "$S5_STATE" ]; then
-        s5_err "refusing to read $S5_STATE: it is a symbolic link"
+        s5_err_msg state.read_symlink "$S5_STATE"
         return 1
     fi
     if [ ! -f "$S5_STATE" ]; then
-        s5_err "refusing to read $S5_STATE: not a regular file"
+        s5_err_msg state.read_not_regular "$S5_STATE"
         return 1
     fi
     if [ ! -r "$S5_STATE" ]; then
-        s5_err "cannot read the state file $S5_STATE"
+        s5_err_msg state.read_failed "$S5_STATE"
         return 1
     fi
 
     _slmode=$(stat -c '%a' "$S5_STATE" 2>/dev/null || printf '')
     if [ "$_slmode" != 600 ]; then
-        s5_err "refusing to read $S5_STATE: state file must be mode 0600 (found ${_slmode:-unknown})"
+        s5_err_msg state.read_mode "$S5_STATE" "${_slmode:-unknown}"
         return 1
     fi
     if ! _slcontents=$(cat "$S5_STATE"); then
-        s5_err "could not read the state file $S5_STATE"
+        s5_err_msg state.read_error "$S5_STATE"
         return 1
     fi
 
@@ -1388,7 +4251,7 @@ s5_state_load() {
         case "$_sl" in
         *"	"*) ;;
         *)
-            s5_err "state: line $_slline is malformed (no field separator)"
+            s5_err_msg state.line_malformed "$_slline"
             _slbad=1
             continue
             ;;
@@ -1396,7 +4259,7 @@ s5_state_load() {
         _slk=${_sl%%	*}
         _slv=${_sl#*	}
         if ! s5_state_key_known "$_slk"; then
-            s5_err "state: unknown key '$_slk' on line $_slline"
+            s5_err_msg state.unknown_key "$_slk" "$_slline"
             _slbad=1
             continue
         fi
@@ -1407,7 +4270,7 @@ s5_state_load() {
         if s5_state_key_is_once "$_slk"; then
             for _sls in $_slseen; do
                 if [ "$_sls" = "$_slk" ]; then
-                    s5_err "state: duplicate key '$_slk' on line $_slline"
+                    s5_err_msg state.duplicate_key "$_slk" "$_slline"
                     _slbad=1
                 fi
             done
@@ -1424,12 +4287,12 @@ $_slcontents
 EOF
     _slread=$?
     if [ "$_slread" -ne 0 ]; then
-        s5_err "could not read the state file $S5_STATE"
+        s5_err_msg state.read_error "$S5_STATE"
         return 1
     fi
 
     if [ "$_slbad" -ne 0 ]; then
-        s5_err "state file is corrupt; refusing to act on it"
+        s5_err_msg state.corrupt
         return 1
     fi
     S5_STATE_BUF=$_slbuf
@@ -1450,7 +4313,7 @@ EOF
             fi
         done
         if [ -n "$_slmiss" ]; then
-            s5_err "state: claims to be complete but is missing:$_slmiss"
+            s5_err_msg state.complete_missing "$_slmiss"
             S5_STATE_BUF=''
             S5_STATE_LOADED=0
             return 1
@@ -1463,7 +4326,7 @@ EOF
 # by every caller.
 s5_state_flush() {
     if ! _sft=$(mktemp "$S5_STATEDIR/.s5state.XXXXXX"); then
-        s5_err "cannot create a temporary state file in $S5_STATEDIR"
+        s5_err_msg state.mktemp_failed "$S5_STATEDIR"
         return 1
     fi
     if ! s5_secure_tmp "$_sft"; then
@@ -1472,7 +4335,7 @@ s5_state_flush() {
     fi
     s5_modelog "tmp-created:$S5_STATE" "$_sft"
     if ! printf '%s\n' "$S5_STATE_BUF" >"$_sft"; then
-        s5_err "cannot write the state file"
+        s5_err_msg state.write_failed
         rm -f "$_sft"
         return 1
     fi
@@ -1482,7 +4345,7 @@ s5_state_flush() {
         return 1
     fi
     if ! mv "$_sft" "$S5_STATE"; then
-        s5_err "cannot install the state file"
+        s5_err_msg state.install_failed
         rm -f "$_sft"
         return 1
     fi
@@ -1524,7 +4387,7 @@ s5_state_begin() {
 # s5_state_add <key> <value> : validate, append, and atomically rewrite.
 s5_state_add() {
     if ! s5_state_key_known "$1"; then
-        s5_err "state: refusing to record unknown key '$1'"
+        s5_err_msg state.record_unknown_key "$1"
         return 1
     fi
     if ! s5_state_value_ok "$1" "$2"; then
@@ -1537,7 +4400,7 @@ $1	$2"
         S5_STATE_BUF="$1	$2"
     fi
     if ! s5_state_flush; then
-        s5_err "state: could not persist '$1'; aborting to avoid orphaned resources"
+        s5_err_msg state.persist_failed "$1"
         return 1
     fi
     return 0
@@ -1588,22 +4451,23 @@ s5_make_workdir() {
 s5_rm_workdir() {
     case "${1:-}" in
     '' | '/')
-        s5_warn "refusing to remove build directory: ${1:-<empty>}"
+        _brde=${1:-<empty>}
+        s5_warn_msg build.rm_refuse_empty
         return 1
         ;;
     */socks5-manager-build.* | */b.??????)
         if ! rm -rf "$1"; then
-            s5_err "could not remove build directory $1"
+            s5_err_msg build.rm_failed "$1"
             return 1
         fi
         if [ -e "$1" ] || [ -L "$1" ]; then
-            s5_err "build directory still exists after removal: $1"
+            s5_err_msg build.rm_still_exists "$1"
             return 1
         fi
         return 0
         ;;
     *)
-        s5_warn "refusing to remove unexpected build directory: $1"
+        s5_warn_msg build.rm_unexpected "$1"
         return 1
         ;;
     esac
@@ -1640,7 +4504,7 @@ s5_install_binary() {
         return 1
     fi
     if ! _ibt=$(mktemp "$S5_PREFIX/.s5bin.XXXXXX"); then
-        s5_err "cannot create a temporary file in $S5_PREFIX"
+        s5_err_msg build.tmp_in_prefix
         return 1
     fi
     if ! s5_secure_tmp "$_ibt"; then
@@ -1648,7 +4512,7 @@ s5_install_binary() {
         return 1
     fi
     if ! cat <"$1" >"$_ibt"; then
-        s5_err "cannot copy the built binary to $S5_PREFIX"
+        s5_err_msg build.copy_failed
         rm -f "$_ibt"
         return 1
     fi
@@ -1657,7 +4521,7 @@ s5_install_binary() {
         return 1
     fi
     if ! mv "$_ibt" "$S5_BIN"; then
-        s5_err "cannot install the binary at $S5_BIN"
+        s5_err_msg build.install_failed "$S5_BIN"
         rm -f "$_ibt"
         return 1
     fi
@@ -1667,48 +4531,48 @@ s5_install_binary() {
 s5_build_3proxy() {
     _bwd=$(s5_make_workdir)
     if [ -z "$_bwd" ] || [ ! -d "$_bwd" ]; then
-        s5_err "cannot create a build directory"
+        s5_err_msg build.mktmpdir_failed
         return 1
     fi
     S5_WORKDIR=$_bwd
     _bsrc="$_bwd/3proxy"
 
-    s5_log "fetching 3proxy $S5_UPSTREAM_TAG from $S5_REPO_URL"
+    s5_log_msg build.fetching "$S5_UPSTREAM_TAG" "$S5_REPO_URL"
     if ! git clone --quiet "$S5_REPO_URL" "$_bsrc"; then
-        s5_err "git clone failed"
+        s5_err_msg build.clone_failed
         s5_release_workdir
         return 1
     fi
 
-    s5_log "checking out pinned commit $S5_PINNED_COMMIT"
+    s5_log_msg build.checkout_pinned "$S5_PINNED_COMMIT"
     if ! git -C "$_bsrc" checkout --quiet --detach "$S5_PINNED_COMMIT"; then
-        s5_err "git checkout of the pinned commit failed"
+        s5_err_msg build.checkout_failed
         s5_release_workdir
         return 1
     fi
 
     _bhead=$(git -C "$_bsrc" rev-parse HEAD 2>/dev/null | tr -d ' \t\n')
     if [ "$_bhead" != "$S5_PINNED_COMMIT" ]; then
-        s5_err "HEAD verification failed: expected $S5_PINNED_COMMIT, got ${_bhead:-<empty>}"
+        s5_err_msg build.head_mismatch "$S5_PINNED_COMMIT" "${_bhead:-<empty>}"
         s5_release_workdir
         return 1
     fi
-    s5_log "HEAD verified against the pinned commit"
+    s5_log_msg build.head_verified
 
     if ! _bout=$(cd "$_bsrc" && make -f Makefile.Linux 2>&1); then
-        s5_err "build failed (make -f Makefile.Linux)"
+        s5_err_msg build.make_failed
         printf '%s\n' "$_bout" | tail -n 20 >&2
         s5_release_workdir
         return 1
     fi
 
     if [ ! -f "$_bsrc/bin/3proxy" ] || [ -L "$_bsrc/bin/3proxy" ]; then
-        s5_err "build produced no regular bin/3proxy artifact"
+        s5_err_msg build.no_artifact
         s5_release_workdir
         return 1
     fi
     if [ ! -x "$_bsrc/bin/3proxy" ]; then
-        s5_err "built bin/3proxy is not executable"
+        s5_err_msg build.not_executable
         s5_release_workdir
         return 1
     fi
@@ -1718,7 +4582,7 @@ s5_build_3proxy() {
         return 1
     fi
 
-    s5_log "installed $S5_BIN"
+    s5_log_msg build.installed "$S5_BIN"
     if ! s5_release_workdir; then
         return 1
     fi
@@ -1754,11 +4618,11 @@ S5_DENY_CIDRS='0.0.0.0/8
 
 s5_render_cfg() {
     if ! s5_valid_port "$S5_PORT" >/dev/null 2>&1; then
-        s5_err "cannot render configuration: invalid port"
+        s5_err_msg render.cfg_bad_port
         return 1
     fi
     if ! s5_valid_username "$S5_USERNAME" >/dev/null 2>&1; then
-        s5_err "cannot render configuration: invalid username"
+        s5_err_msg render.cfg_bad_username
         return 1
     fi
     printf 'log\n'
@@ -1778,11 +4642,11 @@ s5_render_cfg() {
 
 s5_render_users() {
     if ! s5_valid_username "$S5_USERNAME" >/dev/null 2>&1; then
-        s5_err "refusing to render credentials: username is not valid"
+        s5_err_msg render.users_bad_username
         return 1
     fi
     if ! s5_valid_password "$S5_PASSWORD" >/dev/null 2>&1; then
-        s5_err "refusing to render credentials: password is not valid"
+        s5_err_msg render.users_bad_password
         return 1
     fi
     printf '%s:CL:%s\n' "$S5_USERNAME" "$S5_PASSWORD"
@@ -1954,17 +4818,17 @@ s5_account_create() {
         0) ;;
         1)
             if ! addgroup -S "$S5_SERVICE_GROUP"; then
-                s5_err "failed to create the $S5_SERVICE_GROUP group"
+                s5_err_msg account.group_create_failed "$S5_SERVICE_GROUP"
                 return 1
             fi
             ;;
         *)
-            s5_err "could not determine whether the $S5_SERVICE_GROUP group exists"
+            s5_err_msg account.group_exists_unknown "$S5_SERVICE_GROUP"
             return 1
             ;;
         esac
         if ! adduser -S -D -H -G "$S5_SERVICE_GROUP" -s "$_nl" "$S5_SERVICE_USER"; then
-            s5_err "failed to create the $S5_SERVICE_USER account"
+            s5_err_msg account.user_create_failed "$S5_SERVICE_USER"
             return 1
         fi
         ;;
@@ -1975,18 +4839,18 @@ s5_account_create() {
         0) ;;
         1)
             if ! groupadd -r "$S5_SERVICE_GROUP"; then
-                s5_err "failed to create the $S5_SERVICE_GROUP group"
+                s5_err_msg account.group_create_failed "$S5_SERVICE_GROUP"
                 return 1
             fi
             ;;
         *)
-            s5_err "could not determine whether the $S5_SERVICE_GROUP group exists"
+            s5_err_msg account.group_exists_unknown "$S5_SERVICE_GROUP"
             return 1
             ;;
         esac
         if ! useradd -r -g "$S5_SERVICE_GROUP" -M -d /nonexistent \
             -s "$_nl" "$S5_SERVICE_USER"; then
-            s5_err "failed to create the $S5_SERVICE_USER account"
+            s5_err_msg account.user_create_failed "$S5_SERVICE_USER"
             return 1
         fi
         ;;
@@ -2054,7 +4918,7 @@ s5_account_remove() {
 
     case "$_aruid" in
     '' | *[!0-9]*)
-        s5_err "the state does not record a usable account uid; remove $S5_SERVICE_USER manually if it is yours"
+        s5_err_msg account.remove_uid_missing "$S5_SERVICE_USER"
         return 1
         ;;
     esac
@@ -2062,7 +4926,7 @@ s5_account_remove() {
     if [ "$_arwantgroup" = "1" ]; then
         case "${3:-}" in
         '' | *[!0-9]*)
-            s5_err "the state does not record a usable group gid; remove $S5_SERVICE_GROUP manually if it is yours"
+            s5_err_msg account.remove_gid_missing "$S5_SERVICE_GROUP"
             return 1
             ;;
         esac
@@ -2076,10 +4940,10 @@ s5_account_remove() {
         _arcuid=$(s5_current_uid)
         _arcus=$?
         if [ "$_arcus" -ne 0 ]; then
-            s5_err "could not determine the current uid of $S5_SERVICE_USER"
+            s5_err_msg account.current_uid_unknown "$S5_SERVICE_USER"
             _arbad=1
         elif [ "$_arcuid" != "$_aruid" ]; then
-            s5_err "refusing to remove $S5_SERVICE_USER: the name now answers to uid $_arcuid, not the uid $_aruid this script created (the name was reused)"
+            s5_err_msg account.remove_uid_reused "$S5_SERVICE_USER" "$_arcuid" "$_aruid"
             _arbad=1
         else
             s5_del_user || true
@@ -2087,12 +4951,12 @@ s5_account_remove() {
             _arer=$?
             case "$_arer" in
             0)
-                s5_err "the $S5_SERVICE_USER account still exists after the removal attempt"
+                s5_err_msg account.remove_user_failed "$S5_SERVICE_USER"
                 _arbad=1
                 ;;
             1) ;;
             *)
-                s5_err "could not determine whether the $S5_SERVICE_USER account was removed"
+                s5_err_msg account.remove_user_unknown "$S5_SERVICE_USER"
                 _arbad=1
                 ;;
             esac
@@ -2100,7 +4964,7 @@ s5_account_remove() {
         ;;
     1) ;;
     *)
-        s5_err "could not determine whether the $S5_SERVICE_USER account exists"
+        s5_err_msg account.exists_unknown "$S5_SERVICE_USER"
         _arbad=1
         ;;
     esac
@@ -2113,10 +4977,10 @@ s5_account_remove() {
             _arcgid=$(s5_current_gid)
             _arcgs=$?
             if [ "$_arcgs" -ne 0 ]; then
-                s5_err "could not determine the current gid of $S5_SERVICE_GROUP"
+                s5_err_msg account.current_gid_unknown "$S5_SERVICE_GROUP"
                 _arbad=1
             elif [ "$_arcgid" != "$_argid" ]; then
-                s5_err "refusing to remove $S5_SERVICE_GROUP: the name now answers to gid $_arcgid, not the gid $_argid this script created (the name was reused)"
+                s5_err_msg account.remove_gid_reused "$S5_SERVICE_GROUP" "$_arcgid" "$_argid"
                 _arbad=1
             else
                 s5_del_group || true
@@ -2124,12 +4988,12 @@ s5_account_remove() {
                 _ager=$?
                 case "$_ager" in
                 0)
-                    s5_err "the $S5_SERVICE_GROUP group still exists after the removal attempt"
+                    s5_err_msg account.remove_group_failed "$S5_SERVICE_GROUP"
                     _arbad=1
                     ;;
                 1) ;;
                 *)
-                    s5_err "could not determine whether the $S5_SERVICE_GROUP group was removed"
+                    s5_err_msg account.remove_group_unknown "$S5_SERVICE_GROUP"
                     _arbad=1
                     ;;
                 esac
@@ -2137,7 +5001,7 @@ s5_account_remove() {
             ;;
         1) ;;
         *)
-            s5_err "could not determine whether the $S5_SERVICE_GROUP group exists"
+            s5_err_msg account.group_exists_unknown2 "$S5_SERVICE_GROUP"
             _arbad=1
             ;;
         esac
@@ -2161,48 +5025,48 @@ S5_FORBIDDEN_DIRECTIVES='proxy admin ftppr smtpp pop3p imapp tlspr tcppm udppm d
 s5_static_check_cfg() {
     _scf=$1
     if [ ! -f "$_scf" ]; then
-        s5_err "static check: configuration not found: $_scf"
+        s5_err_msg static.not_found "$_scf"
         return 1
     fi
     _scbad=0
 
     if ! grep -q '^log$' "$_scf"; then
-        s5_err "static check: missing 'log'"
+        s5_err_msg static.missing_log
         _scbad=1
     fi
     if ! grep -q '^auth strong$' "$_scf"; then
-        s5_err "static check: missing 'auth strong'"
+        s5_err_msg static.missing_auth_strong
         _scbad=1
     fi
     _scflushcount=$(grep -c '^flush$' "$_scf" || true)
     _scflush=$(grep -n '^flush$' "$_scf" | head -n 1 | cut -d: -f1)
     if [ "$_scflushcount" -ne 1 ]; then
-        s5_err "static check: expected exactly one flush directive"
+        s5_err_msg static.one_flush
         _scbad=1
     fi
     if ! grep -q '^allow .* CONNECT$' "$_scf"; then
-        s5_err "static check: missing an explicit 'allow ... CONNECT' rule"
+        s5_err_msg static.missing_allow_connect
         _scbad=1
     fi
     _scdenycount=$(grep -c '^deny \*$' "$_scf" || true)
     _scdenyline=$(grep -n '^deny \*$' "$_scf" | head -n 1 | cut -d: -f1)
     if [ "$_scdenycount" -ne 1 ]; then
-        s5_err "static check: expected exactly one terminal deny"
+        s5_err_msg static.one_terminal_deny
         _scbad=1
     fi
     if ! grep -q '^socks -4 -u2 -p[0-9][0-9]* -i' "$_scf"; then
-        s5_err "static check: missing 'socks -4 -u2 -p<port> -i<address>'"
+        s5_err_msg static.missing_socks_line
         _scbad=1
     fi
     _scinclude=$(grep -cFx "users \$$S5_USERSCFG" "$_scf" || true)
     if [ "$_scinclude" -ne 1 ]; then
-        s5_err "static check: expected exactly one credentials include"
+        s5_err_msg static.one_credentials_include
         _scbad=1
     fi
     _scsockcount=$(grep -c '^socks[[:space:]]' "$_scf" || true)
     if [ "$_scsockcount" -ne 1 ] ||
         ! grep -qxF "socks -4 -u2 -p$S5_PORT -i$S5_LISTEN" "$_scf"; then
-        s5_err "static check: expected exactly one socks -4 -u2 -p$S5_PORT -i$S5_LISTEN line"
+        s5_err_msg static.one_socks_line "$S5_PORT" "$S5_LISTEN"
         _scbad=1
     fi
 
@@ -2219,7 +5083,7 @@ s5_static_check_cfg() {
     _scallowcount=$(grep -c '^allow ' "$_scf" || true)
     if [ "$_scallowcount" -ne 1 ] ||
         ! grep -qxF "allow $S5_USERNAME * * * CONNECT" "$_scf"; then
-        s5_err "static check: expected exactly one allow $S5_USERNAME * * * CONNECT rule"
+        s5_err_msg static.one_allow_rule "$S5_USERNAME"
         _scbad=1
     fi
     if [ -z "$_scallow" ]; then
@@ -2228,12 +5092,12 @@ s5_static_check_cfg() {
     _scfirstdeny=$(grep -n '^deny \* \* ' "$_scf" | head -n 1 | cut -d: -f1)
     if [ -z "$_scflush" ] || [ -z "$_scfirstdeny" ] ||
         [ "$_scflush" -ge "$_scfirstdeny" ]; then
-        s5_err "static check: flush must precede all destination deny rules"
+        s5_err_msg static.flush_before_deny
         _scbad=1
     fi
     if [ -z "$_scdenyline" ] || [ "$_scallow" -eq 0 ] ||
         [ "$_scdenyline" -le "$_scallow" ]; then
-        s5_err "static check: terminal deny must follow the allow rule"
+        s5_err_msg static.deny_after_allow
         _scbad=1
     fi
     _scmissing=''
@@ -2245,27 +5109,27 @@ s5_static_check_cfg() {
         fi
     done
     if [ -n "$_scmissing" ]; then
-        s5_err "static check: missing destination deny rule(s):$_scmissing"
+        s5_err_msg static.missing_deny_rules "$_scmissing"
         _scbad=1
     fi
 
     _sclastdeny=$(grep -n '^deny \* \* ' "$_scf" | tail -n 1 | cut -d: -f1)
     if [ -z "$_sclastdeny" ]; then
-        s5_err "static check: no destination deny rules found"
+        s5_err_msg static.no_deny_rules
         _scbad=1
     elif [ "$_scallow" -eq 0 ] || [ "$_sclastdeny" -ge "$_scallow" ]; then
-        s5_err "static check: destination deny rules must precede the allow rule"
+        s5_err_msg static.deny_before_allow
         _scbad=1
     fi
     _sccidrcount=$(grep -c '^deny \* \* ' "$_scf" || true)
     if [ "$_sccidrcount" -ne "$_scwant" ]; then
-        s5_err "static check: expected $_scwant destination deny rules, found $_sccidrcount"
+        s5_err_msg static.deny_count "$_scwant" "$_sccidrcount"
         _scbad=1
     fi
 
     _sccount=$(grep -c '^socks[[:space:]]' "$_scf" || true)
     if [ "$_sccount" -ne 1 ]; then
-        s5_err "static check: expected exactly one socks service line, found $_sccount"
+        s5_err_msg static.socks_count "$_sccount"
         _scbad=1
     fi
 
@@ -2277,21 +5141,21 @@ s5_static_check_cfg() {
     # the forbidden `system`.
     for _scd in $S5_FORBIDDEN_DIRECTIVES; do
         if grep -qE "^$_scd([[:space:]]|\$)" "$_scf"; then
-            s5_err "static check: forbidden directive present: $_scd"
+            s5_err_msg static.forbidden_directive "$_scd"
             _scbad=1
         fi
     done
     if grep -qE 'auth none|auth iponly' "$_scf"; then
-        s5_err "static check: weak authentication directive present"
+        s5_err_msg static.weak_auth
         _scbad=1
     fi
     if grep -qE 'BIND|UDPASSOC' "$_scf"; then
-        s5_err "static check: forbidden operation present (BIND or UDPASSOC)"
+        s5_err_msg static.forbidden_op
         _scbad=1
     fi
 
     if [ ! -f "$S5_USERSCFG" ] || [ -L "$S5_USERSCFG" ]; then
-        s5_err "static check: credentials file must be a regular non-symbolic-link file"
+        s5_err_msg static.cred_not_regular
         _scbad=1
     else
         _scm=$(stat -c '%a' "$S5_USERSCFG" 2>/dev/null || printf '')
@@ -2299,27 +5163,27 @@ s5_static_check_cfg() {
         case "$_scm" in
         600 | 640) ;;
         *)
-            s5_err "static check: credentials file must be mode 0600 or 0640, found ${_scm:-unknown}"
+            s5_err_msg static.cred_mode "${_scm:-unknown}"
             _scbad=1
             ;;
         esac
         if [ "${S5_TEST_MODE:-0}" != 1 ] && [ "$_sco" != "root:$S5_SERVICE_GROUP" ]; then
-            s5_err "static check: credentials file must be owned by root:$S5_SERVICE_GROUP, found ${_sco:-unknown}"
+            s5_err_msg static.cred_owner "$S5_SERVICE_GROUP" "${_sco:-unknown}"
             _scbad=1
         fi
         _screccount=$(grep -c '' "$S5_USERSCFG" 2>/dev/null)
         _scread=$?
         if [ "$_scread" -gt 1 ]; then
-            s5_err "static check: cannot read credentials file"
+            s5_err_msg static.cred_unreadable
             _scbad=1
         elif [ "$_screccount" -ne 1 ]; then
-            s5_err "static check: credentials file must contain exactly one credential for the configured username"
+            s5_err_msg static.cred_one_line
             _scbad=1
         else
             _scline=$(cat "$S5_USERSCFG" 2>/dev/null)
             _scread=$?
             if [ "$_scread" -ne 0 ]; then
-                s5_err "static check: cannot read credentials file"
+                s5_err_msg static.cred_unreadable
                 _scbad=1
             else
                 case "$_scline" in
@@ -2335,7 +5199,7 @@ s5_static_check_cfg() {
                 if [ "$_scuser" != "$S5_USERNAME" ] ||
                     ! s5_valid_password "$_scpass" >/dev/null 2>&1 ||
                     [ "$_scpass" != "$S5_PASSWORD" ]; then
-                    s5_err "static check: credentials file must contain exactly one credential for the configured username"
+                    s5_err_msg static.cred_one_line
                     _scbad=1
                 fi
             fi
@@ -2380,12 +5244,12 @@ s5_selftest_bad() {
     s5_curl_config "$_stu" "$_stp" | curl --config - >/dev/null 2>&1
     _strc=$?
     if [ "$_strc" -eq 0 ]; then
-        s5_err "SECURITY: the proxy accepted credentials that should have been refused"
+        s5_err_msg selftest.security_accepted
         return 1
     fi
     if [ "$_strc" -ne "$S5_CURL_PROXY_ERR" ]; then
-        s5_err "inconclusive: the bad-credential probe failed with curl status $_strc, not $S5_CURL_PROXY_ERR (proxy handshake error)"
-        s5_err "the proxy's rejection of invalid credentials could not be proven; refusing to continue"
+        s5_err_msg selftest.inconclusive "$_strc" "$S5_CURL_PROXY_ERR"
+        s5_err_msg selftest.rejection_unproven
         return 1
     fi
     return 0
@@ -2418,13 +5282,13 @@ s5_diagnose_failure() {
 
 s5_explain_failure() {
     case "$1" in
-    dns-failure) s5_say "  Cause: this server cannot resolve DNS names." ;;
-    no-egress) s5_say "  Cause: this server has no outbound network access." ;;
+    dns-failure) s5_say_msg network.cause_dns ;;
+    no-egress) s5_say_msg network.cause_no_egress ;;
     proxy-failure)
-        s5_say "  Cause: outbound network works, so the proxy itself refused the request."
-        s5_say "  If clients also cannot reach the port, check your cloud security group."
+        s5_say_msg network.cause_proxy_refused
+        s5_say_msg network.cause_check_sgp
         ;;
-    *) s5_say "  Cause: undetermined." ;;
+    *) s5_say_msg network.cause_unknown ;;
     esac
 }
 
@@ -2444,11 +5308,11 @@ s5_service_install() {
             return 1
         fi
         if ! systemctl daemon-reload >/dev/null 2>&1; then
-            s5_err "could not reload the systemd manager after writing $S5_UNIT"
+            s5_err_msg service.reload_failed "$S5_UNIT"
             return 1
         fi
         if ! systemctl enable "$S5_PROJECT.service" >/dev/null 2>&1; then
-            s5_err "could not enable $S5_PROJECT.service"
+            s5_err_msg service.enable_failed "$S5_PROJECT"
             return 1
         fi
         ;;
@@ -2462,12 +5326,12 @@ s5_service_install() {
             return 1
         fi
         if ! rc-update add "$S5_PROJECT" default >/dev/null 2>&1; then
-            s5_err "could not add $S5_PROJECT to the default runlevel"
+            s5_err_msg service.rcupdate_failed "$S5_PROJECT"
             return 1
         fi
         ;;
     *)
-        s5_err "unsupported init system: ${S5_INIT:-unknown}"
+        s5_err_msg service.unsupported_init "${S5_INIT:-unknown}"
         return 1
         ;;
     esac
@@ -2554,13 +5418,13 @@ s5_service_disable() {
     case "$S5_INIT" in
     systemd)
         if ! systemctl disable "$S5_PROJECT.service" >/dev/null 2>&1; then
-            s5_err "could not disable $S5_PROJECT.service"
+            s5_err_msg service.disable_failed "$S5_PROJECT"
             return 1
         fi
         ;;
     openrc)
         if ! rc-update del "$S5_PROJECT" default >/dev/null 2>&1; then
-            s5_err "could not remove $S5_PROJECT from the default runlevel"
+            s5_err_msg service.rcdel_failed "$S5_PROJECT"
             return 1
         fi
         ;;
@@ -2655,14 +5519,14 @@ s5_wait_listening() {
         case "$_wls" in
         0) return 0 ;;
         2)
-            s5_err "cannot verify that port $_wlport is listening (neither ss nor netstat found)"
+            s5_err_msg service.wait_no_probe "$_wlport"
             return 1
             ;;
         esac
         s5_service_active
         _wla=$?
         if [ "$_wla" -eq 1 ]; then
-            s5_err "the service exited before port $_wlport was listening"
+            s5_err_msg service.wait_exited "$_wlport"
             return 1
         fi
         _wltry=$((_wltry + 1))
@@ -2671,7 +5535,7 @@ s5_wait_listening() {
         fi
         sleep 1
     done
-    s5_err "the service did not begin listening on port $_wlport within 15 seconds"
+    s5_err_msg service.wait_timeout "$_wlport"
     return 1
 }
 
@@ -2687,7 +5551,7 @@ s5_collision_check() {
     for _ccp in "$S5_SYSCONFDIR" "$S5_STATEDIR" "$S5_PREFIX" "$S5_BIN" \
         "$S5_UNIT" "$S5_INITSCRIPT"; do
         if [ -e "$_ccp" ] || [ -L "$_ccp" ]; then
-            s5_err "$_ccp already exists and was not created by this script"
+            s5_err_msg collision.path_exists "$_ccp"
             _ccbad=1
         fi
     done
@@ -2695,12 +5559,12 @@ s5_collision_check() {
     _ccar=$?
     case "$_ccar" in
     0)
-        s5_err "the $S5_SERVICE_USER account already exists and was not created by this script"
+        s5_err_msg collision.user_exists "$S5_SERVICE_USER"
         _ccbad=1
         ;;
     1) ;;
     *)
-        s5_err "could not determine whether the $S5_SERVICE_USER account already exists"
+        s5_err_msg install.acct_exists_unknown
         _ccbad=1
         ;;
     esac
@@ -2708,18 +5572,21 @@ s5_collision_check() {
     _ccgr=$?
     case "$_ccgr" in
     0)
-        s5_err "the $S5_SERVICE_GROUP group already exists and was not created by this script"
+        s5_err_msg collision.group_exists "$S5_SERVICE_GROUP"
         _ccbad=1
         ;;
     1) ;;
     *)
-        s5_err "could not determine whether the $S5_SERVICE_GROUP group already exists"
+        s5_err_msg install.grp_exists_unknown
         _ccbad=1
         ;;
     esac
     if [ "$_ccbad" -ne 0 ]; then
-        s5_say "Refusing to overwrite resources this script did not create."
-        s5_say "Remove or rename them, or $(s5_cmd_hint uninstall), then retry."
+        s5_say_msg collision.refuse_overwrite
+        _crh=$(s5_cmd_hint uninstall)
+        _crm=$(s5_msg collision.remove_or_rename)
+        s5_say "$_crm $_crh, then retry."
+        _crh=''; _crm='' 
         return 1
     fi
     return 0
@@ -2737,9 +5604,33 @@ s5_confirm() {
     esac
 }
 
+# s5_confirm_yes <question>: the INSTALL confirmation only. Enter means
+# continue -- the operator already chose to run the installer, and the
+# destructive question below stays default-NO, so the two helpers are
+# deliberately separate: the safe default can never leak into the dangerous
+# question. Unsupported input re-prompts (bounded like every other prompt);
+# EOF fails.
+s5_confirm_yes() {
+    _cfy=0
+    while [ "$_cfy" -lt 5 ]; do
+        _cfy=$((_cfy + 1))
+        printf '%s [Y/n]: ' "${1:-}" >&2
+        _cfa=''
+        if ! read -r _cfa; then
+            return 1
+        fi
+        case "$_cfa" in
+        '' | y | Y | yes | YES | Yes) return 0 ;;
+        n | N | no | NO | No) return 1 ;;
+        *) ;;
+        esac
+    done
+    return 1
+}
+
 s5_required_packages() {
     _srpb=$(s5_build_deps "$S5_PKGMGR") || {
-        s5_err "no dependency list for package manager: $S5_PKGMGR"
+        s5_err_msg install.pkg_no_deps "$S5_PKGMGR"
         return 1
     }
     _srpr=$(s5_runtime_deps) || return 1
@@ -2753,22 +5644,22 @@ s5_required_packages() {
 s5_preinstall_warning() {
     _spwpkgs=$(s5_required_packages) || return 1
     s5_say ""
-    s5_say "=============================== PLEASE READ ==============================="
-    s5_say "This installs a SOCKS5 proxy that listens on $S5_LISTEN."
-    s5_say "Detected target: $S5_OS_ID $S5_OS_VERSION_ID ($S5_PKGMGR, $S5_INIT)."
-    s5_say "Packages to install: $_spwpkgs"
-    s5_say "These packages are kept after uninstall."
+    s5_say_msg install.warning_header
+    s5_say_msg install.warning_listens "$S5_LISTEN"
+    s5_say_msg install.warning_detected "$S5_OS_ID" "$S5_OS_VERSION_ID" "$S5_PKGMGR" "$S5_INIT"
+    s5_say_msg install.warning_packages "$_spwpkgs"
+    s5_say_msg install.warning_packages_kept
     s5_say ""
-    s5_say "  * SOCKS5 username/password authentication (RFC 1929) is sent in CLEARTEXT"
-    s5_say "    on the wire. SOCKS5 provides NO transport encryption and NO integrity"
-    s5_say "    protection. It is NOT a VPN."
-    s5_say "  * You are responsible for your own local firewall and for your cloud"
-    s5_say "    provider's security group rules."
-    s5_say "  * ANYONE who learns the credentials and can reach the port can use this"
-    s5_say "    proxy, and their traffic will appear to originate from this server."
+    s5_say_msg install.warning_cleartext
+    s5_say_msg install.warning_cleartext2
+    s5_say_msg install.warning_cleartext3
+    s5_say_msg install.warning_firewall
+    s5_say_msg install.warning_firewall2
+    s5_say_msg install.warning_anyone
+    s5_say_msg install.warning_anyone2
     s5_say ""
-    s5_say "Only SOCKS5 with username/password and CONNECT is enabled. SOCKS4, SOCKS4a,"
-    s5_say "BIND and UDP ASSOCIATE are not supported."
+    s5_say_msg install.warning_protocols
+    s5_say_msg install.warning_protocols2
     s5_say "==========================================================================="
     s5_say ""
     return 0
@@ -2782,19 +5673,19 @@ s5_install_dependencies() {
     case "$S5_PKGMGR" in
     apt)
         DEBIAN_FRONTEND=noninteractive apt-get update >/dev/null 2>&1 || {
-            s5_err "package metadata update failed; refusing to install from stale indexes"
+            s5_err_msg install.pkg_meta_failed
             return 1
         }
         # shellcheck disable=SC2086
         if ! DEBIAN_FRONTEND=noninteractive apt-get install -y $_idall; then
-            s5_err "package installation failed"
+            s5_err_msg install.pkg_install_failed
             return 1
         fi
         ;;
     apk)
         # shellcheck disable=SC2086
         if ! apk add --no-cache $_idall; then
-            s5_err "package installation failed"
+            s5_err_msg install.pkg_install_failed
             return 1
         fi
         ;;
@@ -2802,19 +5693,19 @@ s5_install_dependencies() {
         if command -v dnf >/dev/null 2>&1; then
             # shellcheck disable=SC2086
             if ! dnf install -y $_idall; then
-                s5_err "package installation failed"
+                s5_err_msg install.pkg_install_failed
                 return 1
             fi
         else
             # shellcheck disable=SC2086
             if ! yum install -y $_idall; then
-                s5_err "package installation failed"
+                s5_err_msg install.pkg_install_failed
                 return 1
             fi
         fi
         ;;
     *)
-        s5_err "unknown package manager: $S5_PKGMGR"
+        s5_err_msg install.pkg_unknown "$S5_PKGMGR"
         return 1
         ;;
     esac
@@ -2837,7 +5728,7 @@ s5_rm_known_file() {
         return 0
     fi
     if ! rm -f "$2"; then
-        s5_err "could not remove $2"
+        s5_err_msg rollback.rm_file_failed "$2"
         return 1
     fi
     return 0
@@ -2881,19 +5772,19 @@ s5_rmdir_known() {
         return 0
     fi
     if [ -L "$_rkdir" ]; then
-        s5_err "keeping $_rkdir: it is a symbolic link"
+        s5_err_msg rollback.keep_symlink "$_rkdir"
         return 1
     fi
     _rkextra=$(s5_dir_extras "$_rkdir" "$@")
     if [ -n "$_rkextra" ]; then
-        s5_err "keeping $_rkdir: it contains files this script did not create:"
+        s5_err_msg rollback.keep_foreign_files "$_rkdir"
         printf '%s\n' "$_rkextra" | while IFS= read -r _rkl; do
             if [ -n "$_rkl" ]; then s5_err "    $_rkl"; fi
         done
         return 1
     fi
     if ! rmdir "$_rkdir"; then
-        s5_err "could not remove the directory $_rkdir"
+        s5_err_msg rollback.rm_dir_failed "$_rkdir"
         return 1
     fi
     return 0
@@ -2935,7 +5826,7 @@ s5_teardown() {
     if [ "$_tdhasunit" -eq 1 ]; then
         if [ "$_tdfilepresent" -eq 1 ]; then
             if ! s5_service_stop >/dev/null 2>&1; then
-                s5_err "could not stop the proxy service; refusing to remove its resources"
+                s5_err_msg rollback.stop_failed
                 _tdbad=1
             fi
         else
@@ -2950,12 +5841,12 @@ s5_teardown() {
         _tdactive=$?
         case "$_tdactive" in
         0)
-            s5_err "the proxy service is still active; refusing to remove its resources"
+            s5_err_msg rollback.still_active
             _tdbad=1
             ;;
         1) ;;
         *)
-            s5_err "could not verify that the proxy service stopped; refusing to remove its resources"
+            s5_err_msg rollback.stop_unverified
             _tdbad=1
             ;;
         esac
@@ -2987,7 +5878,7 @@ s5_teardown() {
         fi
         if s5_account_remove "$_tdgrp" \
             "$(s5_state_get account_uid)" "$(s5_state_get account_gid)"; then
-            s5_log "removed the $S5_SERVICE_USER service account"
+            s5_log_msg rollback.removed_account "$S5_SERVICE_USER"
         else
             _tdbad=1
         fi
@@ -2995,7 +5886,7 @@ s5_teardown() {
 
     if [ "$S5_INIT" = "systemd" ]; then
         if ! systemctl daemon-reload >/dev/null 2>&1; then
-            s5_err "could not reload the systemd manager after removing its unit"
+            s5_err_msg rollback.reload_after_remove
             _tdbad=1
         fi
     fi
@@ -3004,67 +5895,241 @@ s5_teardown() {
 }
 
 s5_rollback() {
-    s5_warn "installation failed; removing the resources created by this run"
+    s5_warn_msg rollback.starting
     if ! s5_state_load; then
-        s5_warn "no usable state file; nothing could be rolled back automatically"
+        s5_warn_msg rollback.no_state
         return 1
     fi
     if ! s5_teardown; then
-        s5_err "rollback was incomplete; the state file is kept at $S5_STATE so you can retry"
+        s5_err_msg rollback.incomplete "$S5_STATE"
         s5_err "$(s5_cmd_hint uninstall) once the problem above is resolved"
         return 1
     fi
     _rbstbuf=$S5_STATE_BUF
     _rbextra=$(s5_dir_extras "$S5_STATEDIR" state)
     if [ -n "$_rbextra" ]; then
-        s5_err "rollback cannot remove $S5_STATEDIR: it contains files this script did not create"
+        s5_err_msg rollback.state_dir_foreign "$S5_STATEDIR"
         printf '%s\n' "$_rbextra" | while IFS= read -r _rbl; do
             [ -n "$_rbl" ] && s5_err "    $_rbl"
         done
         return 1
     fi
     if ! rm -f "$S5_STATE"; then
-        s5_err "rollback could not remove the state file $S5_STATE"
+        s5_err_msg rollback.rm_state_failed "$S5_STATE"
         return 1
     fi
     if rmdir "$S5_STATEDIR" 2>/dev/null; then
-        s5_log "rollback complete; no packages were removed"
+        s5_log_msg rollback.complete
         return 0
     fi
     # Keep retry state if the final directory removal was ambiguous or failed.
     S5_STATE_BUF=$_rbstbuf
     if ! s5_state_flush; then
-        s5_err "rollback could not restore its state file after removing it"
+        s5_err_msg rollback.restore_failed "$S5_STATE"
         return 1
     fi
-    s5_err "rollback could not remove the state directory; the state file is kept at $S5_STATE"
+    s5_err_msg rollback.rm_dir_retained "$S5_STATE"
     return 1
 }
 
-s5_server_ip() {
+# ---------------------------------------------------------------------------
+# IPv4 address resolution for the credential card (Round 16 T11).
+#
+# Three pure predicates, one hardened external lookup, one fallback chain.
+# The external result is an OBSERVED EGRESS address: it proves nothing about
+# inbound NAT, port forwarding, firewalls or security groups. All failures are
+# nonfatal -- the card renders with a validated local address or a placeholder
+# plus exactly one warning; installation and show never fail here.
+#
+# CAP bounds the external response: the longest legal body is a 15-byte
+# address plus CRLF, so 17 bytes. Longer bodies are rejected without storing
+# or logging anything past the cap.
+# ---------------------------------------------------------------------------
+
+s5_ipv4_is_canonical() {
+    # Exactly four fields of 0-255, no leading zeros (except bare 0), nothing
+    # else. Pure: strips nothing -- the external-body handler owns terminator
+    # stripping.
+    case "$1" in
+    '' | *[!0-9.]*) return 1 ;;
+    esac
+    case "$1" in
+    .* | *. | *..*) return 1 ;;
+    esac
+    # Split on dots with IFS instead of eval indirection: the no-eval rule is
+    # one of the catalog's own invariants and this parser must honor it too.
+    _ivcoldIFS=${IFS}
+    IFS=.
+    set -f
+    # shellcheck disable=SC2086  # the unquoted expansion IS the dot-split
+    set -- $1
+    set +f
+    IFS=${_ivcoldIFS}
+    [ "$#" -eq 4 ] || { _ivcoldIFS=''; return 1; }
+    for _ivcv in "$1" "$2" "$3" "$4"; do
+        case "$_ivcv" in
+        '' | *[!0-9]*) return 1 ;;
+        esac
+        [ "${#_ivcv}" -gt 3 ] && return 1
+        case "$_ivcv" in
+        0) ;;
+        0*) return 1 ;;
+        esac
+        [ "$_ivcv" -gt 255 ] && return 1
+    done
+    _ivcoldIFS=''
+    return 0
+}
+
+s5_ipv4_is_public() {
+    # Conservative: rejects every IANA special-purpose range. RFC1918 and
+    # CGNAT are rejected here but accepted by the usable-local classifier.
+    s5_ipv4_is_canonical "$1" || return 1
+    _ipo1=${1%%.*}
+    _ipore=${1#*.}
+    _ipo2=${_ipore%%.*}
+    _ipore=${_ipore#*.}
+    _ipo3=${_ipore%%.*}
+    _ipo4=${_ipore#*.}
+    [ "$_ipo1" -eq 0 ] && return 1
+    [ "$_ipo1" -eq 10 ] && return 1
+    if [ "$_ipo1" -eq 100 ]; then
+        [ "$_ipo2" -ge 64 ] && [ "$_ipo2" -le 127 ] && return 1
+    fi
+    [ "$_ipo1" -eq 127 ] && return 1
+    if [ "$_ipo1" -eq 169 ]; then
+        [ "$_ipo2" -eq 254 ] && return 1
+    fi
+    if [ "$_ipo1" -eq 172 ]; then
+        [ "$_ipo2" -ge 16 ] && [ "$_ipo2" -le 31 ] && return 1
+    fi
+    if [ "$_ipo1" -eq 192 ]; then
+        [ "$_ipo2" -eq 0 ] && [ "$_ipo3" -eq 0 ] && return 1
+        [ "$_ipo2" -eq 0 ] && [ "$_ipo3" -eq 2 ] && return 1
+        [ "$_ipo2" -eq 168 ] && return 1
+    fi
+    if [ "$_ipo1" -eq 198 ]; then
+        [ "$_ipo2" -eq 18 ] && return 1
+        [ "$_ipo2" -eq 19 ] && return 1
+        [ "$_ipo2" -eq 51 ] && [ "$_ipo3" -eq 100 ] && return 1
+    fi
+    if [ "$_ipo1" -eq 203 ]; then
+        [ "$_ipo2" -eq 0 ] && [ "$_ipo3" -eq 113 ] && return 1
+    fi
+    [ "$_ipo1" -ge 224 ] && return 1
+    return 0
+}
+
+s5_ipv4_is_usable_local() {
+    # Usable as a card fallback: canonical, and either public or private
+    # (RFC1918 / CGNAT). Loopback, link-local, documentation, benchmarking,
+    # multicast and reserved space never reach the card.
+    if s5_ipv4_is_public "$1"; then
+        return 0
+    fi
+    s5_ipv4_is_canonical "$1" || return 1
+    _iuo1=${1%%.*}
+    _iuore=${1#*.}
+    _iuo2=${_iuore%%.*}
+    if [ "$_iuo1" -eq 10 ]; then
+        return 0
+    fi
+    if [ "$_iuo1" -eq 100 ] && [ "$_iuo2" -ge 64 ] && [ "$_iuo2" -le 127 ]; then
+        return 0
+    fi
+    if [ "$_iuo1" -eq 172 ] && [ "$_iuo2" -ge 16 ] && [ "$_iuo2" -le 31 ]; then
+        return 0
+    fi
+    if [ "$_iuo1" -eq 192 ] && [ "$_iuo2" -eq 168 ]; then
+        return 0
+    fi
+    return 1
+}
+
+s5_lookup_public_ipv4() {
+    # One hardened request to the fixed endpoint. -q first so no user or
+    # system curlrc can alter it; --noproxy '*' so an ambient proxy variable
+    # cannot redirect or observe the request; IPv4 only; HTTPS only; no
+    # redirects; bounded; stdin detached. On any failure prints nothing and
+    # returns nonzero. The response is capped and validated before it is
+    # ever spoken of again.
+    if ! command -v curl >/dev/null 2>&1; then
+        return 1
+    fi
+    _lpb=$(curl -q -4 --noproxy '*' --proto '=https' --fail --silent \
+        --connect-timeout 3 --max-time 5 \
+        "https://icanhazip.com" 2>/dev/null | head -c 17) || {
+        _lpb=''
+        return 1
+    }
+    [ -z "$_lpb" ] && { _lpb=''; return 1; }
+    # Strip at most one trailing terminator: CRLF or bare LF. The patterns must
+    # be real control bytes, not the two-character escapes.
+    _lpcr=$(printf '\r')
+    _lplf=$(printf '\n')
+    _lpb=${_lpb%"$_lpcr"}
+    _lpb=${_lpb%"$_lplf"}
+    _lpcr=''
+    _lplf='' 
+    if [ -z "$_lpb" ]; then
+        return 1
+    fi
+    if ! s5_ipv4_is_public "$_lpb"; then
+        _lpb=''
+        return 1
+    fi
+    printf '%s' "$_lpb"
+    _lpb=''
+    return 0
+}
+
+s5_resolve_card_address() {
+    # Resolves once per card into S5_CARD_ADDR / S5_CARD_KIND. Kinds:
+    # external (validated public egress), local (validated usable local,
+    # one warning owed), placeholder (SERVER_IPV4, actionable warning owed).
+    # Nonfatal in every path.
+    S5_CARD_ADDR=''
+    S5_CARD_KIND=''
+    if _rca=$(s5_lookup_public_ipv4); then
+        S5_CARD_ADDR=$_rca
+        S5_CARD_KIND=external
+        _rca=''
+        return 0
+    fi
+    _rca=''
     if command -v ip >/dev/null 2>&1; then
-        _sip=$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n 1)
-        if [ -n "$_sip" ]; then
-            printf '%s' "$_sip"
-            return 0
-        fi
+        for _rcat in $(ip -4 -o addr show scope global 2>/dev/null |
+            awk '{print $4}' | cut -d/ -f1); do
+            if s5_ipv4_is_usable_local "$_rcat"; then
+                S5_CARD_ADDR=$_rcat
+                S5_CARD_KIND=local
+                _rcat=''
+                return 0
+            fi
+        done
     fi
     if command -v hostname >/dev/null 2>&1; then
-        _sip=$(hostname -I 2>/dev/null | awk '{for (i=1; i<=NF; i++) if ($i ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/) {print $i; exit}}')
-        if [ -n "$_sip" ]; then
-            printf '%s' "$_sip"
-            return 0
-        fi
+        for _rcat in $(hostname -I 2>/dev/null); do
+            if s5_ipv4_is_usable_local "$_rcat"; then
+                S5_CARD_ADDR=$_rcat
+                S5_CARD_KIND=local
+                _rcat=''
+                return 0
+            fi
+        done
     fi
-    printf '<server-ip>'
+    S5_CARD_ADDR=SERVER_IPV4
+    S5_CARD_KIND=placeholder
+    return 0
 }
+
 
 # Secret-bearing operator output is permitted only when stdout is the terminal
 # being used by the operator. In particular, a pipe or redirected file must
 # never receive a plaintext password.
 s5_require_secret_terminal() {
     if [ ! -t 1 ]; then
-        s5_err "refusing to display the proxy password: stdout is not a terminal"
+        s5_err_msg card.refusing_display
         return 1
     fi
     return 0
@@ -3072,32 +6137,45 @@ s5_require_secret_terminal() {
 
 # Printed to the terminal only. s5_say bypasses the log sink deliberately:
 # the credential must reach the operator's screen and nothing else.
-s5_print_summary() {
-    if ! s5_require_secret_terminal; then
-        s5_say "Installation completed; credentials were not displayed because stdout is not a terminal."
-        return 0
-    fi
+# The card body, callable directly by tests: renders the resolved address,
+# fields and warnings. The terminal-only guard lives in s5_print_summary.
+s5_render_card() {
+    # One resolution per card: the Host field and the URI must agree, and the
+    # lookup happens only when a card is actually rendered.
+    s5_resolve_card_address
     _psfw="not modified by this script"
     s5_say ""
-    s5_say "================= SOCKS5 proxy is ready ================="
-    s5_say "  Server address : $(s5_server_ip)"
-    s5_say "  Port           : $S5_PORT"
-    s5_say "  Username       : $S5_USERNAME"
-    s5_say "  Password       : $S5_PASSWORD"
+    s5_say_msg card.ready_header
+    _cvs=$(s5_msg card.label_server); s5_say "$_cvs$S5_CARD_ADDR"
+    _cvp=$(s5_msg card.label_port); s5_say "$_cvp$S5_PORT"
+    _cvu=$(s5_msg card.label_username); s5_say "$_cvu$S5_USERNAME"
+    _cvw=$(s5_msg card.label_password); s5_say "$_cvw$S5_PASSWORD"
     s5_say ""
-    s5_say "  socks5://$S5_USERNAME:$S5_PASSWORD@$(s5_server_ip):$S5_PORT"
+    s5_say "  socks5://$S5_USERNAME:$S5_PASSWORD@$S5_CARD_ADDR:$S5_PORT"
     s5_say ""
-    s5_say "  Local firewall : $_psfw"
-    s5_say "  Cloud provider : you must ALSO allow inbound TCP $S5_PORT in your"
-    s5_say "                   cloud security group / network ACL."
+    _cvf=$(s5_msg card.label_firewall); _cvfw=$(s5_msg card.firewall_untouched); s5_say "$_cvf$_cvfw"
+    _cvc=$(s5_msg card.cloud_provider "$S5_PORT"); s5_say "$_cvc"
+    s5_say_msg card.cloud_provider2
     s5_say ""
-    s5_say "  WARNING: SOCKS5 authentication and traffic are NOT encrypted."
-    s5_say "           SOCKS5 is not a VPN. Anyone with these credentials who can"
-    s5_say "           reach the port can use this proxy."
+    case "$S5_CARD_KIND" in
+    local) s5_say_msg card.warn_local ;;
+    placeholder) s5_say_msg card.warn_placeholder ;;
+    esac
+    s5_say_msg card.warning_encrypted
+    s5_say_msg card.warning_vpn
+    s5_say_msg card.warning_vpn2
     s5_say ""
     s5_redisplay_hint
-    s5_say "========================================================"
+    s5_say_msg card.rule_end
     s5_say ""
+}
+
+s5_print_summary() {
+    if ! s5_require_secret_terminal; then
+        s5_say_msg card.completed_no_display
+        return 0
+    fi
+    s5_render_card
 }
 
 # ---------------------------------------------------------------------------
@@ -3120,12 +6198,12 @@ s5_install_steps() {
     _isacct=$?
     case "$_isacct" in
     0)
-        s5_err "the $S5_SERVICE_USER account appeared after the collision check; refusing to adopt it"
+        s5_err_msg install.user_appeared "$S5_SERVICE_USER"
         return 1
         ;;
     1) ;;
     *)
-        s5_err "could not determine whether the service account exists"
+        s5_err_msg install.acct_exists_unknown
         return 1
         ;;
     esac
@@ -3133,12 +6211,12 @@ s5_install_steps() {
     _isgrp=$?
     case "$_isgrp" in
     0)
-        s5_err "the $S5_SERVICE_GROUP group appeared after the collision check; refusing to adopt it"
+        s5_err_msg install.group_appeared "$S5_SERVICE_GROUP"
         return 1
         ;;
     1) ;;
     *)
-        s5_err "could not determine whether the service group exists"
+        s5_err_msg install.grp_exists_unknown
         return 1
         ;;
     esac
@@ -3155,13 +6233,13 @@ s5_install_steps() {
     _isauid=$(s5_current_uid)
     _isauis=$?
     if [ "$_isauis" -ne 0 ]; then
-        s5_err "could not determine the uid assigned to the new account"
+        s5_err_msg install.uid_unknown
         return 1
     fi
     _isagid=$(s5_current_gid)
     _isagis=$?
     if [ "$_isagis" -ne 0 ]; then
-        s5_err "could not determine the gid assigned to the new group"
+        s5_err_msg install.gid_unknown
         return 1
     fi
     if ! s5_state_add account_uid "$_isauid"; then return 1; fi
@@ -3200,9 +6278,9 @@ s5_install_steps() {
         return 1
     fi
 
-    s5_log "starting $S5_PROJECT"
+    s5_log_msg install.starting_service "$S5_PROJECT"
     if ! s5_service_start; then
-        s5_err "the service failed to start"
+        s5_err_msg install.start_failed
         return 1
     fi
     # Three-valued, like every other service-state observation: a failed manager
@@ -3213,11 +6291,11 @@ s5_install_steps() {
     case "$_isact" in
     0) ;;
     1)
-        s5_err "the service is not active after start"
+        s5_err_msg install.not_active_after_start
         return 1
         ;;
     *)
-        s5_err "could not verify that the service is active after start"
+        s5_err_msg install.active_unverified
         return 1
         ;;
     esac
@@ -3232,14 +6310,14 @@ s5_install_steps() {
         return 1
     fi
 
-    s5_log "verifying that invalid credentials are refused"
+    s5_log_msg install.verifying_bad
     if ! s5_selftest_bad; then
         return 1
     fi
-    s5_log "verifying that valid credentials work"
+    s5_log_msg install.verifying_good
     if ! s5_selftest_good "$S5_USERNAME" "$S5_PASSWORD"; then
         _isd=$(s5_diagnose_failure)
-        s5_err "the self-test with valid credentials failed ($_isd)"
+        s5_err_msg install.selftest_failed "$_isd"
         s5_explain_failure "$_isd"
         return 1
     fi
@@ -3266,8 +6344,9 @@ s5_cmd_install() {
     fi
 
     s5_preinstall_warning
-    if ! s5_confirm "Continue with the installation?"; then
-        s5_log "installation aborted at the operator's request"
+    _ici=$(s5_msg install.confirm)
+    if ! s5_confirm_yes "$_ici"; then
+        s5_log_msg install.aborted
         return "$EX_FAIL"
     fi
 
@@ -3331,11 +6410,11 @@ s5_load_credentials() {
     _lcu=${_lcline%%:CL:*}
     _lcp=${_lcline#*:CL:}
     if ! s5_valid_username "$_lcu"; then
-        s5_err "the username in $S5_USERSCFG is not valid; refusing to display it"
+        s5_err_msg show.username_invalid "$S5_USERSCFG"
         return 1
     fi
     if ! s5_valid_password "$_lcp"; then
-        s5_err "the password in $S5_USERSCFG is not valid; refusing to display it"
+        s5_err_msg show.password_invalid "$S5_USERSCFG"
         return 1
     fi
     S5_USERNAME=$_lcu
@@ -3348,22 +6427,21 @@ s5_load_credentials() {
 # ---------------------------------------------------------------------------
 
 s5_usage() {
-    cat <<EOF
-Usage: ${S5_SELF:-socks5.sh} [command]
-
-Commands:
-  install      Interactively install the SOCKS5 proxy
-  status       Show service, port and version information
-  show         Re-display the full connection details (root only)
-  restart      Restart the proxy service
-  uninstall    Remove everything this script created
-
-With no command: installs if absent, otherwise shows a management menu.
-
-Protocol support: SOCKS5 only, with RFC 1929 username/password authentication
-and CONNECT only. SOCKS4/4a/4.5, unauthenticated SOCKS5, BIND and UDP ASSOCIATE
-are rejected. SOCKS5 is not an encrypted VPN.
-EOF
+    _uu=$(s5_msg usage.line_usage "${S5_SELF:-socks5.sh}")
+    printf '%s\n\n' "$_uu"
+    s5_say_msg usage.line_commands
+    s5_say_msg usage.cmd_install
+    s5_say_msg usage.cmd_status
+    s5_say_msg usage.cmd_show
+    s5_say_msg usage.cmd_restart
+    s5_say_msg usage.cmd_uninstall
+    s5_say ""
+    s5_say_msg usage.line_no_command
+    s5_say ""
+    s5_say_msg usage.line_protocol
+    s5_say_msg usage.line_protocol2
+    s5_say_msg usage.line_protocol3
+    _uu=''
 }
 
 s5_cmd_status() {
@@ -3393,13 +6471,13 @@ s5_cmd_status() {
         _stlisten="$_stport (listen state not verified: neither ss nor netstat found)"
     fi
     s5_say "$S5_PROJECT status"
-    s5_say "  service   : $_stsvc ($S5_INIT)"
-    s5_say "  port      : $_stlisten"
-    s5_say "  username  : $(s5_state_get username)"
-    s5_say "  engine    : 3proxy $(s5_state_get tag) (commit $(s5_state_get commit))"
-    s5_say "  origin    : $(s5_state_get origin)"
-    s5_say "  binary    : $S5_BIN"
-    s5_say "  firewall  : not modified by this script"
+    _sts=$(s5_msg status.label_service); s5_say "$_sts$_stsvc ($S5_INIT)"
+    _stp=$(s5_msg status.label_port); s5_say "$_stp$_stlisten"
+    _stu=$(s5_msg status.label_username); s5_say "$_stu$(s5_state_get username)"
+    _ste=$(s5_msg status.label_engine); s5_say "${_ste}3proxy $(s5_state_get tag) (commit $(s5_state_get commit))"
+    _sto=$(s5_msg status.label_origin); s5_say "$_sto$(s5_state_get origin)"
+    _stb=$(s5_msg status.label_binary); s5_say "$_stb$S5_BIN"
+    _stf=$(s5_msg status.label_firewall); _stfw=$(s5_msg card.firewall_untouched); s5_say "$_stf$_stfw"
     return "$EX_OK"
 }
 
@@ -3409,33 +6487,39 @@ s5_cmd_show() {
         return "$EX_FAIL"
     fi
     if ! s5_is_root; then
-        s5_err "'show' displays the proxy password and therefore requires root"
+        s5_err_msg show.requires_root
         return "$EX_FAIL"
     fi
     if ! s5_require_secret_terminal; then
         return "$EX_FAIL"
     fi
     if ! s5_load_credentials; then
-        s5_err "cannot read valid credentials from $S5_USERSCFG"
+        s5_err_msg show.cred_unreadable "$S5_USERSCFG"
         return "$EX_FAIL"
     fi
     S5_PORT=$(s5_state_get port)
+    # One resolution per card: the Host field and the URI must agree.
+    s5_resolve_card_address
     _shfw="not modified by this script"
     s5_say ""
-    s5_say "================= SOCKS5 connection details ================="
-    s5_say "  Server address : $(s5_server_ip)"
-    s5_say "  Port           : $S5_PORT"
-    s5_say "  Username       : $S5_USERNAME"
-    s5_say "  Password       : $S5_PASSWORD"
+    s5_say_msg card.details_header
+    _cvs=$(s5_msg card.label_server); s5_say "$_cvs$S5_CARD_ADDR"
+    _cvp=$(s5_msg card.label_port); s5_say "$_cvp$S5_PORT"
+    _cvu=$(s5_msg card.label_username); s5_say "$_cvu$S5_USERNAME"
+    _cvw=$(s5_msg card.label_password); s5_say "$_cvw$S5_PASSWORD"
     s5_say ""
-    s5_say "  socks5://$S5_USERNAME:$S5_PASSWORD@$(s5_server_ip):$S5_PORT"
+    s5_say "  socks5://$S5_USERNAME:$S5_PASSWORD@$S5_CARD_ADDR:$S5_PORT"
     s5_say ""
-    s5_say "  Local firewall : $_shfw"
-    s5_say "  Remember to allow inbound TCP $S5_PORT in your cloud security group."
+    _cvf=$(s5_msg card.label_firewall); _cvfw=$(s5_msg card.firewall_untouched); s5_say "$_cvf$_cvfw"
+    _cvr=$(s5_msg card.remember_sgp "$S5_PORT"); s5_say "$_cvr"
     s5_say ""
-    s5_say "  WARNING: SOCKS5 authentication and traffic are NOT encrypted."
-    s5_say "           SOCKS5 is not a VPN."
-    s5_say "============================================================"
+    case "$S5_CARD_KIND" in
+    local) s5_say_msg card.warn_local ;;
+    placeholder) s5_say_msg card.warn_placeholder ;;
+    esac
+    s5_say_msg card.warning_encrypted
+    s5_say_msg card.warning_vpn_short
+    s5_say_msg card.rule_end_details
     s5_say ""
     return "$EX_OK"
 }
@@ -3446,21 +6530,21 @@ s5_cmd_restart() {
         return "$EX_FAIL"
     fi
     if ! s5_is_root; then
-        s5_err "restarting the service requires root"
+        s5_err_msg restart.requires_root
         return "$EX_FAIL"
     fi
     S5_INIT=$(s5_state_get init)
     S5_PORT=$(s5_state_get port)
     if ! s5_service_restart; then
-        s5_err "the service failed to restart"
+        s5_err_msg restart.failed
         return "$EX_FAIL"
     fi
     s5_service_active
     _rstar=$?
     case "$_rstar" in
     0) ;;
-    1) s5_err "the service is not active after restart"; return "$EX_FAIL" ;;
-    *) s5_err "could not verify that the service is active after restart"; return "$EX_FAIL" ;;
+    1) s5_err_msg restart.not_active; return "$EX_FAIL" ;;
+    *) s5_err_msg restart.active_unverified; return "$EX_FAIL" ;;
     esac
     # The manager's "active" precedes the socket (Type=simple; OpenRC under
     # supervise-daemon), so success is reported only once the port is
@@ -3481,57 +6565,60 @@ s5_cmd_uninstall() {
         return "$EX_OK"
     fi
     if ! s5_is_root; then
-        s5_err "uninstalling requires root privileges"
+        s5_err_msg uninstall.requires_root
         return "$EX_FAIL"
     fi
     if ! s5_state_load; then
-        s5_err "the state file could not be validated; refusing to delete anything"
-        s5_err "inspect $S5_STATE by hand, then remove the project's resources yourself"
+        s5_err_msg uninstall.state_invalid
+        s5_err_msg uninstall.state_invalid_hint "$S5_STATE"
         return "$EX_FAIL"
     fi
 
     S5_INIT=$(s5_state_get init)
     S5_OS_FAMILY=$(s5_state_get family)
 
-    s5_say "This will remove only the fixed resources this script recorded creating:"
-    if s5_state_flagged created_cfg; then s5_say "  file      : $S5_CFG"; fi
-    if s5_state_flagged created_users; then s5_say "  file      : $S5_USERSCFG"; fi
-    if s5_state_flagged created_unit; then s5_say "  file      : $S5_UNIT"; fi
-    if s5_state_flagged created_initscript; then s5_say "  file      : $S5_INITSCRIPT"; fi
-    if s5_state_flagged created_bin; then s5_say "  file      : $S5_BIN"; fi
-    if s5_state_flagged created_confdir; then s5_say "  directory : $S5_SYSCONFDIR"; fi
-    if s5_state_flagged created_prefix; then s5_say "  directory : $S5_PREFIX"; fi
-    if s5_state_flagged created_account; then s5_say "  account   : $S5_SERVICE_USER"; fi
-    s5_say "No firewall rule is removed: this script never created one."
-    s5_say "Installed packages are NOT removed."
+    s5_say_msg uninstall.removing_only
+    if s5_state_flagged created_cfg; then _ulf=$(s5_msg uninstall.label_file "$S5_CFG"); s5_say "$_ulf"; fi
+    if s5_state_flagged created_users; then _ulf=$(s5_msg uninstall.label_file "$S5_USERSCFG"); s5_say "$_ulf"; fi
+    if s5_state_flagged created_unit; then _ulf=$(s5_msg uninstall.label_file "$S5_UNIT"); s5_say "$_ulf"; fi
+    if s5_state_flagged created_initscript; then _ulf=$(s5_msg uninstall.label_file "$S5_INITSCRIPT"); s5_say "$_ulf"; fi
+    if s5_state_flagged created_bin; then _ulf=$(s5_msg uninstall.label_file "$S5_BIN"); s5_say "$_ulf"; fi
+    if s5_state_flagged created_confdir; then _uld=$(s5_msg uninstall.label_directory "$S5_SYSCONFDIR"); s5_say "$_uld"; fi
+    if s5_state_flagged created_prefix; then _uld=$(s5_msg uninstall.label_directory "$S5_PREFIX"); s5_say "$_uld"; fi
+    if s5_state_flagged created_account; then _ula=$(s5_msg uninstall.label_account "$S5_SERVICE_USER"); s5_say "$_ula"; fi
+    s5_say_msg uninstall.no_firewall_removed
+    s5_say_msg uninstall.packages_kept
     if ! s5_confirm "Proceed with uninstall?"; then
-        s5_log "uninstall aborted at the operator's request"
+        s5_log_msg uninstall.aborted
         return "$EX_FAIL"
     fi
 
     if ! s5_teardown; then
-        s5_err "uninstall did NOT complete; the state file is kept at $S5_STATE"
-        s5_err "resolve the problems listed above, then $(s5_cmd_hint uninstall)"
+        s5_err_msg uninstall.incomplete "$S5_STATE"
+        _unh=$(s5_cmd_hint uninstall)
+        _unmsg=$(s5_msg uninstall.resolve_then)
+        s5_err "$_unmsg $_unh"
+        _unh=''; _unmsg='' 
         return "$EX_FAIL"
     fi
 
     _unextra=$(s5_dir_extras "$S5_STATEDIR" state)
     if [ -n "$_unextra" ]; then
-        s5_err "keeping $S5_STATEDIR: it contains files this script did not create:"
+        s5_err_msg uninstall.keep_state_foreign "$S5_STATEDIR"
         printf '%s\n' "$_unextra" | while IFS= read -r _unline; do
             [ -n "$_unline" ] && s5_err "    $_unline"
         done
-        s5_err "uninstall did NOT complete; the state file is kept at $S5_STATE"
+        s5_err_msg uninstall.incomplete "$S5_STATE"
         return "$EX_FAIL"
     fi
 
     _unstbuf=$S5_STATE_BUF
     if ! rm -f "$S5_STATE"; then
-        s5_err "could not remove the state file $S5_STATE"
+        s5_err_msg uninstall.rm_state_failed "$S5_STATE"
         return "$EX_FAIL"
     fi
     if rmdir "$S5_STATEDIR" 2>/dev/null; then
-        s5_log "uninstall complete; no system packages were removed"
+        s5_log_msg uninstall.complete
         return "$EX_OK"
     fi
     # The state file is the retry handle. Restore it if the final directory
@@ -3539,10 +6626,10 @@ s5_cmd_uninstall() {
     # project directory.
     S5_STATE_BUF=$_unstbuf
     if ! s5_state_flush; then
-        s5_err "could not restore $S5_STATE after the state directory remained"
+        s5_err_msg uninstall.restore_failed "$S5_STATE"
         return "$EX_FAIL"
     fi
-    s5_err "could not remove the state directory $S5_STATEDIR; state was retained for retry"
+    s5_err_msg uninstall.rm_dir_retained "$S5_STATEDIR"
     return "$EX_FAIL"
 }
 
@@ -3553,15 +6640,15 @@ s5_cmd_auto() {
     fi
     s5_say ""
     s5_say "$S5_PROJECT is installed. Choose an action:"
-    s5_say "  1) status     show service, port and version"
-    s5_say "  2) show       re-display the full connection details (root only)"
-    s5_say "  3) restart    restart the proxy service"
-    s5_say "  4) uninstall  remove everything this script created"
-    s5_say "  5) quit"
+    s5_say_msg menu.option_status
+    s5_say_msg menu.option_show
+    s5_say_msg menu.option_restart
+    s5_say_msg menu.option_uninstall
+    s5_say_msg menu.option_quit
     printf 'Choice [1-5]: ' >&2
     _cha=''
     if ! read -r _cha; then
-        s5_err "unexpected end of input"
+        s5_err_msg menu.eof
         return "$EX_FAIL"
     fi
     case "$_cha" in
@@ -3570,17 +6657,24 @@ s5_cmd_auto() {
     3) s5_cmd_restart ;;
     4) s5_cmd_uninstall ;;
     5)
-        s5_say "nothing to do"
+        s5_say_msg menu.nothing_to_do
         return "$EX_OK"
         ;;
     *)
-        s5_err "invalid choice: $_cha"
+        s5_err_msg menu.invalid_choice "$_cha"
         return "$EX_USAGE"
         ;;
     esac
 }
 
 s5_main() {
+    # Round 16: every invocation selects its language first -- install, direct
+    # lifecycle commands, the no-argument menu, help and unknown commands all
+    # re-ask in each new process. The selection is never persisted or exported.
+    # The environment guard has already run at source time, before this point.
+    if ! s5_select_language; then
+        return "$EX_FAIL"
+    fi
     if [ "$#" -eq 0 ]; then
         s5_cmd_auto
         return $?
@@ -3611,7 +6705,7 @@ s5_main() {
         return "$EX_OK"
         ;;
     *)
-        s5_err "unknown subcommand: $_cmd"
+        s5_err_msg usage.unknown_subcommand "$_cmd"
         s5_usage >&2
         return "$EX_USAGE"
         ;;

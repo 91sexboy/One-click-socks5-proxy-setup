@@ -22,13 +22,11 @@ else
 fi
 
 mkdir -p "$S5_UNITDIR"
-s5env_answers "y
+s5env_answers "2
+y
 31080
 xtuser
 $SECRET
-$SECRET
-y
-y
 "
 
 # Run the real script with xtrace forced on by the caller.

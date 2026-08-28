@@ -139,7 +139,11 @@ def main():
     # The parent deliberately keeps `slave` open: echo_enabled(slave) is queried
     # again after the child exits, which needs a live fd on the same terminal.
 
-    # Drive: acknowledge the warning, choose a port and a username.
+    # Drive: select the language, acknowledge the warning, choose a port and a
+    # username. Round 16: the selector runs before anything else.
+    _, ok = read_until(master, r"Select \[1-2")
+    check(ok, "reached the language selector")
+    os.write(master, b"2\n")
     _, ok = read_until(master, r"Continue with the installation")
     check(ok, "reached the pre-install confirmation")
     os.write(master, b"y\n")

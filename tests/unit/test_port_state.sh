@@ -121,7 +121,7 @@ assert_contains "the install step still verifies the listener" \
 assert_contains "the wait observes the port through the tri-state probe" \
     "s5_port_listening" "$wait_fn"
 assert_contains "and refuses when the listen state cannot be observed" \
-    "cannot verify that port" "$wait_fn"
+    "s5_err_msg service.wait_no_probe" "$wait_fn"
 assert_contains "status reports the unobservable case honestly" \
     "not verified" "$status_fn"
 

@@ -1,22 +1,24 @@
 # Spec: socks5.sh — one-click SOCKS5 proxy installer
 
-> **Status: FROZEN (v1, reduced scope).** Unfrozen twice. Once after the first pre-release
-> audit, to remove confirmed inconsistencies. Once again to narrow v1 to the actual product
-> goal: a one-command interactive installer for Ubuntu, Debian, Alpine and CentOS Stream with
-> a custom-or-generated port, username and password. That second unfreeze removed the
-> dependency and firewall prompts, made the host firewall read-only, and replaced matrix
-> breadth with one real service-install lifecycle per promised OS family. Implementation,
-> this spec, and `tests/golden/` are in agreement. Re-frozen — no further edits without an
-> explicit unfreeze.
+> **Status: FROZEN — bilingual UX implemented locally, CI evidence pending.** The Round 16
+> operator-experience contract is implemented and green locally: per-invocation
+> Chinese/English selection, default-yes install confirmation, one-read custom passwords, a
+> public-IPv4-first credential card with strict validation, and the separate stock-Alpine
+> entry command. The 3proxy engine, SOCKS5/auth/ACL/state/service/firewall/security contracts
+> were never touched. The recorded 45/45 run predates this round: bilingual CI evidence
+> requires the two new checkpoints described in §18.
 
 ## 1. Objective
 A single-file POSIX shell script (`socks5.sh`) that interactively installs, verifies, and manages a
 password-authenticated SOCKS5 proxy on a remote server the operator owns or is authorized to manage.
 Engine: **3proxy 0.9.9.0**, built from a pinned upstream commit. Engine selection is closed.
 
-**One-click means one command plus an interactive wizard**, not an unattended install: the operator
-acknowledges one confirmation and then answers three prompts, each of which accepts Enter for a
-securely generated value. There is no non-interactive mode in v1.
+**One-click means one command plus an interactive wizard**, not an unattended install: every
+invocation first selects `1 中文 / 2 English` (Enter defaults to Chinese; invalid input retries),
+then an install shows one default-yes confirmation and asks for port, username and password, each
+of which accepts Enter for a securely generated value. Direct lifecycle commands and the
+no-argument management menu select language again; locale is process-only and never persisted.
+There is no non-interactive mode in v1.
 
 ### 1.1 Protocol support scope
 Supported: **SOCKS5 only**, with **RFC 1929 username/password authentication**, and **CONNECT as the
@@ -71,30 +73,55 @@ group- or world-accessible regardless of the ambient umask.
 **Collision rule:** if any resource above already exists, consult the state file to confirm this
 script created it. If that cannot be confirmed, **stop with an error**. Never overwrite or adopt.
 
-## 5. Interactive install flow
+## 5. Interactive install flow — implemented
 v1 is **interactive only** — there is no non-interactive or unattended mode.
 
-**Step 0 — one confirmation.** The §7 pre-install warning is shown together with the detected
-OS/package-manager/init and the exact package list from §8, and acknowledged, before any prompt.
-This is the only yes/no question in the flow.
+**Bootstrap boundary.** `s5_guard_environment` remains the first executed security boundary. If it
+refuses an unsafe inherited/test environment, it emits a fixed Chinese+English diagnostic because
+no locale can safely exist yet. All later script-owned text follows the selected locale. Raw output
+from external tools remains external and is not translated.
 
-**Step 1 — prerequisites.** The §8 packages are installed immediately after that confirmation and
+**Step 0 — language.** Every invocation asks:
+
+```text
+请选择语言 / Please select language:
+1. 中文
+2. English
+请选择 [1-2，默认 1]:
+```
+
+Blank or `1` selects Chinese; `2` selects English; unsupported input re-prompts; EOF fails without
+dispatching a command. Language is neither inherited nor exported, and is never stored in state,
+config, or a file. `status`, `show`, `restart`, `uninstall`, `help`, invalid commands and the
+no-argument menu all select again in each new process.
+
+**Step 1 — one install confirmation.** After non-mutating prechecks, the selected language shows
+the detected OS/package-manager/init, exact §8 package list and §7 security warning. The sole
+install question ends in `[Y/n]`: Enter/y/Y/yes continues, n/N/no exits, invalid input re-prompts,
+and EOF fails. The destructive uninstall question remains separate and default-no `[y/N]`.
+
+**Step 2 — prerequisites.** The §8 packages are installed immediately after confirmation and
 **before** the port prompt. The port prompt cannot answer anything without a listen-state probe, so
 whichever package provides `ss` (`iproute2` on Debian/Ubuntu/Alpine, `iproute` on CentOS Stream) is
 installed when neither `ss` nor `netstat` is present. No secret is collected before this step.
 
-**Step 2 — the three values.** Each accepts Enter for a generated value:
+**Step 3 — the three values.** Each accepts Enter for a generated value:
 
 1. **Port** — Enter → random `20000–60000`. Custom must be `1024–65535`. Reject if already
    listening (`ss`, falling back to `netstat`, then a bind probe).
 2. **Username** — Enter → random. Charset `[A-Za-z0-9_-]`, 3–32 chars. Anything else rejected.
 3. **Password** — Enter → generated, **exactly 32 characters**. Typed input is not echoed
-   (`stty -echo`) and entered twice for confirmation. Charset for generated and user-supplied
-   passwords alike is **`[A-Za-z0-9._~-]`**, length **12–128**. Rejection names the failing rule and
-   never echoes the input.
+   (`stty -echo`) and is read **once**; it is not asked a second time for confirmation. Charset for
+   generated and user-supplied passwords alike is **`[A-Za-z0-9._~-]`**, length **12–128**.
+   Rejection names the failing rule and never echoes the input.
 
 Both charsets are RFC 3986 unreserved, so the `socks5://user:password@host:port` URI needs no
 escaping. The password never enters `argv`, environment, logs, or history — only `users.cfg`.
+
+**Localization completeness.** Every script-owned prompt, warning, error, status, usage, menu,
+uninstall and result after Step 0 has reviewed Chinese and English forms with identical dynamic
+technical values. Command names (`install`, `status`, `show`, `restart`, `uninstall`), paths,
+package names, protocol tokens and external-tool output are not translated.
 
 **There is no firewall functionality.** See §7.1.
 
@@ -233,25 +260,46 @@ installed.
 Privilege drop is the init system's job — no `setuid`/`setgid` in the 3proxy config.
 
 ## 10. Commands
-The documented one-click invocation is `bash <(wget -qO- <RAW_URL>)` (curl variant
-equivalent). Under it `$0` is a transient `/dev/fd/*` descriptor: operator-facing
-messages must never print it — when the script was piped in, the instruction is to
-re-run the install command, whose no-argument mode opens the management menu.
-Alpine ships without bash and its default shell cannot parse `<(...)`; the README
-tells Alpine users to `apk add bash` first or save and run the file.
+The primary Ubuntu/Debian/CentOS command (and the same command after entering Bash on Alpine) is:
 
+```sh
+bash <(wget -qO- https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-setup/main/socks5.sh)
 ```
-sh socks5.sh            # not installed -> interactive install; installed -> menu
-sh socks5.sh install | status | show | restart | uninstall
+
+Stock Alpine's default ash parses `<(...)` before Bash can run, so its one-line bootstrap is:
+
+```sh
+apk add --no-cache bash wget && bash -c 'bash <(wget -qO- https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-setup/main/socks5.sh)'
+```
+
+Under process substitution `$0` is a transient `/dev/fd/*` descriptor: operator-facing messages
+must never print it. When invoked this way, re-running the command opens the management menu after
+installation. Every invocation selects language before command validation/dispatch; command tokens
+remain English.
+
+```text
+socks5.sh            # not installed -> interactive install; installed -> menu
+socks5.sh install | status | show | restart | uninstall
 ```
 - No `reload` in v1 — use `restart`. No `reconfigure` — to change port, user, or password,
   uninstall then reinstall.
 - `show` reprints full connection details **including the password** for root, to the terminal only.
-  It must never write the password to a log, file, or journal.
-- Post-install output: server IP, port, username, password, `socks5://user:password@host:port`, a
-  reminder that the firewall was not modified and the port must be opened by the operator (locally
-  and in the cloud security group), and the no-encryption warning. The only scheme ever
-  emitted is `socks5://` — no SOCKS4-family name, scheme, or example appears anywhere in the output.
+  It must never write the password to a log, file, journal, redirect, argv, environment or xtrace.
+- Install and `show` use one localized credential-card renderer. It prefers one strictly validated
+  IPv4 observed from the fixed HTTPS endpoint `https://icanhazip.com`; this is presentation-only,
+  nonfatal and reports outbound egress, not guaranteed inbound reachability. On lookup failure, one
+  validated local IPv4 is shown with exactly one localized warning; if none exists, `SERVER_IPV4`
+  is shown with an actionable replacement warning. The address is resolved once per card and is
+  never persisted.
+- The card displays localized Host/Port/Username/Password labels, followed by exactly one
+  unindented, language-independent line:
+
+  ```text
+  socks5://user:password@host:port
+  ```
+
+- The card retains the firewall/cloud-security-group and no-encryption warnings. The only URI
+  scheme ever emitted is `socks5://`; no legacy-protocol scheme/example is produced.
 
 ## 11. Install and verification procedure
 3proxy 0.9 has **no documented config dry-run mode**, so the config cannot be fully validated without
@@ -291,6 +339,14 @@ no-op plus a status report.
 - **Unit:** port/username/password validators, os-release parsing (including the RHEL/Rocky/Alma
   refusal path), arch mapping, config renderer, prerequisite selection and ordering, and the
   absence of firewall functionality.
+- **Bilingual UI contract:** catalog key uniqueness, zh/en parity,
+  declared arity, literal call-site keys, argument/format safety, no new untranslated script-owned
+  literals, selector blank/1/2/invalid/EOF behavior, per-invocation locale, `[Y/n]`, password-once,
+  exact zh/en card/URI, localized lifecycle/error output, and fixed bilingual pre-language guard.
+- **IPv4/card contract:** canonical/public/local range validation,
+  hardened fixed-endpoint curl boundary, malformed/private/multiline/oversized response rejection,
+  nonfatal local/placeholder fallback, one lookup and warning per card, exact Host/URI consistency,
+  and no credentials in lookup argv/stdin/env/logs.
 - **Golden:** rendered `3proxy.cfg` and `users.cfg` match fixtures; §6 denylist asserted; asserted
   that `users.cfg` contains no `users` directive.
 - **Protocol acceptance** (runs on every matrix cell): SOCKS5 + correct credentials + CONNECT →
@@ -356,7 +412,16 @@ example any SOCKS4-family protocol.
 11. No user-facing string, example, or emitted URI mentions SOCKS4, SOCKS4a, or SOCKS4.5.
 12. A real install → verify → uninstall lifecycle passes on Ubuntu, Debian, Alpine and CentOS Stream.
     No support claim is published for a target whose lifecycle job has not actually run green.
-13. The documented install command is runnable as written — no unsubstituted placeholder.
+13. The documented install commands are runnable as written, including the separate stock-Alpine
+    bootstrap whose inner string is parsed by Bash rather than ash.
+14. Every invocation selects Chinese/English before dispatch; blank defaults Chinese, invalid input
+    retries, and every later script-owned message follows the selection. Locale is never persisted.
+15. Install asks exactly one default-yes confirmation; a custom password is hidden and read once;
+    Enter-generated port/username/password continue using the existing secure generators.
+16. Install and `show` render one exact URI using one resolved IPv4. Public lookup failure is
+    nonfatal and yields exactly one localized local/placeholder warning; lookup receives no secret.
+17. A new bilingual implementation CI run passes all 45 jobs, followed by a second 45/45 run for
+    the evidence-only documentation commit. The earlier run remains historical pre-bilingual proof.
 
 ## 16. Non-goals (v1)
 Non-interactive install; `reload`; `reconfigure`; BIND; UDP ASSOCIATE; SOCKS4/4a/4.5 (permanently out
@@ -369,13 +434,18 @@ IPv6-only listeners; log rotation; RHEL/Rocky/Alma.
 - Use the name **SOCKS5** exclusively, and show only `socks5://user:password@host:port`. Never
   advertise, display, or provide a usage example for SOCKS4, SOCKS4a, or SOCKS4.5. State that
   CONNECT is the only supported command and that BIND and UDP ASSOCIATE are unsupported.
-- The primary install form is the one-click one-liner `bash <(wget -qO- <RAW_URL>)` with the curl
-  variant beside it; a read-it-first alternative (save, `less`, run) follows. Never a fixed
-  `/tmp/socks5.sh` path, and never `wget -qO- URL | sh`: a pipe feeds the script to the prompts'
-  stdin and breaks the interactive flow. Alpine's lack of bash is called out explicitly.
-- The primary documented command must be runnable as written. A download recipe containing an
-  unsubstituted placeholder must be labelled as a publish-time template, not presented as a
-  working command, and must include a checksum verification step.
+- The primary Ubuntu/Debian/CentOS install form is the exact published
+  `bash <(wget -qO- …/main/socks5.sh)` command. Because stock Alpine ash parses `<(...)` before
+  Bash executes, document its exact `apk add --no-cache bash wget && bash -c 'bash <(wget …)'`
+  one-liner separately. Never use `wget … | sh` (it feeds source into prompt stdin) or a fixed
+  `/tmp/socks5.sh` path.
+- Document the exact `1 中文 / 2 English` selector, Enter=Chinese, invalid retry, per-invocation
+  locale, one `[Y/n]` install confirmation, dependencies before values, and one hidden custom
+  password read. State that status/show/restart/uninstall/menu and all script-owned output follow
+  the selected language.
+- Document the TTY-only credential card, standalone exact URI, fixed public-egress IPv4 lookup,
+  privacy boundary, strict validation, nonfatal local/`SERVER_IPV4` fallback and one warning. Never
+  claim the observed egress address proves inbound reachability.
 - State that the script has no firewall functionality — it neither detects nor modifies any
   firewall — and that the operator must allow the chosen TCP port themselves, locally and in the
   cloud security group. The README may document example commands per backend as operator
@@ -400,7 +470,12 @@ completed **45/45 green**:
   3.24) pass install → status/listening → restart → uninstall → cleanliness;
 - lint, three-shell unit coverage and every structural release gate pass.
 
-This satisfies §15. The earlier pre-CI risks are closed: Alpine/musl builds and both OpenRC
+That 45/45 checkpoint is the **pre-bilingual baseline**. It proves the security/protocol/platform
+implementation that this round must preserve; it does not prove the approved bilingual selector,
+password-once or public-IP/card behavior, which is not implemented yet. Those claims require a new
+45/45 implementation run and a second 45/45 post-documentation run before this spec is re-frozen.
+
+This satisfies the pre-bilingual §15 criteria. The earlier pre-CI risks are closed: Alpine/musl builds and both OpenRC
 versions are proven; the Debian/CentOS systemd containers boot and complete; the script's clean-host
 package bootstrap executes in those lifecycle jobs. CI evidence does not erase environmental
 risks: package repositories, DNS and the fixed HTTPS self-test require egress; cloud images may

@@ -24,7 +24,6 @@ reset_machine() {
 31080
 someuser
 GoodPass_123~x
-GoodPass_123~x
 y
 y
 '
@@ -201,6 +200,7 @@ S5_PORT_PROBE=''
 export S5_PORT_PROBE
 : >"$S5_TEST_ROOT/order-answers"
 s5_confirm() { return 0; }
+s5_confirm_yes() { return 0; }
 s5_install_dependencies() {
     : >"$S5_TEST_ROOT/dependencies-before-port"
     return 0

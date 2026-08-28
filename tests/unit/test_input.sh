@@ -320,10 +320,18 @@ assert_eq "empty input generates a 32-char password" 32 "${#S5_PASSWORD}"
 S5_PASSWORD=''
 S5_SECRET=''
 feed 'GoodPass_123~x
-GoodPass_123~x
+SecondLineMustSurvive
 '
-s5_prompt_password <"$S5_TEST_ROOT/in" >/dev/null 2>&1
-assert_eq "matching confirmation accepted" 'GoodPass_123~x' "$S5_PASSWORD"
+# One open descriptor for both the function and the follow-up read: re-opening
+# the file would restart at byte 0 and the survivor check could never fail.
+exec 3<"$S5_TEST_ROOT/in"
+s5_prompt_password <&3 >/dev/null 2>&1
+assert_eq "single-read custom password accepted" 'GoodPass_123~x' "$S5_PASSWORD"
+assert_eq "and arms redaction" 'GoodPass_123~x' "$S5_SECRET"
+read -r _pw_survivor <&3
+exec 3<&-
+assert_eq "the next queued line survives unread" 'SecondLineMustSurvive' "$_pw_survivor"
+_pw_survivor='' 
 
 # Mismatch must not be silently accepted; end of input must not fall back to
 # generating a password.
@@ -335,22 +343,18 @@ assert_eq "matching confirmation accepted" 'GoodPass_123~x' "$S5_PASSWORD"
 # already in S5_PASSWORD, makes the post-condition real.
 S5_PASSWORD='SENTINEL-NOT-A-REAL-PASSWORD'
 S5_SECRET=''
-feed 'GoodPass_123~x
-DIFFERENT_12~x
+feed 'short
 '
 s5_prompt_password <"$S5_TEST_ROOT/in" >"$S5_TEST_ROOT/pwout" 2>&1
 pwstatus=$?
 pwout=$(cat "$S5_TEST_ROOT/pwout")
-assert_ne "mismatched confirmation is not silently accepted" 0 "$pwstatus"
-assert_ne "a rejected password is never adopted" 'GoodPass_123~x' "$S5_PASSWORD"
-assert_ne "nor is the value typed at the confirmation prompt" 'DIFFERENT_12~x' "$S5_PASSWORD"
-assert_eq "the sentinel is untouched, so nothing was half-assigned" \
+assert_ne "invalid-then-EOF fails" 0 "$pwstatus"
+assert_eq "a rejected flow does not adopt the invalid value" \
     'SENTINEL-NOT-A-REAL-PASSWORD' "$S5_PASSWORD"
 assert_eq "the redaction secret is not armed with a rejected password" "" "$S5_SECRET"
-assert_contains "the mismatch is reported" "do not match" "$pwout"
-assert_not_contains "mismatch message does not echo the secret" "GoodPass_123" "$pwout"
+assert_not_contains "rejection does not echo the candidate" "short" "$pwout"
 rm -f "$S5_TEST_ROOT/pwout"
-S5_PASSWORD=''
+S5_PASSWORD='' 
 
 # The secret must never be exported into the environment of a child process.
 S5_PASSWORD='NeverExportMe1234'

@@ -53,13 +53,26 @@ the detected `ID` and `VERSION_ID` named — it never guesses.
 
 ## Install
 
-One command, as root, on a supported system:
+One command, as root, on a supported system — Ubuntu, Debian and CentOS
+Stream, or Alpine once you are already inside a Bash shell:
 
 ```sh
 bash <(wget -qO- https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-setup/main/socks5.sh)
 ```
 
-or, with curl:
+Stock Alpine needs its own form, because the outer shell parses the command
+line before running any part of it. Alpine's default shell is BusyBox `ash`,
+and `<(...)` is a syntax error to `ash` at parse time — an `apk add bash`
+written into the same command line can never rescue it. The stock-Alpine form
+hides the substitution inside single quotes, so the outer shell sees only a
+quoted string and the `<(wget ...)` inside it is parsed by the newly installed
+Bash:
+
+```sh
+apk add --no-cache bash wget && bash -c 'bash <(wget -qO- https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-setup/main/socks5.sh)'
+```
+
+or, with curl (wrap it the same way on stock Alpine):
 
 ```sh
 bash <(curl -fsSL https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-setup/main/socks5.sh)
@@ -76,25 +89,79 @@ less socks5.sh
 sudo sh socks5.sh
 ```
 
-> **Alpine note:** Alpine ships without `bash`, and its default shell does not
-> support the `<(...)` form. Run `apk add bash` first and use the same command,
-> or use the read-it-first form above (`wget` + `sh`).
+On stock Alpine this read-it-first form works as-is: the script itself is
+plain POSIX `sh` — only the `<(...)` download form needs Bash.
 
-The installer is **interactive**. It shows the detected system, the exact list of
-packages it will install, and the security warning, and asks once whether to
-continue. It then asks for three values:
+## The interactive flow
 
-1. **Port** — press Enter for a random port in 20000–60000, or supply one in
+The installer is **interactive**. An install run asks five questions in
+order; the first picks the language the other four are printed in:
+
+1. **Language** — `1 中文 / 2 English`. Enter alone selects 中文; any other
+   answer is re-asked. This is the first question on every run of the script,
+   and the choice is never saved.
+2. **Confirmation** — the detected system, the exact list of packages it will
+   install, and the security warning, then a single `[Y/n]` question. This is
+   the only yes/no question in the flow.
+3. **Port** — press Enter for a random port in 20000–60000, or supply one in
    1024–65535. An occupied port is rejected.
-2. **Username** — press Enter for a random one. `A-Z a-z 0-9 _ -`, 3–32 chars.
-3. **Password** — press Enter for a generated 32-character password. Typed input
-   is not echoed and is confirmed twice. `A-Z a-z 0-9 . _ ~ -`, 12–128 chars.
+4. **Username** — press Enter for a random one. `A-Z a-z 0-9 _ -`, 3–32 chars.
+5. **Password** — press Enter for a generated 32-character password, or type
+   your own: `A-Z a-z 0-9 . _ ~ -`, 12–128 chars. Typed input is not echoed
+   and is asked for once; there is no type-it-twice confirmation, so check it
+   with `show` if you typed it rather than generated it.
 
-Pressing Enter at all three prompts is supported and gives you a secure,
-randomly generated port, username and password.
+Pressing Enter at the language question and at all three value prompts is
+supported: it selects 中文 and accepts the generated values, giving you a
+secure, randomly generated port, username and password.
 
-Both character sets are RFC 3986 unreserved, so the `socks5://` URI it prints
-needs no escaping.
+Both character sets are RFC 3986 unreserved, so the `socks5://` URI on the
+credential card needs no escaping.
+
+## Language coverage
+
+Every message the script itself prints follows the selected language — the
+install prompts and the pre-install warning, the post-install result and its
+credential card, the management menu, `status`, `show`, `restart`,
+`uninstall`, and error messages. The choice is not saved between runs: every
+run starts with the language question again. Subcommand names stay English in
+both languages, and output that comes from other programs — package-manager
+progress, compiler output, service-manager messages — is passed through
+exactly as those programs print it, untranslated.
+
+## The credential card
+
+A successful install ends by printing a credential card. Its labels — Host,
+Port, Username, Password — are localized to the selected language; the values
+are the real ones. The connection line stands on its own line, unindented,
+so it copies cleanly:
+
+```
+socks5://user:password@host:port
+```
+
+The address on the card is the script's best observation of the address an
+outside client would connect to, chosen in this order:
+
+1. **A strictly validated public IPv4, observed from outside.** The script
+   makes one short HTTPS request to a fixed endpoint and uses the source
+   address that request came from — but only after strict validation that it
+   is a public IPv4; anything malformed or non-public is discarded. What the
+   endpoint sees is the source IP and the time of that one request, nothing
+   else. The request does not carry the port, the username or the password.
+2. **A validated local address**, if the outside lookup fails, shown with one
+   warning: it may not be reachable from the internet.
+3. **The literal placeholder `SERVER_IPV4`**, if neither yields an address,
+   printed in place of the host with a warning to replace it with your
+   server's public address before using the connection line.
+
+A failed lookup never fails the install: either way the proxy is installed,
+running and verified — only the address printed on the card changes.
+
+The card closes with the standing reminders, in the selected language: this
+script has no firewall functionality at all, so the port is yours to open in
+your local firewall and in your cloud provider's security group, and the
+proxy is not an encrypted tunnel.
 
 ## Commands
 
@@ -302,6 +369,11 @@ at commit `df6885c`, **45 of 45 jobs passed**:
   CentOS Stream 10; and
 - 2 real OpenRC lifecycles on Alpine 3.20 and 3.24, with the installer itself
   bootstrapping the build and runtime dependencies from the clean images.
+
+> **A note on evidence.** The 45/45 run recorded above predates the bilingual
+> implementation, so it does not evidence the current script. It must be
+> superseded by a new full run of the same workflow, green end to end, before
+> this README presents a 45/45 figure as describing the bilingual build.
 
 Every supported OS family therefore has a real
 install → active/listening → restart → uninstall → cleanliness lifecycle, and

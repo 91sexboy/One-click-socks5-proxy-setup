@@ -140,17 +140,25 @@ s5env_line_of() {
     if [ -z "$_n" ]; then printf '0'; else printf '%s' "$_n"; fi
 }
 
+# s5env_install_answers <lang> <confirm> <port> <user> <password> : the ONE
+# builder for a complete successful install's interactive input. Round 16
+# contract: language is selected per invocation (blank or 1 = zh, 2 = en), the
+# single install confirmation is [Y/n] (blank = continue), and the custom
+# password is queued exactly ONCE -- a second copy would silently mask a
+# regression back to the removed confirmation read. Tests calling library
+# functions directly set S5_LANG themselves; this builder is for the answer
+# stream only.
+s5env_install_answers() {
+    printf '%s\n%s\n%s\n%s\n%s\n' "$1" "$2" "$3" "$4" "$5" \
+        >"$S5_TEST_ROOT/answers"
+    chmod 0600 "$S5_TEST_ROOT/answers"
+}
+
 # s5env_full_install : drive a complete successful install with the given
-# port/user/password, answering yes to dependencies and no/yes to the firewall.
+# port/user/password in the requested language (default en, matching the
+# still-dormant selector's runtime default).
 s5env_full_install() {
-    s5env_answers "y
-$1
-$2
-$3
-$3
-y
-${4:-y}
-"
+    s5env_install_answers "${S5_LANG:-en}" y "$1" "$2" "$3"
     printf '%s:%s' "$2" "$3" >"$S5_TEST_ROOT/expected_creds"
     s5_cmd_install <"$S5_TEST_ROOT/answers"
 }

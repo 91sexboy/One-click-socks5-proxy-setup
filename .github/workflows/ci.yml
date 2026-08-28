@@ -349,10 +349,10 @@ jobs:
           PORT=41080
 
           # Answers are fed from a 0600 file; the password never enters argv,
-          # the environment, or the job log. The installer asks exactly one
-          # confirmation and then the three values.
-          { printf 'y\n%s\nciuser\n' "$PORT"; cat "$SECRETS/pass"; printf '\n';
-            cat "$SECRETS/pass"; printf '\n'; } >"$SECRETS/answers"
+          # the environment, or the job log. Round 16 order: language (this cell
+          # picks blank = Chinese default), one [Y/n] confirmation, then the three
+          # values with the password queued exactly once.
+          { printf '\ny\n%s\nciuser\n' "$PORT"; cat "$SECRETS/pass"; printf '\n'; } >"$SECRETS/answers"
           chmod 0600 "$SECRETS/answers"
           # Redaction uses a sed SCRIPT FILE. Interpolating the password into a
           # sed expression would place it in sed's argv, visible to `ps`.
@@ -361,20 +361,20 @@ jobs:
           sudo sh socks5.sh install <"$SECRETS/answers" >"$SECRETS/install.log" 2>&1 || {
             sed -f "$SECRETS/redact.sed" "$SECRETS/install.log" >&2; exit 1; }
 
-          sudo sh socks5.sh status
+          printf '2\n' | sudo sh socks5.sh status
           sudo systemctl is-active socks5-manager.service
           ss -ltn | grep ":$PORT "
 
           PORT=$PORT PROXY_USER=ciuser PASSFILE="$SECRETS/pass" \
             sh tests/protocol/run_protocol.sh
 
-          sudo sh socks5.sh restart
+          printf '2\n' | sudo sh socks5.sh restart
           sudo systemctl is-active socks5-manager.service
 
           # `show` discloses the password and therefore refuses unless stdout is
           # a real terminal. Give it a pty and keep its output in a 0600 file
           # that is never printed; only the grep verdict reaches the log.
-          script -qec 'sudo sh socks5.sh show' /dev/null >"$SECRETS/show.out" 2>&1
+          script -qec 'printf "2\n" | sudo sh socks5.sh show' /dev/null >"$SECRETS/show.out" 2>&1
           grep -q 'socks5://ciuser:' "$SECRETS/show.out"
 
           # This script never touches the firewall, so no rule may exist for the port.
@@ -382,7 +382,7 @@ jobs:
             echo "install created a firewall rule; v1 must not" >&2; exit 1
           fi
 
-          printf 'y\n' | sudo sh socks5.sh uninstall
+          printf '2\ny\n' | sudo sh socks5.sh uninstall
           test ! -e /etc/socks5-manager
           test ! -e /var/lib/socks5-manager
           test ! -e /usr/local/libexec/socks5-manager
@@ -430,8 +430,9 @@ jobs:
             trap "rm -rf $SECRETS" EXIT HUP INT TERM
             tr -dc "A-Za-z0-9._~-" </dev/urandom | head -c 32 > "$SECRETS/pass"
             chmod 0600 "$SECRETS/pass"
-            { printf "y\n41080\nciuser\n"; cat "$SECRETS/pass"; printf "\n";
-              cat "$SECRETS/pass"; printf "\n"; } > "$SECRETS/answers"
+            # Round 16: invalid selector entry first proves the retry, then
+            # 2 = English; [Y/n]; port; username; password once.
+            { printf "9\n2\ny\n41080\nciuser\n"; cat "$SECRETS/pass"; printf "\n"; } > "$SECRETS/answers"
             chmod 0600 "$SECRETS/answers"
             { printf '"'"'s|'"'"'; cat "$SECRETS/pass"; printf '"'"'|***REDACTED***|g\n'"'"'; } > "$SECRETS/redact.sed"
             chmod 0600 "$SECRETS/redact.sed"
@@ -458,11 +459,11 @@ jobs:
               rc-service socks5-manager status >&2
               echo "retried status exit: $?" >&2
               exit 1; }
-            sh socks5.sh status
+            printf "2\n" | sh socks5.sh status
             rc-service socks5-manager status
             PORT=41080 PROXY_USER=ciuser PASSFILE="$SECRETS/pass" \
               sh tests/protocol/run_protocol.sh
-            printf "y\n" | sh socks5.sh uninstall
+            printf "2\ny\n" | sh socks5.sh uninstall
             test ! -e /etc/socks5-manager
             test ! -e /var/lib/socks5-manager
             test ! -e /usr/local/libexec/socks5-manager
@@ -518,8 +519,8 @@ jobs:
           tr -dc 'A-Za-z0-9._~-' </dev/urandom | head -c 32 >"$SECRETS/pass"
           chmod 0600 "$SECRETS/pass"
           PORT=41080
-          { printf 'y\n%s\nciuser\n' "$PORT"; cat "$SECRETS/pass"; printf '\n';
-            cat "$SECRETS/pass"; printf '\n'; } >"$SECRETS/answers"
+          # Round 16: explicit English (2); [Y/n]; port; username; password once.
+          { printf '2\ny\n%s\nciuser\n' "$PORT"; cat "$SECRETS/pass"; printf '\n'; } >"$SECRETS/answers"
           chmod 0600 "$SECRETS/answers"
           { printf 's|'; cat "$SECRETS/pass"; printf '|***REDACTED***|g\n'; } >"$SECRETS/redact.sed"
           chmod 0600 "$SECRETS/redact.sed"
@@ -577,13 +578,13 @@ jobs:
                  exit 1; }
           docker exec "$CID" rm -f /tmp/answers
 
-          docker exec "$CID" sh /src/socks5.sh status
+          docker exec "$CID" sh -c 'printf "2\n" | sh /src/socks5.sh status'
           docker exec "$CID" systemctl is-active socks5-manager.service
           docker exec "$CID" sh -c "ss -ltn | grep ':$PORT '"
 
           # The installer's own self-test already proved that correct credentials
           # work and that wrong credentials are refused; a restart must survive.
-          docker exec "$CID" sh /src/socks5.sh restart
+          docker exec "$CID" sh -c 'printf "2\n" | sh /src/socks5.sh restart'
           docker exec "$CID" systemctl is-active socks5-manager.service
 
           # No firewall rule may exist for the port: v1 never creates one.
@@ -593,7 +594,7 @@ jobs:
             echo "install created a firewall rule; v1 must not" >&2; exit 1
           fi
 
-          docker exec "$CID" sh -c 'printf "y\n" | sh /src/socks5.sh uninstall'
+          docker exec "$CID" sh -c 'printf "2\ny\n" | sh /src/socks5.sh uninstall'
           docker exec "$CID" sh -c 'test ! -e /etc/socks5-manager && test ! -L /etc/socks5-manager'
           docker exec "$CID" sh -c 'test ! -e /var/lib/socks5-manager && test ! -L /var/lib/socks5-manager'
           docker exec "$CID" sh -c 'test ! -e /usr/local/libexec/socks5-manager && test ! -L /usr/local/libexec/socks5-manager'

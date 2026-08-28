@@ -450,4 +450,61 @@ fi
 coe=$(grep -cE '^[[:space:]]+continue-on-error[[:space:]]*:' "$CI")
 assert_eq "no job declares continue-on-error" 0 "$coe"
 
+# =========================================================================
+# Round 16 T16: the lifecycle answer streams feed the language selector, use
+# the [Y/n] default-yes confirmation, and queue the password EXACTLY once.
+# =========================================================================
+
+# Each lifecycle job's install answer builder must concatenate the password
+# file exactly once. Scoped per job block so a new job cannot borrow another's
+# compliance.
+for _job in systemd-integration openrc-integration distro-systemd-integration; do
+    _blk=$(ci_job_block "$_job")
+    # The ANSWERS builder must read the password exactly once. Scope to the lines
+    # that WRITE the answers file, so the redaction builder (which legitimately
+    # reads the password) and the PASSFILE handoff cannot mask a doubled entry.
+    _anslines=$(printf '%s\n' "$_blk" |
+        grep 'SECRETS/answers' | grep -v 'chmod\|install <\|cat >\|< "\$SECRETS/answers"\|<"\$SECRETS/answers"' || true)
+    _anspw=$(printf '%s\n' "$_anslines" | grep -c 'SECRETS/pass' || true)
+    assert_eq "$_job concatenates the password exactly once into answers" \
+        1 "$_anspw"
+    # The language answer precedes the confirmation in every install stream:
+    # blank (Chinese default), explicit 2 (English) or invalid-then-2 (retry).
+    # The answers-builder lines carry the evidence.
+    if printf '%s\n' "$_anslines" | grep -qF "printf '\ny" ||
+        printf '%s\n' "$_anslines" | grep -qF '2\ny' ||
+        printf '%s\n' "$_anslines" | grep -qF '9\n2\ny'; then
+        t_ok
+    else
+        t_bad "$_job install answers must begin with a language selection"
+    fi
+done
+
+# At least one cell exercises the invalid-language retry (openrc 3.20).
+if grep -q 'printf "9' "$CI"; then
+    t_ok
+else
+    t_bad "no CI cell exercises the invalid-language retry"
+fi
+# At least one cell exercises the blank-default Chinese selection: an answers
+# builder whose stream opens with a bare newline before the y confirmation.
+if grep "SECRETS/answers" "$CI" | grep -v 'chmod\|install <\|cat >' | grep -qF "printf '\ny"; then
+    t_ok
+else
+    t_bad "no CI cell exercises the blank (Chinese default) language selection"
+fi
+# Direct lifecycle commands all feed a language answer: no naked invocation
+# reaches the selector's stdin without one.
+if grep -nE '(sudo )?sh (socks5|/src/socks5)\.sh (status|restart|uninstall)( |$)' "$CI" |
+    grep -v 'printf'; then
+    t_bad "a direct lifecycle command reaches stdin without a language answer"
+else
+    t_ok
+fi
+if grep -nE 'docker exec "\$CID" sh /src/socks5\.sh (status|restart)$' "$CI"; then
+    t_bad "a container lifecycle command reaches stdin without a language answer"
+else
+    t_ok
+fi
+
 t_summary

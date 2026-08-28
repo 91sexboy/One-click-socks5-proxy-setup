@@ -51,7 +51,14 @@ check_absent "eval" '(^|[[:space:];&|(])eval[[:space:]]'
 check_absent "BRE alternation" '\\\|'
 
 # --- unknown subcommand is a usage error ---
-t_run env -u S5_TEST_MODE -u S5_TEST_ROOT sh "$SRC" definitely-not-a-subcommand
+# Language first (2 = English). This block predates t_mktestroot, so the
+# answer file is a plain mktemp, not under S5_TEST_ROOT.
+_langf=$(mktemp "${TMPDIR:-/tmp}/s5lang.XXXXXX")
+printf '2\n' >"$_langf"
+t_run env -u S5_TEST_MODE -u S5_TEST_ROOT sh "$SRC" definitely-not-a-subcommand \
+    <"$_langf"
+rm -f "$_langf"
+_langf='' 
 assert_eq "unknown subcommand exits 64" 64 "$T_STATUS"
 assert_contains "unknown subcommand prints usage" "Usage" "$T_OUT"
 
@@ -215,16 +222,19 @@ s5_cmd_restart() { printf 'RAN:restart ARGS:[%s]\n' "$*"; }
 s5_cmd_uninstall() { printf 'RAN:uninstall ARGS:[%s]\n' "$*"; }
 s5_cmd_auto() { printf 'RAN:auto ARGS:[%s]\n' "$*"; }
 
+# Round 16: s5_main selects the language first, so every dispatch test feeds
+# the selector answer. English (2) keeps the marker assertions meaningful.
+printf '2\n' >"$S5_TEST_ROOT/lang"
 for c in install status show restart uninstall; do
-    t_run s5_main "$c"
+    t_run s5_main "$c" <"$S5_TEST_ROOT/lang"
     assert_eq "[$c] on its own still runs" 0 "$T_STATUS"
     assert_contains "[$c] is called with no arguments at all" "RAN:$c ARGS:[]" "$T_OUT"
-    t_run s5_main "$c" --port 1080
+    t_run s5_main "$c" --port 1080 <"$S5_TEST_ROOT/lang"
     assert_eq "[$c --port 1080] exits 64" 64 "$T_STATUS"
     assert_contains "[$c] names the extra word as the problem" "takes no arguments" "$T_OUT"
     assert_not_contains "[$c] did not run anyway" "RAN:$c" "$T_OUT"
 done
-t_run s5_main
+t_run s5_main <"$S5_TEST_ROOT/lang"
 assert_contains "no command at all still takes the auto path" "RAN:auto ARGS:[]" "$T_OUT"
 
 # --- the documented one-click form: bash <(wget -qO- <URL>) ---
@@ -239,7 +249,7 @@ if command -v bash >/dev/null 2>&1; then
     # guard skips s5_main and it exits silently, which is what this test exists
     # to prove does NOT happen for a real one-click invocation.
     psub=$(env -u S5_LIB_ONLY -u S5_TEST_MODE -u S5_TEST_ROOT \
-        bash -c 'bash <(cat "$1") --help' _ "$SRC" 2>&1; printf '|%s' "$?")
+        bash -c 'printf "2\n" | bash <(cat "$1") --help' _ "$SRC" 2>&1; printf '|%s' "$?")
     assert_eq "the script runs under bash process substitution" 0 "${psub##*|}"
     assert_contains "and prints its usage" "Usage" "$psub"
     assert_not_contains "usage never prints the transient descriptor path" \

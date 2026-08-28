@@ -63,10 +63,14 @@ def main():
 
     pid, master = pty.fork()
     if pid == 0:
+        # Round 16: the entry point asks for the language before dispatch. The
+        # parent answers "2" (English) on the PTY once the prompt is visible;
+        # the child simply execs.
         os.execve("/bin/sh", ["/bin/sh", "-x", SRC, "show"], env)
         os._exit(127)
 
     output = b""
+    answered = False
     deadline = time.time() + 15.0
     while time.time() < deadline:
         try:
@@ -86,6 +90,14 @@ def main():
         if not chunk:
             break
         output += chunk
+        # Round 16: answer the language selector once its prompt has been
+        # printed. English (2) keeps this helper's English assertions valid.
+        if not answered and b"Select [1-2" in output:
+            try:
+                os.write(master, b"2\n")
+                answered = True
+            except OSError:
+                pass
 
     if pid:
         status = reap(pid)

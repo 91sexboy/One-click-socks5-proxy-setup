@@ -45,6 +45,25 @@ if [ "${1:-}" = "--config" ] && [ "${2:-}" = "-" ]; then
     exit 97
 fi
 
+# public-IPv4 lookup (Round 16 T11): recognized by the fixed endpoint URL.
+# The marker file supplies the scripted BODY bytes; its exit code is the HTTP/
+# transport outcome. Without the marker the lookup fails like a dead endpoint.
+case "$*" in
+*https://icanhazip.com*)
+    # The HTTP-status marker wins over the body: an error response must never
+    # yield its body as a result.
+    if [ -f "$S5_TEST_ROOT/stub_ip_code" ]; then
+        _ic=$(cat "$S5_TEST_ROOT/stub_ip_code")
+        exit "$_ic"
+    fi
+    if [ -f "$S5_TEST_ROOT/stub_ip_body" ]; then
+        cat "$S5_TEST_ROOT/stub_ip_body"
+        exit 0
+    fi
+    exit 7
+    ;;
+esac
+
 # direct-egress probe (no proxy)
 if [ -f "$S5_TEST_ROOT/stub_no_egress" ]; then
     printf 'curl: (7) failed to connect\n' >&2

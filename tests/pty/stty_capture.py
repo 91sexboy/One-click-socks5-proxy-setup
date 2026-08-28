@@ -110,6 +110,9 @@ def main():
         os._exit(127)
 
     try:
+        _, ok = read_until(master, r"Select \[1-2")
+        check(ok, "reached the language selector")
+        os.write(master, b"2\n")
         _, ok = read_until(master, r"Continue with the installation")
         check(ok, "reached the pre-install confirmation")
         os.write(master, b"y\n")

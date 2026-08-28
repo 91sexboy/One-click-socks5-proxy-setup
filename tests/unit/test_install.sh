@@ -211,7 +211,6 @@ s5env_answers 'y
 31080
 gooduser
 TestPassword_123~x
-TestPassword_123~x
 y
 '
 t_run s5_cmd_install <"$S5_TEST_ROOT/answers"
@@ -306,7 +305,6 @@ s5env_answers 'y
 31081
 otheruser
 TestPassword_123~x
-TestPassword_123~x
 y
 '
 t_run s5_cmd_install <"$S5_TEST_ROOT/answers"
@@ -334,7 +332,6 @@ s5env_answers 'y
 31082
 thirduser
 TestPassword_123~x
-TestPassword_123~x
 y
 '
 t_run s5_cmd_install <"$S5_TEST_ROOT/answers"
@@ -355,7 +352,6 @@ rm -f "$S5_UNIT" "$S5_INITSCRIPT" "$S5_TEST_ROOT/svc_active"
 s5env_answers 'y
 31084
 reloaduser
-TestPassword_123~x
 TestPassword_123~x
 y
 '
@@ -382,7 +378,6 @@ rm -f "$S5_UNIT" "$S5_INITSCRIPT" "$S5_TEST_ROOT/svc_active"
 s5env_answers 'y
 31085
 queryuser
-TestPassword_123~x
 TestPassword_123~x
 y
 '
@@ -439,7 +434,6 @@ s5env_answers 'y
 31087
 lateuser
 TestPassword_123~x
-TestPassword_123~x
 y
 '
 printf '%s:%s' lateuser 'TestPassword_123~x' >"$S5_TEST_ROOT/expected_creds"
@@ -462,7 +456,6 @@ printf '999\n' >"$S5_TEST_ROOT/svc_latebind"
 s5env_answers 'y
 31088
 neveruser
-TestPassword_123~x
 TestPassword_123~x
 y
 '
@@ -491,7 +484,6 @@ printf '1\n' >"$S5_TEST_ROOT/svc_die_after"
 s5env_answers 'y
 31089
 dieuser
-TestPassword_123~x
 TestPassword_123~x
 y
 '
@@ -549,7 +541,6 @@ s5env_answers 'y
 31090
 obscureuser
 TestPassword_123~x
-TestPassword_123~x
 y
 '
 t_run s5_cmd_install <"$S5_TEST_ROOT/answers"
@@ -581,7 +572,6 @@ printf '2\n' >"$S5_TEST_ROOT/svc_latebind"
 s5env_answers 'y
 31091
 alpuser
-TestPassword_123~x
 TestPassword_123~x
 y
 '
@@ -616,7 +606,6 @@ s5env_answers 'y
 31092
 alptruser
 TestPassword_123~x
-TestPassword_123~x
 y
 '
 printf '%s:%s' alptruser 'TestPassword_123~x' >"$S5_TEST_ROOT/expected_creds"
@@ -644,7 +633,6 @@ S5_OSRELEASE="${S5_REPO_ROOT}/tests/fixtures/os-release/alpine-3.20"
 s5env_answers 'y
 31093
 alpdead
-TestPassword_123~x
 TestPassword_123~x
 y
 '
@@ -678,7 +666,6 @@ printf '2\n' >"$S5_TEST_ROOT/svc_latebind"
 s5env_answers 'y
 31094
 alplockuser
-TestPassword_123~x
 TestPassword_123~x
 y
 '
@@ -725,7 +712,6 @@ s5env_answers 'y
 31083
 fourthuser
 TestPassword_123~x
-TestPassword_123~x
 y
 '
 t_run s5_cmd_install <"$S5_TEST_ROOT/answers"
@@ -758,7 +744,6 @@ mktemp() {
 s5env_answers 'y
 31086
 stateuser
-TestPassword_123~x
 TestPassword_123~x
 '
 t_run s5_cmd_install <"$S5_TEST_ROOT/answers"

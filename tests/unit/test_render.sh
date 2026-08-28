@@ -141,24 +141,27 @@ assert_not_contains "OpenRC creates no ordinary error log file" "error_log=" "$o
 
 # Server address output is for the IPv4-only deployed listener. A hostname -I
 # result beginning with IPv6 must not be emitted as an unusable address in the
-# connection details.
+# connection details. Round 16 replaced the loose first-dotted-token logic
+# with the validated resolver: IPv6 tokens are skipped (as before), but a
+# TEST-NET address like 192.0.2.25 is now REJECTED as unusable. This file
+# does not source env.sh, so curl is the REAL binary: shadow it to fail, or
+# the resolver would perform a live network request from a unit test.
 mkdir -p "$S5_TEST_ROOT/iptest"
-cat >"$S5_TEST_ROOT/iptest/hostname" <<'HOST'
-#!/bin/sh
-printf '%s\n' '2001:db8::10 192.0.2.25'
-HOST
-chmod 0755 "$S5_TEST_ROOT/iptest/hostname"
-_oldpath=$PATH
-PATH="$S5_TEST_ROOT/iptest:$PATH"
-export PATH
-# Hide the real `ip` command so the hostname fallback is exercised. A PATH stub
-# is insufficient under busybox because `ip` is a built-in applet.
 ip() { return 1; }
+curl() { return 7; }
+hostname() { printf '%s\n' '2001:db8::10 10.20.30.40'; }
+s5_resolve_card_address
+assert_eq "hostname fallback selects the usable IPv4" 10.20.30.40 "$S5_CARD_ADDR"
+assert_eq "and reports the local kind" local "$S5_CARD_KIND"
+
+# The old behavior silently accepted documentation space; it must not return.
 hostname() { printf '%s\n' '2001:db8::10 192.0.2.25'; }
-assert_eq "server address fallback selects IPv4" 192.0.2.25 "$(s5_server_ip)"
+s5_resolve_card_address
+assert_ne "TEST-NET is never shown as the server address" 192.0.2.25 "$S5_CARD_ADDR"
+
 unset -f ip
 unset -f hostname
-PATH=$_oldpath
+unset -f curl
 
 t_stub id 1
 t_stub useradd 0

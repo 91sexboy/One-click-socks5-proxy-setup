@@ -85,7 +85,9 @@ done
 # drops it silently and the run still reports green -- so "the tests pass" would
 # survive removing the test that fails. Only meaningful for a full run; a FILTER
 # is expected to select a subset. Bumping this number must be a deliberate act.
-EXPECTED_UNIT_FILES=20
+# 22 since Round 16 added test_i18n.sh (catalog contract) and test_card.sh
+# (IPv4 resolution and credential-card contract).
+EXPECTED_UNIT_FILES=22
 if [ -z "$FILTER" ] && [ "$files" -ne "$EXPECTED_UNIT_FILES" ]; then
     bad_files=$((bad_files + 1))
     printf 'FAIL unit file count is %d, expected %d\n' \

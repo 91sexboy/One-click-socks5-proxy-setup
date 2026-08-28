@@ -42,8 +42,11 @@ clean_env() {
     env -u S5_TEST_MODE $clear_args "$@"
 }
 
-# Baseline: with every override cleared, the script runs normally.
-t_run clean_env sh "${S5_SRC}" --help
+# Baseline: with every override cleared, the script runs normally. Round 16:
+# the language selector reads stdin before dispatch, so the answer file feeds it.
+_langf=$(mktemp "${TMPDIR:-/tmp}/s5lang.XXXXXX")
+printf '2\n' >"$_langf"
+t_run clean_env sh "${S5_SRC}" --help <"$_langf"
 assert_eq "baseline: production mode runs with no overrides set" 0 "$T_STATUS"
 assert_contains "baseline prints usage" "Usage" "$T_OUT"
 
@@ -78,7 +81,7 @@ for v in S5_SECRET S5_INIT; do
         t_bad "$v must be unconditionally initialised to a known value"
     fi
 done
-t_run clean_env S5_SECRET=leak S5_INIT=bogus sh "${S5_SRC}" --help
+t_run clean_env S5_SECRET=leak S5_INIT=bogus sh "${S5_SRC}" --help <"$_langf"
 assert_eq "exported S5_SECRET/S5_INIT are harmless, not a refusal" 0 "$T_STATUS"
 assert_not_contains "and never echoed" "leak" "$T_OUT"
 
@@ -177,7 +180,6 @@ chmod 0500 "$S5_TEST_ROOT/etc"
 s5env_answers 'y
 31080
 orphanuser
-OrphanPass_123~x
 OrphanPass_123~x
 y
 y

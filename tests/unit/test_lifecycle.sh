@@ -40,7 +40,6 @@ s5env_answers 'y
 41080
 lifeuser
 LifePass_1234~x
-LifePass_1234~x
 y
 y
 '
@@ -196,10 +195,12 @@ t_assert_never_called "restart does not reinstall the unit" 'systemctl enable'
 t_assert_never_called "restart does not rebuild" 'make -f'
 assert_not_contains "restart never prints the password" "$PASS_OK" "$T_OUT"
 
-# there is no reload and no reconfigure subcommand in v1
-t_run env -u S5_LIB_ONLY sh "$S5_SRC" reload
+# there is no reload and no reconfigure subcommand in v1. The language
+# selector reads stdin first, so each real-script invocation feeds it.
+printf '2\n' >"$S5_TEST_ROOT/lang"
+t_run env -u S5_LIB_ONLY sh "$S5_SRC" reload <"$S5_TEST_ROOT/lang"
 assert_eq "reload is an unknown subcommand" 64 "$T_STATUS"
-t_run env -u S5_LIB_ONLY sh "$S5_SRC" reconfigure
+t_run env -u S5_LIB_ONLY sh "$S5_SRC" reconfigure <"$S5_TEST_ROOT/lang"
 assert_eq "reconfigure is an unknown subcommand" 64 "$T_STATUS"
 
 # ==========================================================================
@@ -352,7 +353,6 @@ s5env_answers 'y
 41081
 seconduser
 SecondPass_123~x
-SecondPass_123~x
 y
 n
 '
@@ -394,7 +394,6 @@ S5_OSRELEASE="${S5_REPO_ROOT}/tests/fixtures/os-release/alpine-3.20"
 s5env_answers 'y
 41082
 alpruser
-AlpPass_1234~x
 AlpPass_1234~x
 y
 '
