@@ -254,11 +254,16 @@ assert_contains "README distinguishes the CI job scopes" "real engine running th
 # status passage is deliberately rewritten as evidence changes, so pin the
 # sentence that carries the current honest limit: no real systemd install
 # lifecycle has completed yet. That claim is checkable against the actual CI
-# runs today; when a systemd lifecycle does go green, the README AND this pin
-# must be updated in the same change -- the pin's purpose is to make the README
-# rot loudly instead of silently overclaiming (or drifting back to stale text).
-assert_contains "README admits no real systemd lifecycle has completed" \
-    "real systemd install lifecycle has completed" "$readme"
+# CI evidence is a published claim, so pin both the aggregate and the exact
+# auditable run. If the matrix shape changes, the count and wording must change
+# deliberately; if a future run regresses, do not erase the historical green
+# evidence -- add current status next to it.
+assert_contains "README records the fully green CI checkpoint" \
+    "45 of 45 jobs passed" "$readme"
+assert_contains "README names the auditable green run" \
+    "33174398814" "$readme"
+assert_not_contains "README removes the pre-green systemd claim" \
+    "No real systemd install lifecycle has completed yet" "$readme"
 assert_not_contains "README no longer claims CI has not been run" \
     "CI has not been run" "$readme"
 assert_not_contains "README no longer calls Alpine experimental" "experimental" "$readme"

@@ -311,8 +311,9 @@ no-op plus a status report.
   and no firewall rule was ever created.
 
 systemd targets need systemd-capable containers or VMs (`systemctl` in a plain container lies).
-**No tier is exempt: every cell is defined as blocking, Alpine included.** "Blocking" describes the
-gate's configuration, not a result — see §18, no cell has been run.
+**No tier is exempt: every cell is blocking, Alpine included.** The full 45-job workflow passed in
+run `33174398814` at commit `df6885c`: all build/protocol/ACL cells and all seven real service
+lifecycles (§18).
 
 The 16 protocol cells build the pinned commit, render the production config and run the engine
 **directly** — they prove the protocol boundary, not a service install. Real init-system
@@ -387,29 +388,30 @@ IPv6-only listeners; log rotation; RHEL/Rocky/Alma.
   defined upstream only as "the 0.9 branch" with no published support window — do not imply upstream
   security backports reach this install automatically.
 
-## 18. Residual risks and open questions
-1. **Nothing in this project has ever run on a real host.** The local suite exercises stubs inside a
-   sandbox, which proves internal consistency and nothing about real behaviour. No CI job has been
-   executed: not the compilation, not the build or protocol matrices, not the destination-ACL test,
-   not `shellcheck`, and not one of the four service-install lifecycles. Every support claim in this
-   spec and in the README is therefore a *design intent* awaiting evidence. Treat §15 as the list of
-   things to verify, not as a record of things verified.
-2. **Alpine/musl build unproven** — no upstream Alpine artifact or musl CI, so the
-   `musl-dev`/`linux-headers` set is inferred rather than confirmed.
-3. **The Debian and CentOS Stream lifecycle jobs are the least certain part of the pipeline.** They
-   boot systemd as PID 1 inside a privileged container, which is workable but sensitive to cgroup
-   layout and image contents; expect iteration on first run.
-4. **Self-test needs egress** (§11 classifies the failures); **3proxy 0.9 maintenance policy
-   unverified** (README disclosure, §17).
+## 18. Residual risks and settled decisions
 
-**Open questions requiring an owner decision** (tracked in `tasks/plan.md`):
-- **Publishing target.** Until the project has a remote, no CI job can run and the README's download
-  recipe stays a labelled template rather than a working command.
+**Verification status (2026-08-28).** GitHub Actions run `33174398814` at commit `df6885c`
+completed **45/45 green**:
 
-**Decided (2026-08-27):**
-- **Firewall: no functionality at all.** Even the read-only detection/guidance remnant is removed
-  (§7.1). The operator opens the port themselves.
-- **`status`, `show`, `restart` and the no-argument menu are retained** as part of the product.
+- 16 build cells and 16 protocol cells cover all §3 OS versions on amd64 and arm64;
+- 3 isolated ACL-resolution cells prove hostname targets cannot bypass the destination denies;
+- 2 native Ubuntu 24.04 systemd lifecycles (amd64 + arm64), 3 systemd-as-PID-1 container
+  lifecycles (Ubuntu 22.04, Debian 13, CentOS Stream 10), and 2 OpenRC lifecycles (Alpine 3.20 +
+  3.24) pass install → status/listening → restart → uninstall → cleanliness;
+- lint, three-shell unit coverage and every structural release gate pass.
+
+This satisfies §15. The earlier pre-CI risks are closed: Alpine/musl builds and both OpenRC
+versions are proven; the Debian/CentOS systemd containers boot and complete; the script's clean-host
+package bootstrap executes in those lifecycle jobs. CI evidence does not erase environmental
+risks: package repositories, DNS and the fixed HTTPS self-test require egress; cloud images may
+differ from the tested base images; and the pinned 3proxy 0.9 branch has no published maintenance
+window, so the operator still owns updates (§17).
+
+**Decided:**
+- Publishing target: `github.com/91sexboy/One-click-socks5-proxy-setup`; the README raw URL is
+  runnable and the one-line invocation was exercised against it.
+- Firewall: no functionality at all (§7.1). The operator opens the port themselves.
+- `status`, `show`, `restart` and the no-argument menu are retained as product surface.
 
 Settled, not open: the self-test target is fixed at `https://example.com/` (§2), and OpenRC logs to
 syslog via `logger` rather than to any file (§9), so log rotation stays a non-goal.

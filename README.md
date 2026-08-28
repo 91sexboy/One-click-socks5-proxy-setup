@@ -287,32 +287,28 @@ acceptance cases, the destination-ACL hostname test, `shellcheck`, and the four
 real service-install lifecycles are **CI only** — see
 `.github/workflows/ci.yml`. A green local suite does not imply those passed.
 
-CI has run, twice, on GitHub-hosted runners. What passes so far: the full unit
-suite under `sh`, `dash` and `busybox sh`; 14 of the 16 build cells; 14 of the
-16 protocol cells — the engine compiled from the pinned commit and all seven
-protocol acceptance cases passed, the two legacy-SOCKS rejection cases included;
-and one real OpenRC install lifecycle on Alpine 3.24. What fails, one line each:
+CI is green on GitHub-hosted runners. In run
+[`33174398814`](https://github.com/91sexboy/One-click-socks5-proxy-setup/actions/runs/33174398814)
+at commit `df6885c`, **45 of 45 jobs passed**:
 
-- `lint` — the first `shellcheck` run ever; mostly false positives, plus one
-  real `rm -rf` hazard in a test. Being fixed.
-- CentOS Stream 9 build and protocol cells — a CI bootstrap package conflict
-  with the image's `curl-minimal`; the script itself is not affected.
-- All three `acl-resolution` cells — a race in the test's own listener
-  startup; fixed in the test harness.
-- The two native systemd install lifecycles — the installer verified the
-  port too early and rolled back good installs; a real product defect, under
-  repair.
-- Alpine 3.20 OpenRC — the same product defect.
-- The three containerized systemd cells — never reached the installer: the
-  containers failed to build or boot; CI harness problems, not product results.
+- the full unit suite under `sh`, `dash` and `busybox sh`, on amd64 and arm64;
+- all 16 build cells (8 supported OS versions × 2 architectures);
+- all 16 protocol cells against the real pinned engine and rendered config,
+  including every required rejection gate;
+- all 3 destination-ACL cells, proving hostname resolution cannot bypass the
+  private/link-local/metadata destination denies;
+- 2 native systemd lifecycles on Ubuntu 24.04 (amd64 and arm64);
+- 3 systemd-as-PID-1 container lifecycles on Ubuntu 22.04, Debian 13 and
+  CentOS Stream 10; and
+- 2 real OpenRC lifecycles on Alpine 3.20 and 3.24, with the installer itself
+  bootstrapping the build and runtime dependencies from the clean images.
 
-The honest bottom line is unchanged in one respect:
-
-**No real systemd install lifecycle has completed yet**, so the Requirements
-table above remains the set of targets this script is *written* for, not a
-list of platforms it is known to work on. This section is rewritten as CI
-evidence changes.
-
+Every supported OS family therefore has a real
+install → active/listening → restart → uninstall → cleanliness lifecycle, and
+every advertised OS version/architecture has real build and protocol evidence.
+This is CI evidence, not a promise that every VPS image or network environment
+is identical: the installer still fails closed when its manager, port probe,
+package repository, DNS or egress cannot be verified.
 What each CI job actually proves is deliberately distinct:
 
 | Job | Cells | What it proves |

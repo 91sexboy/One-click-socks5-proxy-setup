@@ -1,8 +1,8 @@
 name: ci
 
-# Nothing in this file has been executed. A green local unit suite does NOT
-# imply any of these jobs passed. Local machines cannot run them: they need a
-# compiler, a container runtime, root, and a real listening port.
+# The complete 45-job workflow passed in run 33174398814 at df6885c. A green
+# LOCAL unit suite still does not substitute for these jobs: they need real
+# compilers, containers, init managers, accounts and listening ports.
 #
 # All runners are GitHub-hosted. Self-hosted runners must never be used: the
 # protocol and integration jobs bind a proxy port and create system accounts.
