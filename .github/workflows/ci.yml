@@ -438,7 +438,7 @@ jobs:
               rc-service socks5-manager status >&2; echo "status exit: $?" >&2
               ls -la /run/openrc/exclusive /run/openrc/starting /run/openrc/started >&2 2>&1 || true
               rc-status -a >&2 || true
-              ps aux | grep -E 'openrc|supervise|3proxy|logger' | grep -v grep >&2 || true
+              ps aux | grep -E "openrc|supervise|3proxy|logger" | grep -v grep >&2 || true
               sleep 2
               rc-service socks5-manager start >&2; echo "retried start exit: $?" >&2
               rc-service socks5-manager status >&2; echo "retried status exit: $?" >&2

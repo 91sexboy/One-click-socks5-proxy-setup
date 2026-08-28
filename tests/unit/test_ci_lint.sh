@@ -176,6 +176,21 @@ assert_contains "Ubuntu has a real systemd lifecycle" \
     "ubuntu-24.04" "$(ci_job_block systemd-integration)"
 assert_contains "Alpine has a real OpenRC lifecycle" \
     "alpine:3." "$(ci_job_block openrc-integration)"
+
+# The OpenRC job is one outer shell script containing `docker ... sh -c '...'.
+# A raw single quote anywhere in that inner body closes the outer quote early:
+# `sh -n` can still report a syntactically valid (but completely rearranged)
+# script, while the runner executes fragments as host commands and the
+# container sees an unterminated block. Exactly three LINES may contain a
+# single quote: the opening `sh -c '`, the redaction line's established
+# `"'"'"'` escape, and the closing quote. Any fourth line is an unescaped quote
+# that corrupts the command boundary; force deliberate review if the quoting
+# strategy itself ever changes.
+_openrc_block=$(ci_job_block openrc-integration)
+_openrc_quote_lines=$(printf '%s\n' "$_openrc_block" | grep -c "'")
+assert_eq "OpenRC job has exactly its three reviewed quote-bearing lines" \
+    3 "$_openrc_quote_lines"
+
 _distro=$(ci_job_block distro-systemd-integration)
 assert_contains "Debian has a real systemd lifecycle" "debian:13" "$_distro"
 assert_contains "CentOS Stream has a real systemd lifecycle" "centos:stream10" "$_distro"
