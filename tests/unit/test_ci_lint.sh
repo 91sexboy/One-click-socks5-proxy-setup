@@ -181,13 +181,20 @@ assert_contains "Alpine has a real OpenRC lifecycle" \
 # A raw single quote anywhere in that inner body closes the outer quote early:
 # `sh -n` can still report a syntactically valid (but completely rearranged)
 # script, while the runner executes fragments as host commands and the
-# container sees an unterminated block. Exactly three LINES may contain a
-# single quote: the opening `sh -c '`, the redaction line's established
-# `"'"'"'` escape, and the closing quote. Any fourth line is an unescaped quote
-# that corrupts the command boundary; force deliberate review if the quoting
-# strategy itself ever changes.
-_openrc_block=$(ci_job_block openrc-integration)
-_openrc_quote_lines=$(printf '%s\n' "$_openrc_block" | grep -c "'")
+# container sees an unterminated block. Exactly three LINES in the RAW job
+# block (comments included -- a shell quote in a comment still participates in
+# lexing when the whole comment is inside the outer quote) may contain a single
+# quote: the opening `sh -c '`, the redaction line's established `"'"'"'`
+# escape, and the closing quote. Any fourth line is an unescaped quote that
+# corrupts the boundary; force deliberate review if the quoting strategy ever
+# changes. Do NOT use ci_job_block here: it strips comments and once made this
+# guard miss the two apostrophes that broke the sixth CI run.
+_openrc_raw_block=$(awk '
+    $0 == "  openrc-integration:" { in_job = 1; next }
+    in_job && /^  [a-z][a-z0-9-]*:$/ { exit }
+    in_job { print }
+' "$CI")
+_openrc_quote_lines=$(printf '%s\n' "$_openrc_raw_block" | grep -c "'")
 assert_eq "OpenRC job has exactly its three reviewed quote-bearing lines" \
     3 "$_openrc_quote_lines"
 

@@ -433,9 +433,9 @@ jobs:
               # OpenRC-state diagnostics: set -e MUST be disabled first --
               # `rc-service status` returning stopped=3 was terminating this
               # block before any diagnostic beyond that first line could run.
-              # openrc-run's "already starting" is specifically
+              # the openrc-run "already starting" message is specifically
               # svc_lock/EWOULDBLOCK, so include the kernel lock table and the
-              # inode of the service's exclusive lock to identify its holder.
+              # inode of the service exclusive lock to identify its holder.
               set +e
               rc-service socks5-manager status >&2
               echo "status exit: $?" >&2
