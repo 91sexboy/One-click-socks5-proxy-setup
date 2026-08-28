@@ -105,10 +105,12 @@ STUB_EOF
 # For stubs needing real logic (e.g. a fake git that answers rev-parse).
 t_stub_script() {
     _name=$1
-    printf '#!/bin/sh\n' >"$S5_TEST_ROOT/bin/$_name"
-    printf 'printf %s "%s" >>"%s"\n' "'%s'" "$_name" "$T_TRANSCRIPT" >>"$S5_TEST_ROOT/bin/$_name"
-    printf 'for _a in "$@"; do printf " %%s" "$_a" >>"%s"; done\n' "$T_TRANSCRIPT" >>"$S5_TEST_ROOT/bin/$_name"
-    printf 'printf "\\n" >>"%s"\n' "$T_TRANSCRIPT" >>"$S5_TEST_ROOT/bin/$_name"
+    {
+        printf '#!/bin/sh\n'
+        printf 'printf %s "%s" >>"%s"\n' "'%s'" "$_name" "$T_TRANSCRIPT"
+        printf 'for _a in "$@"; do printf " %%s" "$_a" >>"%s"; done\n' "$T_TRANSCRIPT"
+        printf 'printf "\\n" >>"%s"\n' "$T_TRANSCRIPT"
+    } >"$S5_TEST_ROOT/bin/$_name"
     shift
     printf '%s\n' "$*" >>"$S5_TEST_ROOT/bin/$_name"
     chmod 0755 "$S5_TEST_ROOT/bin/$_name"

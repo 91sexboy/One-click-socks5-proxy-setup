@@ -179,7 +179,7 @@ protoimgs=$(printf '%s\n' "$ci" | awk '/^  protocol:/,/^  acl-resolution:/' | gr
 assert_eq "protocol matrix declares 8 images" 8 "$protoimgs"
 assert_contains "CI uses the native arm64 runner" "ubuntu-24.04-arm" "$ci"
 assert_contains "CI pins checkout to a full commit SHA" \
-    "actions/checkout@11d5960a326750d5838078e36cf38b85af677262" "$ci"
+    "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09" "$ci"
 if printf '%s\n' "$ci" | grep -qE 'uses:.*@v[0-9]+$'; then
     t_bad "no action may be pinned to a mutable tag"
 else
@@ -250,7 +250,17 @@ assert_contains "CI has OpenRC integration" "openrc-integration" "$ci"
 assert_contains "README documents reboot persistence" "Persistent across reboot" "$readme"
 assert_contains "README says iptables rules are not persistent" "kernel memory only" "$readme"
 assert_contains "README distinguishes the CI job scopes" "real engine running the rendered config" "$readme"
-assert_contains "README says CI has not been run" "CI has not been run" "$readme"
+# CI has run; the README now states what the runs proved and what failed. The
+# status passage is deliberately rewritten as evidence changes, so pin the
+# sentence that carries the current honest limit: no real systemd install
+# lifecycle has completed yet. That claim is checkable against the actual CI
+# runs today; when a systemd lifecycle does go green, the README AND this pin
+# must be updated in the same change -- the pin's purpose is to make the README
+# rot loudly instead of silently overclaiming (or drifting back to stale text).
+assert_contains "README admits no real systemd lifecycle has completed" \
+    "real systemd install lifecycle has completed" "$readme"
+assert_not_contains "README no longer claims CI has not been run" \
+    "CI has not been run" "$readme"
 assert_not_contains "README no longer calls Alpine experimental" "experimental" "$readme"
 
 # ==========================================================================

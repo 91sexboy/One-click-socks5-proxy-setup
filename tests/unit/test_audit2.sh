@@ -85,13 +85,11 @@ assert_not_contains "and never echoed" "leak" "$T_OUT"
 # ==========================================================================
 # No dead variables.
 # ==========================================================================
-for v in S5_INSTALL_ACTIVE; do
-    if grep -q "$v" "${S5_SRC}"; then
-        t_bad "dead variable still present: $v"
-    else
-        t_ok
-    fi
-done
+if grep -q S5_INSTALL_ACTIVE "${S5_SRC}"; then
+    t_bad "dead variable still present: S5_INSTALL_ACTIVE"
+else
+    t_ok
+fi
 # every S5_* variable assigned at top level is read somewhere
 for v in S5_ARCHNAME S5_WORKDIR S5_TERM_STATE S5_TERM_MODIFIED \
     S5_ROLLBACK_ARMED S5_INSTALL_COMPLETE S5_IN_CLEANUP; do
@@ -170,7 +168,7 @@ assert_eq "teardown tolerates flagged-but-absent resources" 0 "$T_STATUS"
 
 # Functional: creation fails right after the flag is recorded -> rollback still
 # cleans up and reports honestly.
-rm -rf "$S5_SYSCONFDIR" "$S5_PREFIX" "$S5_STATEDIR" "$S5_TEST_ROOT/etc"
+rm -rf "${S5_SYSCONFDIR:?}" "${S5_PREFIX:?}" "${S5_STATEDIR:?}" "${S5_TEST_ROOT:?}/etc"
 rm -f "$S5_UNIT" "$S5_INITSCRIPT" "$S5_TEST_ROOT/svc_active"
 : >"$S5_TEST_ROOT/stub_passwd"
 : >"$S5_TEST_ROOT/stub_group"

@@ -7,13 +7,12 @@ s5env_setup() {
     t_mktestroot
     t_stub_init
 
-    for s in git make systemctl curl; do
+    for s in git make systemctl rc-service curl; do
         cp "${S5_REPO_ROOT}/tests/stubs/$s" "$S5_TEST_ROOT/bin/$s"
         chmod 0755 "$S5_TEST_ROOT/bin/$s"
     done
 
     # Everything privileged is a recording stub.
-    t_stub rc-service 0
     t_stub rc-update 0
     t_stub chown 0
     t_stub logger 0
@@ -34,6 +33,21 @@ s5env_setup() {
     # ignored its argument entirely, could not be caught. Production greps the
     # real ss/netstat output for the specific port, so the stub has to be at
     # least as discriminating or the tests are weaker than the code they guard.
+    #
+    # Late bind (fix-plan Task 1): with $S5_TEST_ROOT/svc_latebind holding N,
+    # the first N observations of the service's own port answer "free" while
+    # the service is already active -- the deterministic model of a Type=simple
+    # unit (or an OpenRC service under supervise-daemon) whose socket is not
+    # bound yet. Counted separately in svc_latebind_seen, so the delay is
+    # measured in observations of THAT port, not in total probe invocations
+    # (the port prompt probes before the service exists and must not consume
+    # the budget). A test that never removes the file models a port that never
+    # binds within any window.
+    #
+    # port_probe_count is the opt-in tally of every invocation: a test creates
+    # (or truncates) the file to start counting, which is how "waited the whole
+    # window" and "failed fast, long before the window" are proven from disk
+    # without any real clock.
     : >"$S5_TEST_ROOT/occupied"
     cat >"$S5_TEST_ROOT/bin/portprobe" <<'PROBE'
 #!/bin/sh
@@ -41,12 +55,31 @@ if [ -z "${1:-}" ]; then
     printf 'portprobe: called with no port argument\n' >&2
     exit 2
 fi
+if [ -f "$S5_TEST_ROOT/port_probe_count" ]; then
+    _n=$(cat "$S5_TEST_ROOT/port_probe_count" 2>/dev/null)
+    case "$_n" in '' | *[!0-9]*) _n=0 ;; esac
+    _n=$((_n + 1))
+    printf '%s\n' "$_n" >"$S5_TEST_ROOT/port_probe_count"
+fi
 if [ -f "$S5_TEST_ROOT/svc_active" ]; then
     _active=$(cat "$S5_TEST_ROOT/svc_active" 2>/dev/null)
     # An empty svc_active means a test marked the service up without going
     # through the stub, and no port is known. Keep the old catch-all meaning
     # for that case only, so existing lifecycle tests keep their semantics.
-    if [ -z "$_active" ] || [ "$_active" = "$1" ]; then exit 1; fi
+    if [ -z "$_active" ] || [ "$_active" = "$1" ]; then
+        if [ "$_active" = "$1" ] && [ -f "$S5_TEST_ROOT/svc_latebind" ]; then
+            _late=$(cat "$S5_TEST_ROOT/svc_latebind" 2>/dev/null)
+            case "$_late" in '' | *[!0-9]*) _late=0 ;; esac
+            _seen=$(cat "$S5_TEST_ROOT/svc_latebind_seen" 2>/dev/null)
+            case "$_seen" in '' | *[!0-9]*) _seen=0 ;; esac
+            _seen=$((_seen + 1))
+            printf '%s\n' "$_seen" >"$S5_TEST_ROOT/svc_latebind_seen"
+            if [ "$_seen" -le "$_late" ]; then
+                exit 0
+            fi
+        fi
+        exit 1
+    fi
 fi
 if grep -qx "$1" "$S5_TEST_ROOT/occupied" 2>/dev/null; then exit 1; fi
 exit 0
@@ -87,7 +120,8 @@ s5env_load() {
     . "${S5_SRC}"
     S5_STUB_CFG="$S5_CFG"
     S5_STUB_UNIT="$S5_UNIT"
-    export S5_STUB_CFG S5_STUB_UNIT
+    S5_STUB_INITSCRIPT="$S5_INITSCRIPT"
+    export S5_STUB_CFG S5_STUB_UNIT S5_STUB_INITSCRIPT
 }
 
 # s5env_answers <text> : queue interactive answers, consumed via redirection.

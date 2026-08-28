@@ -402,6 +402,197 @@ rm -f "$S5_UNIT" "$S5_INITSCRIPT"
 : >"$S5_TEST_ROOT/stub_group"
 
 # ==========================================================================
+# Readiness wait (fix-plan Task 1, real-CI root cause A).
+#
+# tests/golden/socks5-manager.service is Type=simple: systemd marks the unit
+# active the moment it forks the process, before any socket is bound, and
+# rc-service still answers nonzero while an OpenRC service is "starting". The
+# install verification used to probe the port exactly once, immediately, so a
+# host that took even a moment to bind rolled back a perfectly good install:
+#     [*] starting socks5-manager
+#     [x] nothing is listening on port 41080
+# The stubs resolved service-active and port-bound in the same instant, so no
+# test could express the race. The harness now models it: svc_latebind N hides
+# the port for the first N observations of that port while the service is
+# already active (see tests/lib/env.sh), and svc_die_after N makes the service
+# exit during the same window. Production tests must not sleep their way to
+# the answer, so the delay is measured in probe observations, never seconds.
+#
+# These cases run before the F28 block below, which replaces the static check
+# for good: a late-bind install has to pass the REAL static check, not the
+# neutered one, or it would prove nothing about a shippable configuration.
+# ==========================================================================
+
+# --- The service's socket appears within the wait window: install SUCCEEDS.
+# Old code: the single immediate probe saw a free port and rolled back.
+s5env_reset_transcript
+rm -rf "$S5_SYSCONFDIR" "$S5_STATEDIR" "$S5_PREFIX" "$S5_UNITDIR"
+rm -f "$S5_UNIT" "$S5_INITSCRIPT" "$S5_TEST_ROOT/svc_active"
+rm -f "$S5_TEST_ROOT/svc_latebind" "$S5_TEST_ROOT/svc_latebind_seen" \
+    "$S5_TEST_ROOT/svc_die_after" "$S5_TEST_ROOT/svc_isactive_count" \
+    "$S5_TEST_ROOT/port_probe_count"
+: >"$S5_TEST_ROOT/stub_passwd"
+: >"$S5_TEST_ROOT/stub_group"
+mkdir -p "$S5_UNITDIR"
+printf '3\n' >"$S5_TEST_ROOT/svc_latebind"
+s5env_answers 'y
+31087
+lateuser
+TestPassword_123~x
+TestPassword_123~x
+y
+'
+printf '%s:%s' lateuser 'TestPassword_123~x' >"$S5_TEST_ROOT/expected_creds"
+t_run s5_cmd_install <"$S5_TEST_ROOT/answers"
+assert_eq "install succeeds when the port binds within the wait window" 0 "$T_STATUS"
+assert_file_exists "late-binding install keeps the config" "$S5_CFG"
+assert_file_exists "late-binding install keeps the state" "$S5_STATE"
+rm -f "$S5_TEST_ROOT/svc_latebind" "$S5_TEST_ROOT/svc_latebind_seen"
+
+# --- The port never appears: install FAILS with a timeout diagnostic, and
+# does NOT report the instant-absence message that used to roll back a good
+# install, nor the dead-service message -- the service stayed active.
+s5env_reset_transcript
+rm -rf "$S5_SYSCONFDIR" "$S5_STATEDIR" "$S5_PREFIX"
+rm -f "$S5_UNIT" "$S5_INITSCRIPT" "$S5_TEST_ROOT/svc_active" \
+    "$S5_TEST_ROOT/svc_latebind_seen"
+: >"$S5_TEST_ROOT/stub_passwd"
+: >"$S5_TEST_ROOT/stub_group"
+printf '999\n' >"$S5_TEST_ROOT/svc_latebind"
+s5env_answers 'y
+31088
+neveruser
+TestPassword_123~x
+TestPassword_123~x
+y
+'
+printf '%s:%s' neveruser 'TestPassword_123~x' >"$S5_TEST_ROOT/expected_creds"
+t_run s5_cmd_install <"$S5_TEST_ROOT/answers"
+assert_ne "install fails when the port never binds" 0 "$T_STATUS"
+assert_contains "the timeout names the port it waited for" "31088" "$T_OUT"
+assert_contains "the timeout says how long it waited" "15" "$T_OUT"
+assert_not_contains "a full window is not reported as an instant absence" \
+    "nothing is listening on port 31088" "$T_OUT"
+assert_not_contains "and not as a dead service either" "exited" "$T_OUT"
+assert_file_absent "never-binding install rolls back the config" "$S5_CFG"
+rm -f "$S5_TEST_ROOT/svc_latebind" "$S5_TEST_ROOT/svc_latebind_seen"
+
+# --- The service goes inactive during the wait: install fails FAST, well
+# before the whole window, provable from the probe counter.
+s5env_reset_transcript
+rm -rf "$S5_SYSCONFDIR" "$S5_STATEDIR" "$S5_PREFIX"
+rm -f "$S5_UNIT" "$S5_INITSCRIPT" "$S5_TEST_ROOT/svc_active" \
+    "$S5_TEST_ROOT/svc_latebind_seen" "$S5_TEST_ROOT/svc_isactive_count"
+: >"$S5_TEST_ROOT/stub_passwd"
+: >"$S5_TEST_ROOT/stub_group"
+printf '999\n' >"$S5_TEST_ROOT/svc_latebind"
+printf '1\n' >"$S5_TEST_ROOT/svc_die_after"
+: >"$S5_TEST_ROOT/port_probe_count"
+s5env_answers 'y
+31089
+dieuser
+TestPassword_123~x
+TestPassword_123~x
+y
+'
+printf '%s:%s' dieuser 'TestPassword_123~x' >"$S5_TEST_ROOT/expected_creds"
+t_run s5_cmd_install <"$S5_TEST_ROOT/answers"
+assert_ne "install fails when the service exits while starting" 0 "$T_STATUS"
+assert_contains "the failure says the service exited" "exited" "$T_OUT"
+assert_not_contains "a dead service is not reported as a plain timeout" \
+    "not listening after" "$T_OUT"
+_died_after=$(cat "$S5_TEST_ROOT/port_probe_count")
+if [ -n "$_died_after" ] && [ "$_died_after" -lt 15 ]; then
+    t_ok
+else
+    t_bad "the wait must stop early on a dead service, but ran $_died_after probes"
+fi
+rm -f "$S5_TEST_ROOT/svc_latebind" "$S5_TEST_ROOT/svc_latebind_seen" \
+    "$S5_TEST_ROOT/svc_die_after" "$S5_TEST_ROOT/svc_isactive_count" \
+    "$S5_TEST_ROOT/port_probe_count"
+
+# --- Tri-state 2 (cannot observe) still fails closed immediately and is
+# never retried into a false success. The probe is swapped for one that
+# answers "cannot observe" (the "ss exists but fails" case): a wait loop that
+# treats status 2 as "not yet listening" would poll the whole window and then
+# fail with the wrong message.
+s5env_reset_transcript
+rm -rf "$S5_SYSCONFDIR" "$S5_STATEDIR" "$S5_PREFIX"
+rm -f "$S5_UNIT" "$S5_INITSCRIPT" "$S5_TEST_ROOT/svc_active"
+: >"$S5_TEST_ROOT/stub_passwd"
+: >"$S5_TEST_ROOT/stub_group"
+printf '2\n' >"$S5_TEST_ROOT/svc_latebind"
+mkdir -p "$S5_UNITDIR"
+_save_probe=$S5_PORT_PROBE
+cat >"$S5_TEST_ROOT/bin/portprobe_failing" <<'FAILPROBE'
+#!/bin/sh
+# Counts like the real stub, then answers "cannot observe" -- but only once
+# the service exists. The port prompt runs BEFORE the start and must still
+# see a working probe, or the install would fail at the prompt and never
+# reach the verification the case exists to exercise.
+if [ -f "$S5_TEST_ROOT/port_probe_count" ]; then
+    _n=$(cat "$S5_TEST_ROOT/port_probe_count" 2>/dev/null)
+    case "$_n" in '' | *[!0-9]*) _n=0 ;; esac
+    _n=$((_n + 1))
+    printf '%s\n' "$_n" >"$S5_TEST_ROOT/port_probe_count"
+fi
+if [ -f "$S5_TEST_ROOT/svc_active" ]; then
+    exit 2
+fi
+exit 0
+FAILPROBE
+chmod 0755 "$S5_TEST_ROOT/bin/portprobe_failing"
+S5_PORT_PROBE="$S5_TEST_ROOT/bin/portprobe_failing"
+export S5_PORT_PROBE
+: >"$S5_TEST_ROOT/port_probe_count"
+s5env_answers 'y
+31090
+obscureuser
+TestPassword_123~x
+TestPassword_123~x
+y
+'
+t_run s5_cmd_install <"$S5_TEST_ROOT/answers"
+assert_ne "an unobservable listen state fails the install" 0 "$T_STATUS"
+assert_contains "install says it could not verify the port" "cannot verify" "$T_OUT"
+assert_not_contains "an unobservable state is never a dead service" "exited" "$T_OUT"
+_obscount=$(cat "$S5_TEST_ROOT/port_probe_count")
+if [ -n "$_obscount" ] && [ "$_obscount" -le 2 ]; then
+    t_ok
+else
+    t_bad "cannot-observe must not be retried: $_obscount probes were run"
+fi
+S5_PORT_PROBE=$_save_probe
+export S5_PORT_PROBE
+rm -f "$S5_TEST_ROOT/bin/portprobe_failing" "$S5_TEST_ROOT/svc_latebind" \
+    "$S5_TEST_ROOT/svc_latebind_seen" "$S5_TEST_ROOT/port_probe_count"
+
+# --- OpenRC (alpine): the same race wearing a different hat. rc-service
+# reports the service started while the socket is not bound yet, and
+# "starting" is not inactive -- so the wait must not fail fast on it.
+s5env_reset_transcript
+rm -rf "$S5_SYSCONFDIR" "$S5_STATEDIR" "$S5_PREFIX"
+rm -f "$S5_UNIT" "$S5_INITSCRIPT" "$S5_TEST_ROOT/svc_active" \
+    "$S5_TEST_ROOT/svc_latebind_seen"
+: >"$S5_TEST_ROOT/stub_passwd"
+: >"$S5_TEST_ROOT/stub_group"
+S5_OSRELEASE="${S5_REPO_ROOT}/tests/fixtures/os-release/alpine-3.20"
+printf '2\n' >"$S5_TEST_ROOT/svc_latebind"
+s5env_answers 'y
+31091
+alpuser
+TestPassword_123~x
+TestPassword_123~x
+y
+'
+printf '%s:%s' alpuser 'TestPassword_123~x' >"$S5_TEST_ROOT/expected_creds"
+t_run s5_cmd_install <"$S5_TEST_ROOT/answers"
+assert_eq "openrc install succeeds when the port binds within the wait window" 0 "$T_STATUS"
+assert_file_exists "openrc late-binding install keeps the init script" "$S5_INITSCRIPT"
+S5_OSRELEASE="${S5_REPO_ROOT}/tests/fixtures/os-release/debian-12"
+rm -f "$S5_TEST_ROOT/svc_latebind" "$S5_TEST_ROOT/svc_latebind_seen"
+
+# ==========================================================================
 # F28 (HIGH)  The static check must run BEFORE anything is started.
 #
 # s5_static_check_cfg is the only thing standing between a rendered config and a

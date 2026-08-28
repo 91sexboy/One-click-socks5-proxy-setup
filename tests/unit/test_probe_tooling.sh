@@ -644,6 +644,8 @@ fi
 # Both directions are proven below, on the helper that replaced those patterns.
 # ==========================================================================
 : >"$T_TRANSCRIPT"
+# The stub must see the exact zero-argument shape, so its $1 must stay empty.
+# shellcheck disable=SC2119
 printf 'svcuser:secret\n' | chpasswd >/dev/null 2>&1
 assert_eq "a zero-argument forbidden call records a bare line" \
     "chpasswd" "$(t_transcript)"

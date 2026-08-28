@@ -76,7 +76,7 @@ fi
 # form, `-x -F` for a bare directive line; neither uses an extension.
 for d in proxy admin ftppr smtpp pop3p imapp tlspr tcppm udppm dnspr \
     writable system plugin parent authcache chroot setuid setgid; do
-    if printf '%s\n' "$cfg" | grep -q "^$d[[:space:]]" ||
+    if printf '%s\n' "$cfg" | grep -q "^${d}[[:space:]]" ||
         printf '%s\n' "$cfg" | grep -qxF "$d"; then
         t_bad "forbidden directive present: $d"
     else

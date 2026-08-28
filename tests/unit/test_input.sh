@@ -31,7 +31,10 @@ done
 t_run s5_valid_port 01080
 assert_contains "a leading zero is a syntax error, not a range miss" \
     "leading zero" "$T_OUT"
-huge_port=$(printf '9%.0s' $(awk 'BEGIN { for (i=1; i<=1000; i++) printf "x" }' | tr x 9))
+# 1000 nines in one word: the old printf-'9%.0s'-over-word-splitting form
+# collapsed to a single "9" because the awk output was one word, so the
+# "oversized" case never actually left the normal range.
+huge_port=$(awk 'BEGIN { for (i = 1; i <= 1000; i++) printf "9" }')
 t_run s5_valid_port "$huge_port"
 assert_ne "an oversized numeric port is rejected before shell arithmetic" 0 "$T_STATUS"
 

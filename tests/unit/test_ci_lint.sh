@@ -350,7 +350,33 @@ code_has_ci() { # <desc> <fixed-string>
     if ci_code | grep -qF -- "$2"; then t_ok; else t_bad "$1 (no code line in ci.yml: $2)"; fi
 }
 code_has_ci "the lint job installs PyYAML rather than assuming it" \
-    "install -y shellcheck python3-yaml"
+    "install -y python3-yaml"
+# The linter must be pinned, not whatever apt ships: a distro version bump
+# changes which findings fire, so local verification could never reproduce a
+# lint failure. The pin is the checksummed upstream tarball.
+code_has_ci "shellcheck comes from a pinned upstream tarball, not apt" \
+    "shellcheck-v0.10.0.linux.x86_64.tar.xz"
+code_has_ci "the shellcheck tarball is verified against a sha256" \
+    "sha256sum -c"
+# Production stays exclusion-free: its invocation is pinned verbatim, so an
+# -e flag added where a real defect could hide fails here instead of passing
+# silently in CI.
+if ci_code | sed 's/^[[:space:]]*//' | grep -qxF 'shellcheck -s sh socks5.sh'; then
+    t_ok
+else
+    t_bad "production must be linted by exactly 'shellcheck -s sh socks5.sh', no -e"
+fi
+# The test corpora carry targeted exclusions, and ONLY those: the invocation
+# lines are pinned verbatim too, so widening an exclusion is a deliberate edit
+# that this test forces someone to read, not a silent CI-only change.
+_n=0
+ci_code | sed 's/^[[:space:]]*//' | grep -qxF \
+    'shellcheck -s sh -e SC2317,SC2034,SC2016 tests/run.sh tests/lib/*.sh tests/unit/*.sh' \
+    && _n=$((_n + 1))
+ci_code | sed 's/^[[:space:]]*//' | grep -qxF \
+    'shellcheck -s sh -e SC2317,SC2034,SC2016 tests/protocol/*.sh' \
+    && _n=$((_n + 1))
+assert_eq "both test-corpus invocations carry exactly the targeted -e set" 2 "$_n"
 code_has_ci "and the lint job runs the parse itself" "jobs without timeout-minutes"
 
 if command -v python3 >/dev/null 2>&1; then

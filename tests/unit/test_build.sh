@@ -30,7 +30,7 @@ assert_eq "pinned commit constant" "$PINNED" "$S5_PINNED_COMMIT"
 assert_eq "repo URL constant" "https://github.com/3proxy/3proxy" "$S5_REPO_URL"
 
 reset_case() {
-    rm -rf "$S5_TEST_ROOT/build" "$S5_PREFIX"
+    rm -rf "${S5_TEST_ROOT:?}/build" "${S5_PREFIX:?}"
     rm -f "$S5_TEST_ROOT/stub_clone_fail" "$S5_TEST_ROOT/stub_checkout_fail" \
         "$S5_TEST_ROOT/stub_make_fail" "$S5_TEST_ROOT/stub_make_noartifact" \
         "$S5_TEST_ROOT/POSTINSTALL_RAN" "$S5_TEST_ROOT/SERVICEINSTALL_RAN"
@@ -181,6 +181,6 @@ case "$prodwd" in
     ;;
 esac
 assert_dir_exists "and the production workdir is actually created" "$prodwd"
-rm -rf "$S5_TEST_ROOT/faketmp"
+rm -rf "${S5_TEST_ROOT:?}/faketmp"
 
 t_summary

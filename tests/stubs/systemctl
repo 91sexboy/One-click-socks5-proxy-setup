@@ -3,8 +3,17 @@
 # already existed at call time, so tests can prove the service is never started
 # before the configuration is in place.
 #
-# Markers in $S5_TEST_ROOT: stub_start_fail, stub_enable_fail
+# Markers in $S5_TEST_ROOT: stub_start_fail, stub_enable_fail, svc_die_after
 # State: svc_active - empty when stopped, holding the listening port when up.
+#
+# svc_die_after N (readiness-wait coverage, fix-plan Task 1): a Type=simple
+# unit whose process exits while the installer is still waiting for the socket.
+# The first N is-active queries answer normally; every query after that
+# reports the service gone and removes svc_active, so the port goes free with
+# it -- a dead service cannot be holding a port. Counted in svc_isactive_count.
+# The complementary half -- the unit active but its socket not yet bound -- is
+# modelled by the port probe (svc_latebind in tests/lib/env.sh), not here:
+# the manager answered the question it was asked; only the socket was late.
 
 T="$S5_TEST_ROOT/transcript"
 cfg=no
@@ -65,6 +74,22 @@ enable)
     ;;
 is-active)
     if [ -f "$S5_TEST_ROOT/stub_active_query_fail" ]; then exit 2; fi
+    # The die-after marker (see the header). Counted before the branch: the
+    # query itself happened either way, and the test's is-active tally must
+    # not depend on which answer it got.
+    if [ -f "$S5_TEST_ROOT/svc_die_after" ]; then
+        _die=$(cat "$S5_TEST_ROOT/svc_die_after" 2>/dev/null)
+        case "$_die" in '' | *[!0-9]*) _die=0 ;; esac
+        _q=$(cat "$S5_TEST_ROOT/svc_isactive_count" 2>/dev/null)
+        case "$_q" in '' | *[!0-9]*) _q=0 ;; esac
+        _q=$((_q + 1))
+        printf '%s\n' "$_q" >"$S5_TEST_ROOT/svc_isactive_count"
+        if [ "$_q" -gt "$_die" ]; then
+            rm -f "$S5_TEST_ROOT/svc_active"
+            printf 'inactive\n'
+            exit 3
+        fi
+    fi
     if [ -f "$S5_TEST_ROOT/svc_active" ]; then
         printf 'active\n'
         exit 0

@@ -25,7 +25,7 @@
 
 set -u
 
-HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+HERE=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 PROBE="$HERE/socks_probe.py"
 PORT=${PORT:?PORT must be set}
 PROXY_USER=${PROXY_USER:?PROXY_USER must be set}
@@ -122,7 +122,43 @@ for a in $LISTEN_ADDRS; do
     python3 "$WORK/listener.py" "$a" 80 </dev/null &
     pids="$pids $!"
 done
-sleep 1
+
+# Wait for the listeners to actually answer instead of guessing a delay: the
+# first two CI runs failed the 127.0.0.1 sanity check in all three cells because
+# a flat `sleep 1` is not reliably enough for four Python interpreters to start
+# and bind in a cold container. Bounded per-listener poll, whole-second sleeps
+# only (this file runs under plain sh, where fractional sleeps are not
+# portable); 30 tries is far beyond any healthy interpreter startup.
+# curl's stderr is captured to a file under $WORK -- never argv, never the job
+# log -- and printed only when a check fails, so a future failure explains
+# itself. These curls carry no credentials, but the file-first habit is kept.
+CURL_ERR="$WORK/curl.err"
+print_curl_err() {
+    if [ -s "$CURL_ERR" ]; then
+        printf 'curl reported: %s\n' "$(cat "$CURL_ERR")" >&2
+    fi
+}
+wait_ready() {
+    _addr=$1
+    _tries=0
+    while [ "$_tries" -lt 30 ]; do
+        if curl --noproxy '*' -sS --max-time 5 -o /dev/null "http://$_addr/" 2>"$CURL_ERR"; then
+            return 0
+        fi
+        _tries=$((_tries + 1))
+        sleep 1
+    done
+    return 1
+}
+for a in $LISTEN_ADDRS; do
+    if ! wait_ready "$a"; then
+        # Same inconclusive path as the sanity checks below: a listener that
+        # never came up makes its checks vacuous, and vacuous must read as 2.
+        printf 'listener %s is not reachable directly; its checks would be vacuous\n' "$a" >&2
+        print_curl_err
+        exit 2
+    fi
+done
 
 # hostnames that resolve into the denied ranges
 if ! grep -q 'metadata-probe.invalid' /etc/hosts 2>/dev/null; then
@@ -139,18 +175,20 @@ fi
 # OTHER proxy, converting an invalid environment into "directly reachable"
 # without the dummy listener ever being contacted.
 for a in $LISTEN_ADDRS; do
-    if curl --noproxy '*' -sS --max-time 5 -o /dev/null "http://$a/" 2>/dev/null; then
+    if curl --noproxy '*' -sS --max-time 5 -o /dev/null "http://$a/" 2>"$CURL_ERR"; then
         ok "sanity: the dummy listener on $a is reachable directly"
     else
         printf 'listener %s is not reachable directly; its checks would be vacuous\n' "$a" >&2
+        print_curl_err
         exit 2
     fi
 done
 for h in metadata-probe.invalid loopback-probe.invalid; do
-    if curl --noproxy '*' -sS --max-time 5 -o /dev/null "http://$h/" 2>/dev/null; then
+    if curl --noproxy '*' -sS --max-time 5 -o /dev/null "http://$h/" 2>"$CURL_ERR"; then
         ok "sanity: $h resolves and is reachable directly"
     else
         printf '%s is not reachable directly; its check would be vacuous\n' "$h" >&2
+        print_curl_err
         exit 2
     fi
 done

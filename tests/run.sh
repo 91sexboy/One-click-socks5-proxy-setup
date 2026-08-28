@@ -10,7 +10,7 @@
 
 set -u
 
-ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 UNIT_DIR="$ROOT/tests/unit"
 SHELL_UNDER_TEST=${S5_TEST_SHELL:-sh}
 FILTER=${1:-}
@@ -34,6 +34,9 @@ for f in "$UNIT_DIR"/*.sh; do
 
     # Each test file runs in its own process with a clean environment so that one
     # file's S5_* variables cannot leak into the next.
+    # $SHELL_UNDER_TEST is unquoted on purpose: S5_TEST_SHELL can be a
+    # multi-word command such as `busybox sh`, which must split into words.
+    # shellcheck disable=SC2086
     if out=$(env -u S5_TEST_MODE -u S5_TEST_ROOT -u S5_LIB_ONLY \
         S5_SRC="$ROOT/socks5.sh" S5_REPO_ROOT="$ROOT" \
         $SHELL_UNDER_TEST "$f" 2>&1); then

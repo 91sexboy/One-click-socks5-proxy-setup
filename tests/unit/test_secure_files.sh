@@ -235,7 +235,7 @@ rm -f "$S5_USERSCFG"
 
 # A target that already exists through a symlinked ancestor must be refused as
 # well; checking only the final component would permit writes outside the root.
-rm -rf "$S5_TEST_ROOT/outside-parent" "$S5_TEST_ROOT/link-parent"
+rm -rf "${S5_TEST_ROOT:?}/outside-parent" "${S5_TEST_ROOT:?}/link-parent"
 mkdir -p "$S5_TEST_ROOT/outside-parent/existing"
 ln -s "$S5_TEST_ROOT/outside-parent" "$S5_TEST_ROOT/link-parent"
 t_run s5_mkdir_secure "$S5_TEST_ROOT/link-parent/existing" "root:root" 0750
@@ -264,7 +264,7 @@ assert_eq "an existing shared directory is accepted" 0 "$T_STATUS"
 assert_mode "an existing shared directory keeps its mode" 711 "$shared"
 
 nested="$S5_TEST_ROOT/missing/parent/target"
-rm -rf "$S5_TEST_ROOT/missing"
+rm -rf "${S5_TEST_ROOT:?}/missing"
 (
     umask 0077
     t_run s5_mkdir_secure "$nested" "root:root" 0750

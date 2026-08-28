@@ -374,8 +374,11 @@ S5_IN_CLEANUP=0
 
 s5_term_save() {
     if [ -t 0 ]; then
-        S5_TERM_STATE=$(stty -g 2>/dev/null)
-        if [ "$?" -ne 0 ] || [ -z "$S5_TERM_STATE" ]; then
+        # Checked directly, not via $?: the assignment's status IS stty's.
+        # The -z test is load-bearing on its own -- stty can succeed yet
+        # print nothing, and restoring an empty state would be worse than
+        # not restoring at all.
+        if ! S5_TERM_STATE=$(stty -g 2>/dev/null) || [ -z "$S5_TERM_STATE" ]; then
             S5_TERM_STATE=''
             S5_TERM_MODIFIED=0
             return 1
@@ -644,6 +647,9 @@ s5_is_root() {
 # s5_precheck : every gate that must pass BEFORE the first prompt, before any
 # state file exists, and before anything on the system is modified.
 s5_precheck() {
+    # Word splitting is intentional: S5_BASE_COMMANDS is a space-separated
+    # command list that must reach s5_require_commands as separate words.
+    # shellcheck disable=SC2086
     if ! s5_require_commands $S5_BASE_COMMANDS; then
         s5_err "cannot continue without the base utilities listed above"
         return "$EX_FAIL"
@@ -2554,6 +2560,61 @@ s5_port_listening() {
     esac
 }
 
+# s5_wait_listening <port> : bounded poll of s5_port_listening.
+#
+# Why a wait exists at all: the shipped unit is Type=simple, and OpenRC under
+# supervise-daemon behaves the same way -- the manager reports the service
+# active the moment the process is forked, before any socket is bound. A
+# single immediate probe therefore fails on every host slower than the
+# manager's fork and rolls back a perfectly good install (observed in the
+# first real CI run on both systemd and OpenRC cells). Fifteen one-second
+# tries is ample for a local process binding a socket.
+#
+# Constraints the shape must honour:
+#   * whole seconds only -- fractional sleep is a GNU/busybox extension, not
+#     POSIX, and this script must run under any POSIX sh.
+#   * status 2 from s5_port_listening is "cannot observe", not "not yet".
+#     Retrying it could only turn an unobservable state into a false success,
+#     so it is reported and fails immediately, exactly as the single probe
+#     before the wait did.
+#   * fail fast only on DEFINITE inactivity (status 1 from s5_service_active).
+#     OpenRC's "starting" answers active, and an unobservable manager (status
+#     2) is not evidence of death; a service in either state may still bind,
+#     so neither may abort the wait.
+s5_wait_listening() {
+    _wlport=${1:-$S5_PORT}
+    # s5_port_listening observes S5_PORT rather than its arguments, so the
+    # port becomes S5_PORT for the duration of the wait. Both callers pass
+    # their own S5_PORT; a direct caller naming another port still gets an
+    # answer about that port.
+    S5_PORT=$_wlport
+    _wltry=0
+    while :; do
+        s5_port_listening
+        _wls=$?
+        case "$_wls" in
+        0) return 0 ;;
+        2)
+            s5_err "cannot verify that port $_wlport is listening (neither ss nor netstat found)"
+            return 1
+            ;;
+        esac
+        s5_service_active
+        _wla=$?
+        if [ "$_wla" -eq 1 ]; then
+            s5_err "the service exited before port $_wlport was listening"
+            return 1
+        fi
+        _wltry=$((_wltry + 1))
+        if [ "$_wltry" -ge 15 ]; then
+            break
+        fi
+        sleep 1
+    done
+    s5_err "the service did not begin listening on port $_wlport within 15 seconds"
+    return 1
+}
+
 # ---------------------------------------------------------------------------
 # Collision detection, warnings, dependencies, rollback, uninstall
 # ---------------------------------------------------------------------------
@@ -3100,17 +3161,14 @@ s5_install_steps() {
         return 1
         ;;
     esac
-    # The status is captured before any test, because s5_port_listening is
-    # three-valued: `if ! s5_port_listening` would accept "cannot observe" as a
-    # passed verification.
-    s5_port_listening
-    _islp=$?
-    if [ "$_islp" -eq 2 ]; then
-        s5_err "cannot verify that port $S5_PORT is listening (neither ss nor netstat found)"
-        return 1
-    fi
-    if [ "$_islp" -ne 0 ]; then
-        s5_err "nothing is listening on port $S5_PORT"
+    # The listen check is a bounded wait, not a single probe: a manager may
+    # report the service active before its socket is bound (Type=simple;
+    # OpenRC under supervise-daemon), and the one-shot probe that used to be
+    # here failed the install on every host slower than the manager's fork.
+    # s5_wait_listening is two-valued -- every outcome of the three-valued
+    # s5_port_listening it polls gets its own diagnostic -- so negating it
+    # cannot read "cannot observe" as a passed verification.
+    if ! s5_wait_listening "$S5_PORT"; then
         return 1
     fi
 
@@ -3344,6 +3402,13 @@ s5_cmd_restart() {
     1) s5_err "the service is not active after restart"; return "$EX_FAIL" ;;
     *) s5_err "could not verify that the service is active after restart"; return "$EX_FAIL" ;;
     esac
+    # The manager's "active" precedes the socket (Type=simple; OpenRC under
+    # supervise-daemon), so success is reported only once the port is
+    # listening again. Without the wait, restart claimed success while
+    # nothing was accepting connections.
+    if ! s5_wait_listening "$S5_PORT"; then
+        return "$EX_FAIL"
+    fi
     s5_log "$S5_PROJECT restarted"
     return "$EX_OK"
 }

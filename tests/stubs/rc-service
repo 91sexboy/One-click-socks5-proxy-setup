@@ -1,0 +1,71 @@
+#!/bin/sh
+# tests/stubs/rc-service - test stub for the OpenRC service manager, the
+# counterpart of tests/stubs/systemctl. Records argv and models the service
+# state in the same svc_active file, so both managers drive the one port probe
+# and a test can move between them without changing fixtures.
+#
+# Markers in $S5_TEST_ROOT: stub_start_fail, stub_stop_fail
+# State: svc_active - empty when stopped, holding the listening port when up.
+#
+# Readiness semantics (fix-plan Task 1): rc-service reports a service started
+# (status exit 0) as soon as supervise-daemon launches the process, while the
+# daemon is still binding its socket -- the OpenRC face of the same race as a
+# Type=simple unit. "Starting" is therefore deliberately NOT modelled as
+# inactive here: status answers 0 while the port is not yet bound, and the
+# socket delay itself is served by the port probe (svc_latebind in
+# tests/lib/env.sh). A wait that failed fast on "starting" cannot pass these
+# tests; a wait that respects it can.
+#
+# Real OpenRC's status command exits 3 for a stopped service; s5_service_active
+# maps 1 and 3 to "definitely inactive", and the stop below refuses a service
+# whose init script was never written, mirroring the manager-realism of the
+# systemctl stub's stop.
+
+T="$S5_TEST_ROOT/transcript"
+initscript=no
+if [ -n "${S5_STUB_INITSCRIPT:-}" ] && [ -f "$S5_STUB_INITSCRIPT" ]; then initscript=yes; fi
+
+printf 'rc-service' >>"$T"
+for a in "$@"; do printf ' %s' "$a" >>"$T"; done
+printf ' initscriptpresent=%s\n' "$initscript" >>"$T"
+
+# Record WHICH port the service came up on, read out of the configuration that
+# was just written -- the same reasoning as svc_up in the systemctl stub: the
+# probe must answer about a specific port, or a caller probing the wrong one
+# passes unnoticed.
+svc_up() {
+    _p=''
+    if [ -n "${S5_STUB_CFG:-}" ] && [ -f "$S5_STUB_CFG" ]; then
+        _p=$(sed -n 's/^socks -4 -u2 -p\([0-9][0-9]*\) .*/\1/p' "$S5_STUB_CFG" | head -n 1)
+    fi
+    printf '%s\n' "$_p" >"$S5_TEST_ROOT/svc_active"
+}
+
+case "${2:-}" in
+start)
+    if [ -f "$S5_TEST_ROOT/stub_start_fail" ]; then
+        printf 'ERROR: socks5-manager failed to start\n' >&2
+        exit 1
+    fi
+    svc_up
+    ;;
+restart)
+    if [ -f "$S5_TEST_ROOT/stub_start_fail" ]; then exit 1; fi
+    svc_up
+    ;;
+stop)
+    if [ -f "$S5_TEST_ROOT/stub_stop_fail" ]; then exit 1; fi
+    if [ "$initscript" != yes ]; then exit 1; fi
+    rm -f "$S5_TEST_ROOT/svc_active"
+    ;;
+status)
+    if [ -f "$S5_TEST_ROOT/stub_active_query_fail" ]; then exit 2; fi
+    if [ -f "$S5_TEST_ROOT/svc_active" ]; then
+        printf 'status: started\n'
+        exit 0
+    fi
+    printf 'status: stopped\n'
+    exit 3
+    ;;
+esac
+exit 0

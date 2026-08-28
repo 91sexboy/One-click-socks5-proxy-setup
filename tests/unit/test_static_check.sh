@@ -42,10 +42,10 @@ render_missing_denies() {
 # ==========================================================================
 fresh_cfgdir
 s5_render_cfg >"$S5_CFG"
-before=$(ls -A "$S5_SYSCONFDIR" | sort | tr '\n' ' ')
+before=$(find "$S5_SYSCONFDIR" -mindepth 1 -maxdepth 1 | sort | tr '\n' ' ')
 t_run s5_static_check_cfg "$S5_CFG"
 assert_eq "a correct config passes" 0 "$T_STATUS"
-after=$(ls -A "$S5_SYSCONFDIR" | sort | tr '\n' ' ')
+after=$(find "$S5_SYSCONFDIR" -mindepth 1 -maxdepth 1 | sort | tr '\n' ' ')
 assert_eq "the static check creates no file in the config directory" "$before" "$after"
 stray=$(find "$S5_SYSCONFDIR" -name '*denycheck*' | grep -c . || true)
 assert_eq "no denycheck scratch file exists" 0 "$stray"

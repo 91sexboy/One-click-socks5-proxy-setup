@@ -92,14 +92,21 @@ rm -f "$S5_TEST_ROOT/svc_active"
 # ==========================================================================
 # Structural: neither caller may negate the function, because a bare negation
 # maps the unobservable status onto one of the two definite answers.
+#
+# The install verification moved into s5_wait_listening (a bounded poll: the
+# unit is Type=simple, so the manager reports active before the socket is
+# bound). Every property the old install-step assertions guarded moved with
+# it and is asserted where the code now lives.
 # ==========================================================================
 steps=$(sed -n '/^s5_install_steps() {/,/^}/p' "${S5_SRC}")
+wait_fn=$(sed -n '/^s5_wait_listening() {/,/^}/p' "${S5_SRC}")
 status_fn=$(sed -n '/^s5_cmd_status() {/,/^}/p' "${S5_SRC}")
 # Comments are excluded: the fix documents the old bug by quoting it.
 code_only() { grep -v '^[[:space:]]*#'; }
 
-if printf '%s\n' "$steps" | code_only | grep -q 'if ! s5_port_listening'; then
-    t_bad "the install verification must not negate s5_port_listening: a bare
+assert_ne "s5_wait_listening is defined" "" "$wait_fn"
+if printf '%s\n' "$wait_fn" | code_only | grep -q 'if ! s5_port_listening'; then
+    t_bad "the wait must not negate s5_port_listening: a bare
 negation reads 'cannot observe' as 'verified listening'"
 else
     t_ok
@@ -110,9 +117,11 @@ else
     t_ok
 fi
 assert_contains "the install step still verifies the listener" \
-    "s5_port_listening" "$steps"
+    "s5_wait_listening" "$steps"
+assert_contains "the wait observes the port through the tri-state probe" \
+    "s5_port_listening" "$wait_fn"
 assert_contains "and refuses when the listen state cannot be observed" \
-    "cannot verify that port" "$steps"
+    "cannot verify that port" "$wait_fn"
 assert_contains "status reports the unobservable case honestly" \
     "not verified" "$status_fn"
 

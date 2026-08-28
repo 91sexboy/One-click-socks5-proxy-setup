@@ -285,11 +285,33 @@ itself depends on POSIX `sh`, `git`, `make`, a C compiler and `curl`.
 The real compilation, the OS/architecture build matrix, the seven protocol
 acceptance cases, the destination-ACL hostname test, `shellcheck`, and the four
 real service-install lifecycles are **CI only** — see
-`.github/workflows/ci.yml`. A green local suite does not imply those passed, and
-at the time of writing **CI has not been run**. Nothing in this project has yet
-been executed on a real host, so treat the Requirements table above as the set of
-targets this script is *written* for, not a list of platforms it is known to work
-on.
+`.github/workflows/ci.yml`. A green local suite does not imply those passed.
+
+CI has run, twice, on GitHub-hosted runners. What passes so far: the full unit
+suite under `sh`, `dash` and `busybox sh`; 14 of the 16 build cells; 14 of the
+16 protocol cells — the engine compiled from the pinned commit and all seven
+protocol acceptance cases passed, the two legacy-SOCKS rejection cases included;
+and one real OpenRC install lifecycle on Alpine 3.24. What fails, one line each:
+
+- `lint` — the first `shellcheck` run ever; mostly false positives, plus one
+  real `rm -rf` hazard in a test. Being fixed.
+- CentOS Stream 9 build and protocol cells — a CI bootstrap package conflict
+  with the image's `curl-minimal`; the script itself is not affected.
+- All three `acl-resolution` cells — a race in the test's own listener
+  startup; fixed in the test harness.
+- The two native systemd install lifecycles — the installer verified the
+  port too early and rolled back good installs; a real product defect, under
+  repair.
+- Alpine 3.20 OpenRC — the same product defect.
+- The three containerized systemd cells — never reached the installer: the
+  containers failed to build or boot; CI harness problems, not product results.
+
+The honest bottom line is unchanged in one respect:
+
+**No real systemd install lifecycle has completed yet**, so the Requirements
+table above remains the set of targets this script is *written* for, not a
+list of platforms it is known to work on. This section is rewritten as CI
+evidence changes.
 
 What each CI job actually proves is deliberately distinct:
 
@@ -310,8 +332,8 @@ for that: neither installs a service.
 
 No job uses `continue-on-error`, so every cell is configured to block the release,
 Alpine included. A SOCKS4-family success, or a bypassed destination deny, fails the job outright.
-Note that "blocks the release" describes how the gate is configured — not a
-result, since none of it has run yet.
+Note that "blocks the release" describes how the gate is configured — which cells
+have actually run and passed is listed above.
 
 CI passwords are generated at runtime and handed to the protocol scripts as the
 *path* to a `0600` file (`PASSFILE=...`), never as an environment variable and

@@ -177,6 +177,55 @@ t_run env -u S5_LIB_ONLY sh "$S5_SRC" reconfigure
 assert_eq "reconfigure is an unknown subcommand" 64 "$T_STATUS"
 
 # ==========================================================================
+# Restart must not report success until the port is listening again (fix-plan
+# Task 7). A Type=simple unit is active the instant the process forks, so
+# is-active after `systemctl restart` says nothing about the socket: restart
+# used to log "restarted" and exit 0 while nothing was accepting connections
+# -- the mirror image of the install-side race (test_install.sh). Same
+# harness: svc_latebind hides the port for the first N observations while the
+# service is already active (tests/lib/env.sh).
+#
+# sleep is shadowed for this block only: production polls at one-second
+# granularity (fractional sleep is not POSIX), and the oracle here is the
+# probe counter, not the clock. A function is used because it shadows PATH
+# stubs and busybox applets alike -- the F26 lesson.
+# ==========================================================================
+sleep() { :; }
+
+# The port never comes back: restart must fail, not claim success.
+s5env_reset_transcript
+: >"$S5_TEST_ROOT/port_probe_count"
+printf '999\n' >"$S5_TEST_ROOT/svc_latebind"
+t_run s5_cmd_restart
+assert_ne "restart fails when the port never comes back" 0 "$T_STATUS"
+assert_contains "restart names the port that never came back" "41080" "$T_OUT"
+assert_contains "restart says how long it waited" "15" "$T_OUT"
+assert_not_contains "restart does not claim a success it did not verify" \
+    "restarted" "$T_OUT"
+_rbc=$(cat "$S5_TEST_ROOT/port_probe_count")
+assert_eq "restart waited the whole window before failing" 15 "$_rbc"
+rm -f "$S5_TEST_ROOT/svc_latebind" "$S5_TEST_ROOT/svc_latebind_seen" \
+    "$S5_TEST_ROOT/port_probe_count"
+
+# The port comes back within the window: restart succeeds, and provably
+# waited for it rather than trusting the manager's "active".
+s5env_reset_transcript
+: >"$S5_TEST_ROOT/port_probe_count"
+printf '2\n' >"$S5_TEST_ROOT/svc_latebind"
+t_run s5_cmd_restart
+assert_eq "restart succeeds when the port rebinds within the window" 0 "$T_STATUS"
+assert_contains "success is still reported when the wait verifies" "restarted" "$T_OUT"
+_rbc=$(cat "$S5_TEST_ROOT/port_probe_count")
+if [ -n "$_rbc" ] && [ "$_rbc" -ge 3 ]; then
+    t_ok
+else
+    t_bad "restart must wait for the port, but probed only $_rbc times"
+fi
+rm -f "$S5_TEST_ROOT/svc_latebind" "$S5_TEST_ROOT/svc_latebind_seen" \
+    "$S5_TEST_ROOT/port_probe_count"
+unset -f sleep
+
+# ==========================================================================
 # no-argument menu
 # ==========================================================================
 s5env_reset_transcript

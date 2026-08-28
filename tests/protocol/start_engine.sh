@@ -18,8 +18,8 @@
 
 set -eu
 
-HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-REPO=$(CDPATH= cd -- "$HERE/../.." && pwd)
+HERE=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+REPO=$(CDPATH='' cd -- "$HERE/../.." && pwd)
 OUTDIR=${OUTDIR:-$(mktemp -d)}
 
 PORT=${PORT:-41080}

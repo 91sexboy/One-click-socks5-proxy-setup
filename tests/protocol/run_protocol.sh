@@ -25,7 +25,7 @@
 
 set -u
 
-HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+HERE=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 PROBE="$HERE/socks_probe.py"
 PROXY_HOST=${PROXY_HOST:-127.0.0.1}
 PORT=${PORT:?PORT must be set}
