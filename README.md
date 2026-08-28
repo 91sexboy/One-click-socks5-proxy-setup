@@ -370,10 +370,12 @@ at commit `df6885c`, **45 of 45 jobs passed**:
 - 2 real OpenRC lifecycles on Alpine 3.20 and 3.24, with the installer itself
   bootstrapping the build and runtime dependencies from the clean images.
 
-> **A note on evidence.** The 45/45 run recorded above predates the bilingual
-> implementation, so it does not evidence the current script. It must be
-> superseded by a new full run of the same workflow, green end to end, before
-> this README presents a 45/45 figure as describing the bilingual build.
+> **Evidence.** The 45/45 run recorded above evidences the pre-bilingual build.
+> The bilingual implementation is itself CI-green: run
+> [`33210744896`](https://github.com/91sexboy/One-click-socks5-proxy-setup/actions/runs/33210744896)
+> at commit `2492ea8` completed 45/45 with the bilingual selector, password-once
+> flow and public-IPv4 card in place, including the Chinese-default, explicit-
+> English and invalid-retry coverage across the seven real lifecycle cells.
 
 Every supported OS family therefore has a real
 install → active/listening → restart → uninstall → cleanliness lifecycle, and
