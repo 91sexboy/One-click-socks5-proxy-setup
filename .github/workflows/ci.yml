@@ -507,24 +507,35 @@ jobs:
             -v "$PWD:/src" -w /src s5-systemd-target)
 
           # Wait for the manager to finish booting. `degraded` is acceptable in
-          # a container; never reaching a running state is not. The wait is
-          # bounded: an unbounded --wait turns a broken boot into the job's
-          # 40-minute timeout, and the state is never discarded to /dev/null --
-          # a dead container, a failed exec and a still-starting system must
-          # be distinguishable, and a failing check must explain itself.
-          timeout 120 docker exec "$CID" systemctl is-system-running --wait || true
-          BOOT_STATE=$(docker exec "$CID" systemctl is-system-running 2>&1 || true)
+          # a container; never reaching a running state is not. The first probe
+          # can run before systemd has even created its dbus socket -- the exec
+          # then fails with a connection error instead of reporting a state --
+          # and states like initializing/starting are transient, so this is a
+          # bounded poll (60 x 2s = 120s), not a single check. An unbounded
+          # --wait would turn a broken boot into the job's 40-minute timeout
+          # and cannot wait at all when the bus is not up; the state is never
+          # discarded to /dev/null -- a dead container, a failed exec and a
+          # still-starting system must be distinguishable, and a failing check
+          # must explain itself.
+          boot_ok=''
+          i=0
+          while [ "$i" -lt 60 ]; do
+            BOOT_STATE=$(docker exec "$CID" systemctl is-system-running 2>&1 || true)
+            case "$BOOT_STATE" in
+              running|degraded) boot_ok=1; break ;;
+              initializing|starting) sleep 2 ;;
+              *) sleep 2 ;;  # bus not up yet, or unknown transient state -- keep trying within the budget
+            esac
+            i=$((i + 1))
+          done
           echo "system boot state: $BOOT_STATE"
-          case "$BOOT_STATE" in
-            running|degraded) ;;
-            *)
-              echo "systemd did not reach a running state" >&2
-              docker ps -a --filter id="$CID" >&2 || true
-              docker logs --tail 200 "$CID" >&2 || true
-              docker exec "$CID" systemctl --failed --no-pager 2>&1 || true
-              exit 1
-              ;;
-          esac
+          if [ -z "$boot_ok" ]; then
+            echo "systemd did not reach a running state within 120s" >&2
+            docker ps -a --filter id="$CID" >&2 || true
+            docker logs --tail 200 "$CID" >&2 || true
+            docker exec "$CID" systemctl --failed --no-pager 2>&1 || true
+            exit 1
+          fi
 
           # The image installs no curl, but the Stream images ship curl-minimal
           # anyway; assert instead of install so a genuinely missing curl fails

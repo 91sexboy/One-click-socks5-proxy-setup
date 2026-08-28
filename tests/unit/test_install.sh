@@ -592,6 +592,72 @@ assert_file_exists "openrc late-binding install keeps the init script" "$S5_INIT
 S5_OSRELEASE="${S5_REPO_ROOT}/tests/fixtures/os-release/debian-12"
 rm -f "$S5_TEST_ROOT/svc_latebind" "$S5_TEST_ROOT/svc_latebind_seen"
 
+# --- OpenRC 0.53 transient (real CI, Alpine 3.20 only): with
+# supervisor="supervise-daemon" the FIRST `rc-service <svc> start` can exit
+# nonzero after printing " * WARNING: <svc> is already starting" while the
+# service is genuinely on its way up -- the supervised daemon launched, the
+# startup phase not finished. Newer OpenRC (Alpine 3.24) completes the same
+# install, which is what pins this as a 0.53 classification problem, not a
+# service problem: rc-service's exit status reports the start COMMAND, and
+# only the manager's status answers for the SERVICE. The install must
+# re-query and proceed when the service is active, then let the existing
+# port wait cover the socket (svc_latebind models the bind delay).
+# Modelled by svc_start_transient in tests/stubs/rc-service.
+s5env_reset_transcript
+rm -rf "$S5_SYSCONFDIR" "$S5_STATEDIR" "$S5_PREFIX"
+rm -f "$S5_UNIT" "$S5_INITSCRIPT" "$S5_TEST_ROOT/svc_active" \
+    "$S5_TEST_ROOT/svc_latebind_seen"
+: >"$S5_TEST_ROOT/stub_passwd"
+: >"$S5_TEST_ROOT/stub_group"
+S5_OSRELEASE="${S5_REPO_ROOT}/tests/fixtures/os-release/alpine-3.20"
+printf '2\n' >"$S5_TEST_ROOT/svc_latebind"
+: >"$S5_TEST_ROOT/svc_start_transient"
+s5env_answers 'y
+31092
+alptruser
+TestPassword_123~x
+TestPassword_123~x
+y
+'
+printf '%s:%s' alptruser 'TestPassword_123~x' >"$S5_TEST_ROOT/expected_creds"
+t_run s5_cmd_install <"$S5_TEST_ROOT/answers"
+assert_eq "openrc install succeeds through the transient already-starting refusal" 0 "$T_STATUS"
+assert_contains "the transient warning really fired" "already starting" "$T_OUT"
+assert_file_exists "transient-start install keeps the init script" "$S5_INITSCRIPT"
+assert_file_exists "transient-start install keeps the state" "$S5_STATE"
+S5_OSRELEASE="${S5_REPO_ROOT}/tests/fixtures/os-release/debian-12"
+rm -f "$S5_TEST_ROOT/svc_latebind" "$S5_TEST_ROOT/svc_latebind_seen" \
+    "$S5_TEST_ROOT/svc_start_transient"
+
+# --- The same warning and the same nonzero exit, but the service never
+# comes up: only the status re-query can tell this apart from the transient,
+# so a classifier keying on the warning text or the exit code alone would
+# pass this off as a success. The install must fail with the existing
+# message and roll back, exactly as it did before the transient existed.
+s5env_reset_transcript
+rm -rf "$S5_SYSCONFDIR" "$S5_STATEDIR" "$S5_PREFIX"
+rm -f "$S5_UNIT" "$S5_INITSCRIPT" "$S5_TEST_ROOT/svc_active"
+: >"$S5_TEST_ROOT/stub_passwd"
+: >"$S5_TEST_ROOT/stub_group"
+S5_OSRELEASE="${S5_REPO_ROOT}/tests/fixtures/os-release/alpine-3.20"
+: >"$S5_TEST_ROOT/svc_start_transient_fail"
+s5env_answers 'y
+31093
+alpdead
+TestPassword_123~x
+TestPassword_123~x
+y
+'
+printf '%s:%s' alpdead 'TestPassword_123~x' >"$S5_TEST_ROOT/expected_creds"
+t_run s5_cmd_install <"$S5_TEST_ROOT/answers"
+assert_ne "openrc install fails when a warned start genuinely fails" 0 "$T_STATUS"
+assert_contains "the failure keeps the existing message" \
+    "the service failed to start" "$T_OUT"
+assert_file_absent "a genuinely failed openrc start rolls back the config" "$S5_CFG"
+assert_file_absent "and the init script" "$S5_INITSCRIPT"
+S5_OSRELEASE="${S5_REPO_ROOT}/tests/fixtures/os-release/debian-12"
+rm -f "$S5_TEST_ROOT/svc_start_transient_fail"
+
 # ==========================================================================
 # F28 (HIGH)  The static check must run BEFORE anything is started.
 #

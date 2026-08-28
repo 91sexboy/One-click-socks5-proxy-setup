@@ -7,6 +7,21 @@
 # Markers in $S5_TEST_ROOT: stub_start_fail, stub_stop_fail
 # State: svc_active - empty when stopped, holding the listening port when up.
 #
+# svc_start_transient (one-shot, openrc-0.53 transient): the FIRST start (or
+# restart) prints " * WARNING: <svc> is already starting" to stderr and exits
+# nonzero, yet the supervised daemon really is coming up -- svc_active is
+# still written, so status keeps answering started and the port binds per
+# svc_latebind exactly as in the readiness case. This is the OpenRC 0.53
+# (Alpine 3.20) shape observed in the first real CI run: rc-service's nonzero
+# exit there is a refusal to run a start against a service that is already
+# starting, not a verdict that the start failed. The marker is consumed by
+# the firing invocation, so any later start behaves normally.
+#
+# svc_start_transient_fail (one-shot): the same warning and nonzero exit, but
+# the service does NOT come up (svc_active is never written, status answers
+# stopped). A classifier may not treat the warning text or the exit status as
+# the discriminator -- only the status re-query separates the two shapes.
+#
 # Readiness semantics (fix-plan Task 1): rc-service reports a service started
 # (status exit 0) as soon as supervise-daemon launches the process, while the
 # daemon is still binding its socket -- the OpenRC face of the same race as a
@@ -47,10 +62,27 @@ start)
         printf 'ERROR: socks5-manager failed to start\n' >&2
         exit 1
     fi
+    if [ -f "$S5_TEST_ROOT/svc_start_transient_fail" ]; then
+        rm -f "$S5_TEST_ROOT/svc_start_transient_fail"
+        printf ' * WARNING: %s is already starting\n' "${1:-socks5-manager}" >&2
+        exit 1
+    fi
+    if [ -f "$S5_TEST_ROOT/svc_start_transient" ]; then
+        rm -f "$S5_TEST_ROOT/svc_start_transient"
+        svc_up
+        printf ' * WARNING: %s is already starting\n' "${1:-socks5-manager}" >&2
+        exit 1
+    fi
     svc_up
     ;;
 restart)
     if [ -f "$S5_TEST_ROOT/stub_start_fail" ]; then exit 1; fi
+    if [ -f "$S5_TEST_ROOT/svc_start_transient" ]; then
+        rm -f "$S5_TEST_ROOT/svc_start_transient"
+        svc_up
+        printf ' * WARNING: %s is already starting\n' "${1:-socks5-manager}" >&2
+        exit 1
+    fi
     svc_up
     ;;
 stop)

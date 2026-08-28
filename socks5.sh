@@ -2474,10 +2474,44 @@ s5_service_install() {
     return 0
 }
 
+# _s5_openrc_start <verb> : run `rc-service <svc> <verb>` (verb: start or
+# restart) and classify its exit status instead of trusting it.
+#
+# Why rc-service's nonzero exit cannot be read as a verdict: OpenRC 0.53
+# (Alpine 3.20) under supervisor="supervise-daemon" marks the service
+# "starting" while the supervised daemon is still coming up, and a start or
+# restart command issued against a "starting" service is refused with
+# " * WARNING: <svc> is already starting" and a nonzero exit -- even when
+# the daemon is in fact on its way up (observed in the first real CI run;
+# newer OpenRC completes the same install). The exit code answers for the
+# COMMAND; only the manager's status answers for the SERVICE. So a nonzero
+# exit is re-classified through the tri-state s5_service_active:
+#   active (0)        -> the service really is starting/started: success,
+#                        and s5_wait_listening covers the not-yet-bound
+#                        socket, exactly as for a zero exit.
+#   inactive (1)      -> genuinely failed: report the original nonzero.
+#   unobservable (2)  -> fail closed, reporting the original nonzero.
+# No sleep is needed: the re-query is a classification, not a wait, and the
+# bounded port wait that follows is already the readiness mechanism.
+_s5_openrc_start() {
+    rc-service "$S5_PROJECT" "$1"
+    _oos=$?
+    if [ "$_oos" -eq 0 ]; then
+        return 0
+    fi
+    s5_service_active
+    _ooa=$?
+    case "$_ooa" in
+    0) return 0 ;;
+    1) return "$_oos" ;;
+    *) return "$_oos" ;;
+    esac
+}
+
 s5_service_start() {
     case "$S5_INIT" in
     systemd) systemctl start "$S5_PROJECT.service" ;;
-    openrc) rc-service "$S5_PROJECT" start ;;
+    openrc) _s5_openrc_start start ;;
     *) return 1 ;;
     esac
 }
@@ -2493,7 +2527,7 @@ s5_service_stop() {
 s5_service_restart() {
     case "$S5_INIT" in
     systemd) systemctl restart "$S5_PROJECT.service" ;;
-    openrc) rc-service "$S5_PROJECT" restart ;;
+    openrc) _s5_openrc_start restart ;;
     *) return 1 ;;
     esac
 }

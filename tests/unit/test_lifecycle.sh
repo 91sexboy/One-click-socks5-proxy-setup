@@ -336,4 +336,64 @@ assert_eq "reinstall after uninstall succeeds" 0 "$T_STATUS"
 assert_eq "reinstall wrote fresh credentials" "seconduser:CL:SecondPass_123~x" "$(cat "$S5_USERSCFG")"
 assert_eq "still exactly one credential line" 1 "$(grep -c '' "$S5_USERSCFG")"
 
+# ==========================================================================
+# OpenRC restart through the 0.53 transient. `rc-service <svc> restart` has
+# the same shape as start on OpenRC 0.53 (Alpine 3.20) under
+# supervise-daemon: it can exit nonzero after " * WARNING: <svc> is already
+# starting" while the supervised service is mid-start and genuinely coming
+# up. The restart path must classify the exit through the status re-query,
+# not read it as a verdict, and then still verify the port came back --
+# the mirror image of the install-side race proven in test_install.sh.
+# This needs an OpenRC install, so the systemd one above is uninstalled and
+# replaced for this final block.
+# ==========================================================================
+s5env_reset_transcript
+s5env_answers 'y
+'
+t_run s5_cmd_uninstall <"$S5_TEST_ROOT/answers"
+assert_eq "uninstall before the openrc restart test succeeds" 0 "$T_STATUS"
+
+rm -rf "$S5_SYSCONFDIR" "$S5_STATEDIR" "$S5_PREFIX"
+rm -f "$S5_UNIT" "$S5_INITSCRIPT" "$S5_TEST_ROOT/svc_active" \
+    "$S5_TEST_ROOT/svc_latebind" "$S5_TEST_ROOT/svc_latebind_seen" \
+    "$S5_TEST_ROOT/svc_start_transient"
+# The exit-3 stub installed for the "OpenRC exit 3 means definitely inactive"
+# check above replaced the real model stub for the rest of this file; this
+# block needs the full one (start/restart/status state machine).
+cp "${S5_REPO_ROOT}/tests/stubs/rc-service" "$S5_TEST_ROOT/bin/rc-service"
+chmod 0755 "$S5_TEST_ROOT/bin/rc-service"
+: >"$S5_TEST_ROOT/stub_passwd"
+: >"$S5_TEST_ROOT/stub_group"
+S5_OSRELEASE="${S5_REPO_ROOT}/tests/fixtures/os-release/alpine-3.20"
+s5env_answers 'y
+41082
+alpruser
+AlpPass_1234~x
+AlpPass_1234~x
+y
+'
+printf '%s:%s' alpruser 'AlpPass_1234~x' >"$S5_TEST_ROOT/expected_creds"
+t_run s5_cmd_install <"$S5_TEST_ROOT/answers"
+assert_eq "openrc install for the restart transient test succeeds" 0 "$T_STATUS"
+
+s5env_reset_transcript
+: >"$S5_TEST_ROOT/port_probe_count"
+printf '2\n' >"$S5_TEST_ROOT/svc_latebind"
+: >"$S5_TEST_ROOT/svc_start_transient"
+t_run s5_cmd_restart
+assert_eq "openrc restart succeeds through the transient already-starting refusal" 0 "$T_STATUS"
+assert_contains "the transient warning really fired" "already starting" "$T_OUT"
+assert_contains "success is still reported once the wait verifies" "restarted" "$T_OUT"
+assert_not_contains "a transient restart is not reported as a failure" \
+    "the service failed to restart" "$T_OUT"
+_trwaited=$(cat "$S5_TEST_ROOT/port_probe_count")
+if [ -n "$_trwaited" ] && [ "$_trwaited" -ge 3 ]; then
+    t_ok
+else
+    t_bad "restart must still wait for the late port, but probed only $_trwaited times"
+fi
+S5_OSRELEASE="${S5_REPO_ROOT}/tests/fixtures/os-release/debian-12"
+rm -f "$S5_TEST_ROOT/svc_latebind" "$S5_TEST_ROOT/svc_latebind_seen" \
+    "$S5_TEST_ROOT/svc_start_transient" "$S5_TEST_ROOT/port_probe_count"
+
 t_summary

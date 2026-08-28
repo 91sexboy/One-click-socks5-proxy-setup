@@ -114,8 +114,21 @@ s.bind((sys.argv[1], int(sys.argv[2])))
 s.listen(5)
 while True:
     c, _ = s.accept()
-    c.sendall(b"HTTP/1.0 200 OK\r\n\r\nDUMMY-REACHED\r\n")
-    c.close()
+    # Read the request before answering. Closing a socket whose receive
+    # buffer still holds the client's unread bytes makes the kernel send
+    # RST instead of FIN, and curl reports "Connection reset by peer"
+    # before it ever reads the body -- so the readiness poll and every
+    # sanity check failed deterministically even though the listener was
+    # up. One recv is enough: the request line and headers fit in one
+    # segment; the request is never parsed. An empty read (client closed
+    # without sending) or an error just closes the connection quietly.
+    try:
+        if c.recv(4096):
+            c.sendall(b"HTTP/1.0 200 OK\r\n\r\nDUMMY-REACHED\r\n")
+    except OSError:
+        pass
+    finally:
+        c.close()
 PYEOF
 
 for a in $LISTEN_ADDRS; do
