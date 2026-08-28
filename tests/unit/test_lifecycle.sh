@@ -95,6 +95,32 @@ t_stub rc-service 3
 S5_INIT=openrc
 t_run s5_service_active
 assert_eq "OpenRC exit 3 means definitely inactive" 1 "$T_STATUS"
+
+# OpenRC's status verb returns the service state as the exit code
+# (openrc-run's _status: stopping=4, starting=8, inactive=16, crashed=32,
+# started=0, stopped=3). Exit 8 -- a supervise-daemon service still in its
+# startup phase -- is exactly the Alpine 3.20 CI shape: the first
+# `rc-service status` after the "already starting" warning answers 8, which
+# the old mapping filed under "definitely inactive" (1|3 matched neither, so
+# it fell to * -> 2... and any 8 leaking into a `case 1|3` re-query collapsed
+# the install). Starting is not stopped: the manager says the service exists
+# and is coming up, so the tri-state answer is active (0) and the port wait
+# settles the rest.
+t_stub rc-service 8
+t_run s5_service_active
+assert_eq "OpenRC exit 8 (starting) is active-in-progress, not inactive" 0 "$T_STATUS"
+# The other documented state codes must never classify as active either.
+for _code in 4 16; do
+    t_stub rc-service "$_code"
+    t_run s5_service_active
+    assert_eq "OpenRC exit $_code is unobservable, not inactive" 2 "$T_STATUS"
+done
+for _code in 1 32; do
+    t_stub rc-service "$_code"
+    t_run s5_service_active
+    assert_eq "OpenRC exit $_code is definitely inactive" 1 "$T_STATUS"
+done
+t_stub rc-service 3
 S5_INIT=systemd
 
 # v1 records no firewall ownership at all, and `status` therefore never queries a

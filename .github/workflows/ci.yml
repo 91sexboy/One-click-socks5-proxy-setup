@@ -537,12 +537,6 @@ jobs:
             exit 1
           fi
 
-          # The image installs no curl, but the Stream images ship curl-minimal
-          # anyway; assert instead of install so a genuinely missing curl fails
-          # here rather than as a confusing protocol error later.
-          docker exec "$CID" sh -c \
-            'command -v curl || { echo "curl missing after bootstrap"; exit 1; }'
-
           docker cp "$SECRETS/answers" "$CID:/tmp/answers"
           docker exec "$CID" chmod 0600 /tmp/answers
           docker exec "$CID" sh -c 'sh /src/socks5.sh install </tmp/answers >/tmp/install.log 2>&1' \

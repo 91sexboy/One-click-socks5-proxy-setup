@@ -2565,9 +2565,17 @@ s5_service_active() {
     openrc)
         rc-service "$S5_PROJECT" status >/dev/null 2>&1
         _sar=$?
+        # openrc-run's status verb returns the service state as the exit
+        # code: started=0, stopped=3, stopping=4, starting=8, inactive=16,
+        # crashed=32; rc-service itself exits 1 when the service script
+        # does not exist at all. 8 (starting) is the supervise-daemon
+        # startup phase -- the manager vouches the service exists and is
+        # coming up -- so it counts as active and the port wait settles
+        # readiness; stopped, crashed and never-written are definitively
+        # not running; stopping and inactive are not an answer either way.
         case "$_sar" in
-        0) return 0 ;;
-        1 | 3) return 1 ;;
+        0 | 8) return 0 ;;
+        1 | 3 | 32) return 1 ;;
         *) return 2 ;;
         esac
         ;;
