@@ -2494,36 +2494,18 @@ s5_service_install() {
 # No sleep is needed: the re-query is a classification, not a wait, and the
 # bounded port wait that follows is already the readiness mechanism.
 _s5_openrc_start() {
-    # rc-service's exit status reports the start COMMAND, and openrc-run
-    # prints "already starting" with a nonzero exit when the service's
-    # exclusive lock cannot be flocked (svc_lock/EWOULDBLOCK) -- a contention
-    # with another process, not a verdict that the service cannot run. So a
-    # nonzero start is re-queried against the manager's own tri-state: active
-    # means the start took (the port wait settles readiness); definitely
-    # inactive gets a bounded retry for the lock-contention shape (the third
-    # CI run showed Alpine 3.20's re-query answering stopped there); anything
-    # else fails closed on the first attempt.
-    _oost=0
-    _oon=0
-    while [ "$_oon" -le 3 ]; do
-        rc-service "$S5_PROJECT" "$1"
-        _oos=$?
-        if [ "$_oos" -eq 0 ]; then
-            return 0
-        fi
-        s5_service_active
-        _ooa=$?
-        case "$_ooa" in
-        0) return 0 ;;
-        1) ;;
-        *) return "$_oos" ;;
-        esac
-        _oon=$((_oon + 1))
-        if [ "$_oon" -le 3 ]; then
-            sleep 1
-        fi
-    done
-    return "$_oos"
+    rc-service "$S5_PROJECT" "$1"
+    _oos=$?
+    if [ "$_oos" -eq 0 ]; then
+        return 0
+    fi
+    s5_service_active
+    _ooa=$?
+    case "$_ooa" in
+    0) return 0 ;;
+    1) return "$_oos" ;;
+    *) return "$_oos" ;;
+    esac
 }
 
 s5_service_start() {

@@ -429,20 +429,7 @@ jobs:
             { printf '"'"'s|'"'"'; cat "$SECRETS/pass"; printf '"'"'|***REDACTED***|g\n'"'"'; } > "$SECRETS/redact.sed"
             chmod 0600 "$SECRETS/redact.sed"
             sh socks5.sh install < "$SECRETS/answers" > "$SECRETS/install.log" 2>&1 || {
-              sed -f "$SECRETS/redact.sed" "$SECRETS/install.log" >&2
-              # OpenRC-state diagnostics: the installer has already said WHAT
-              # failed; this says WHY the manager answered that way -- status
-              # text and exit code, the exclusive-lock directory, the runlevel
-              # view and the process table, then a retried start to show
-              # whether the contention was transient.
-              rc-service socks5-manager status >&2; echo "status exit: $?" >&2
-              ls -la /run/openrc/exclusive /run/openrc/starting /run/openrc/started >&2 2>&1 || true
-              rc-status -a >&2 || true
-              ps aux | grep -E 'openrc|supervise|3proxy|logger' | grep -v grep >&2 || true
-              sleep 2
-              rc-service socks5-manager start >&2; echo "retried start exit: $?" >&2
-              rc-service socks5-manager status >&2; echo "retried status exit: $?" >&2
-              exit 1; }
+              sed -f "$SECRETS/redact.sed" "$SECRETS/install.log" >&2; exit 1; }
             sh socks5.sh status
             rc-service socks5-manager status
             PORT=41080 PROXY_USER=ciuser PASSFILE="$SECRETS/pass" \
@@ -550,11 +537,7 @@ jobs:
             exit 1
           fi
 
-          # Written from INSIDE the container through stdin: docker cp extracts
-          # into the container's rootfs, and a path that is a mountpoint in the
-          # container can shadow the copied file (observed on debian:13 -- cp
-          # exits 0, /tmp/answers invisible to the next exec).
-          docker exec -i "$CID" sh -c 'umask 077 && cat > /tmp/answers' <"$SECRETS/answers"
+          docker cp "$SECRETS/answers" "$CID:/tmp/answers"
           docker exec "$CID" chmod 0600 /tmp/answers
           docker exec "$CID" sh -c 'sh /src/socks5.sh install </tmp/answers >/tmp/install.log 2>&1' \
             || { docker exec "$CID" cat /tmp/install.log >"$SECRETS/install.log" 2>&1 || true
@@ -588,8 +571,5 @@ jobs:
             echo "account survived" >&2; exit 1; fi
           if docker exec "$CID" getent group socks5proxy >/dev/null 2>&1; then
             echo "group survived" >&2; exit 1; fi
-          # a system package the installer added must still be installed.
-          # `command` is a shell BUILTIN -- docker exec without sh -c tries to
-          # execve("command") and dies with 127, which is exactly what killed
-          # this check on its first ever execution.
-          docker exec "$CID" sh -c 'command -v git >/dev/null'
+          # a system package the installer added must still be installed
+          docker exec "$CID" command -v git >/dev/null

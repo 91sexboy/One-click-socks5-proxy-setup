@@ -658,40 +658,6 @@ assert_file_absent "and the init script" "$S5_INITSCRIPT"
 S5_OSRELEASE="${S5_REPO_ROOT}/tests/fixtures/os-release/debian-12"
 rm -f "$S5_TEST_ROOT/svc_start_transient_fail"
 
-# --- The third CI run's Alpine 3.20 shape: the warning is a LOCK contention.
-# openrc-run prints "already starting" and exits 1 when the service's exclusive
-# lock cannot be flocked (svc_lock/EWOULDBLOCK), and at the re-query the state
-# is genuinely stopped -- some other process held the lock without marking
-# starting. The transient classifier (status re-query) correctly says inactive;
-# only a bounded retry of the start command itself survives. A one-attempt
-# start, however well classified, fails this install. Modelled by
-# svc_start_locked: first start refuses, second behaves normally.
-s5env_reset_transcript
-rm -rf "$S5_SYSCONFDIR" "$S5_STATEDIR" "$S5_PREFIX"
-rm -f "$S5_UNIT" "$S5_INITSCRIPT" "$S5_TEST_ROOT/svc_active" \
-    "$S5_TEST_ROOT/svc_latebind_seen"
-: >"$S5_TEST_ROOT/stub_passwd"
-: >"$S5_TEST_ROOT/stub_group"
-S5_OSRELEASE="${S5_REPO_ROOT}/tests/fixtures/os-release/alpine-3.20"
-printf '2\n' >"$S5_TEST_ROOT/svc_latebind"
-: >"$S5_TEST_ROOT/svc_start_locked"
-s5env_answers 'y
-31094
-alplockuser
-TestPassword_123~x
-TestPassword_123~x
-y
-'
-printf '%s:%s' alplockuser 'TestPassword_123~x' >"$S5_TEST_ROOT/expected_creds"
-t_run s5_cmd_install <"$S5_TEST_ROOT/answers"
-assert_eq "openrc install survives a transient start-lock contention" 0 "$T_STATUS"
-assert_contains "the lock warning really fired" "already starting" "$T_OUT"
-assert_file_exists "lock-contention install keeps the init script" "$S5_INITSCRIPT"
-assert_file_exists "lock-contention install keeps the state" "$S5_STATE"
-S5_OSRELEASE="${S5_REPO_ROOT}/tests/fixtures/os-release/debian-12"
-rm -f "$S5_TEST_ROOT/svc_latebind" "$S5_TEST_ROOT/svc_latebind_seen" \
-    "$S5_TEST_ROOT/svc_start_locked"
-
 # ==========================================================================
 # F28 (HIGH)  The static check must run BEFORE anything is started.
 #
