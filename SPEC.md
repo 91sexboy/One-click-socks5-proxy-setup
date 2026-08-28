@@ -233,6 +233,13 @@ installed.
 Privilege drop is the init system's job — no `setuid`/`setgid` in the 3proxy config.
 
 ## 10. Commands
+The documented one-click invocation is `bash <(wget -qO- <RAW_URL>)` (curl variant
+equivalent). Under it `$0` is a transient `/dev/fd/*` descriptor: operator-facing
+messages must never print it — when the script was piped in, the instruction is to
+re-run the install command, whose no-argument mode opens the management menu.
+Alpine ships without bash and its default shell cannot parse `<(...)`; the README
+tells Alpine users to `apk add bash` first or save and run the file.
+
 ```
 sh socks5.sh            # not installed -> interactive install; installed -> menu
 sh socks5.sh install | status | show | restart | uninstall
@@ -361,8 +368,10 @@ IPv6-only listeners; log rotation; RHEL/Rocky/Alma.
 - Use the name **SOCKS5** exclusively, and show only `socks5://user:password@host:port`. Never
   advertise, display, or provide a usage example for SOCKS4, SOCKS4a, or SOCKS4.5. State that
   CONNECT is the only supported command and that BIND and UDP ASSOCIATE are unsupported.
-- The one-click example must **not** use a fixed path such as `/tmp/socks5.sh` — use `mktemp`, or
-  download into the current directory so the operator can inspect the script first.
+- The primary install form is the one-click one-liner `bash <(wget -qO- <RAW_URL>)` with the curl
+  variant beside it; a read-it-first alternative (save, `less`, run) follows. Never a fixed
+  `/tmp/socks5.sh` path, and never `wget -qO- URL | sh`: a pipe feeds the script to the prompts'
+  stdin and breaks the interactive flow. Alpine's lack of bash is called out explicitly.
 - The primary documented command must be runnable as written. A download recipe containing an
   unsubstituted placeholder must be labelled as a publish-time template, not presented as a
   working command, and must include a checksum verification step.

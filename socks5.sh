@@ -223,6 +223,39 @@ s5_guard_environment() {
 s5_guard_environment
 
 # ---------------------------------------------------------------------------
+# How the operator re-invokes this script. The documented one-click form is
+#   bash <(wget -qO- <RAW_URL>)
+# under which $0 is a transient /dev/fd/* descriptor that will not exist
+# after this run. Every message that tells the operator how to run a
+# subcommand must therefore either name a real path -- or, when the script
+# was piped in, point at re-running the install command: its no-argument
+# mode opens the management menu, which reaches every subcommand.
+# ---------------------------------------------------------------------------
+S5_SELF=$0
+case "$S5_SELF" in
+/dev/fd/* | /proc/self/fd/* | bash | sh | -bash | -sh) S5_SELF='' ;;
+esac
+
+# s5_cmd_hint <subcommand>: phrase describing how the operator runs it.
+s5_cmd_hint() {
+    if [ -n "$S5_SELF" ]; then
+        printf "run '%s %s'" "$S5_SELF" "$1"
+    else
+        printf "re-run the install command and choose '%s' from the menu" "$1"
+    fi
+}
+
+# The summary's closing line: how to see the credentials again.
+s5_redisplay_hint() {
+    if [ -n "$S5_SELF" ]; then
+        s5_say "  Re-display these details later with: $S5_SELF show"
+    else
+        s5_say "  Re-display these details later by re-running the install"
+        s5_say "  command and choosing 'show' from the menu."
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # Paths.  In test mode every path is rooted inside S5_TEST_ROOT.
 # ---------------------------------------------------------------------------
 
@@ -2565,7 +2598,7 @@ s5_collision_check() {
     esac
     if [ "$_ccbad" -ne 0 ]; then
         s5_say "Refusing to overwrite resources this script did not create."
-        s5_say "Remove or rename them, or run '$0 uninstall' first, then retry."
+        s5_say "Remove or rename them, or $(s5_cmd_hint uninstall), then retry."
         return 1
     fi
     return 0
@@ -2857,7 +2890,7 @@ s5_rollback() {
     fi
     if ! s5_teardown; then
         s5_err "rollback was incomplete; the state file is kept at $S5_STATE so you can retry"
-        s5_err "run '$0 uninstall' once the problem above is resolved"
+        s5_err "$(s5_cmd_hint uninstall) once the problem above is resolved"
         return 1
     fi
     _rbstbuf=$S5_STATE_BUF
@@ -2941,7 +2974,7 @@ s5_print_summary() {
     s5_say "           SOCKS5 is not a VPN. Anyone with these credentials who can"
     s5_say "           reach the port can use this proxy."
     s5_say ""
-    s5_say "  Re-display these details later with: $0 show"
+    s5_redisplay_hint
     s5_say "========================================================"
     s5_say ""
 }
@@ -3198,7 +3231,7 @@ s5_load_credentials() {
 
 s5_usage() {
     cat <<EOF
-Usage: $0 [command]
+Usage: ${S5_SELF:-socks5.sh} [command]
 
 Commands:
   install      Interactively install the SOCKS5 proxy
@@ -3353,7 +3386,7 @@ s5_cmd_uninstall() {
 
     if ! s5_teardown; then
         s5_err "uninstall did NOT complete; the state file is kept at $S5_STATE"
-        s5_err "resolve the problems listed above and run '$0 uninstall' again"
+        s5_err "resolve the problems listed above, then $(s5_cmd_hint uninstall)"
         return "$EX_FAIL"
     fi
 

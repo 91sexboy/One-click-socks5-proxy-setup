@@ -227,4 +227,26 @@ done
 t_run s5_main
 assert_contains "no command at all still takes the auto path" "RAN:auto ARGS:[]" "$T_OUT"
 
+# --- the documented one-click form: bash <(wget -qO- <URL>) ---
+# Under process substitution the script arrives on a transient /dev/fd/*
+# descriptor: it must still run, and its operator-facing output must never
+# print that path -- it will not exist after this run. Re-running the install
+# command is the way back in. Verified end to end against the real script
+# (cat stands in for wget; the invocation shape is what is under test).
+if command -v bash >/dev/null 2>&1; then
+    # env -u: the harness exports S5_LIB_ONLY/S5_TEST_MODE/S5_TEST_ROOT, and
+    # the inner script must see clean PRODUCTION mode -- otherwise its library
+    # guard skips s5_main and it exits silently, which is what this test exists
+    # to prove does NOT happen for a real one-click invocation.
+    psub=$(env -u S5_LIB_ONLY -u S5_TEST_MODE -u S5_TEST_ROOT \
+        bash -c 'bash <(cat "$1") --help' _ "$SRC" 2>&1; printf '|%s' "$?")
+    assert_eq "the script runs under bash process substitution" 0 "${psub##*|}"
+    assert_contains "and prints its usage" "Usage" "$psub"
+    assert_not_contains "usage never prints the transient descriptor path" \
+        "/dev/fd" "$psub"
+    assert_contains "usage still names the script" "socks5.sh" "$psub"
+else
+    t_skip "bash process substitution" "bash is not installed"
+fi
+
 t_summary

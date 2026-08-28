@@ -53,26 +53,32 @@ the detected `ID` and `VERSION_ID` named — it never guesses.
 
 ## Install
 
-The installer is one self-contained file. Copy it to the server, read it, and run
-it as root:
+One command, as root, on a supported system:
 
 ```sh
+bash <(wget -qO- https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-setup/main/socks5.sh)
+```
+
+or, with curl:
+
+```sh
+bash <(curl -fsSL https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-setup/main/socks5.sh)
+```
+
+The URL always fetches the current version on `main`. Re-running the same
+command later opens the management menu — the proxy is not reinstalled.
+
+You are running a remote script as root. To read it before running it instead:
+
+```sh
+wget -qO socks5.sh https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-setup/main/socks5.sh
+less socks5.sh
 sudo sh socks5.sh
 ```
 
-If you publish this script, substitute your own release URL for `<RAW_URL>` in
-the recipe below **before** telling anyone to use it — as written it is a
-template, not a working command. Download into a private temporary directory,
-verify the checksum you published, read the file, then run it. Never pipe an
-installer straight into a shell, and never use a fixed path in `/tmp`:
-
-```sh
-d=$(mktemp -d) &&
-  curl -fsSL -o "$d/socks5.sh" <RAW_URL> &&
-  printf '%s  %s\n' "<PUBLISHED_SHA256>" "$d/socks5.sh" | sha256sum -c &&
-  less "$d/socks5.sh" &&
-  sudo sh "$d/socks5.sh"
-```
+> **Alpine note:** Alpine ships without `bash`, and its default shell does not
+> support the `<(...)` form. Run `apk add bash` first and use the same command,
+> or use the read-it-first form above (`wget` + `sh`).
 
 The installer is **interactive**. It shows the detected system, the exact list of
 packages it will install, and the security warning, and asks once whether to
@@ -91,6 +97,10 @@ Both character sets are RFC 3986 unreserved, so the `socks5://` URI it prints
 needs no escaping.
 
 ## Commands
+
+With the one-line installer, re-running the command is all you need: it opens
+the management menu (status / show / restart / uninstall). With the script
+saved as a file, the subcommands are:
 
 ```sh
 sudo sh socks5.sh            # install if absent, otherwise a management menu
@@ -139,7 +149,7 @@ before anything is installed:
 
 | Package manager | Packages |
 |---|---|
-| `apt` | `git build-essential` |
+| `apt` | `git build-essential ca-certificates` |
 | `apk` | `git build-base musl-dev linux-headers` |
 | `dnf` / `yum` | `git gcc make` |
 

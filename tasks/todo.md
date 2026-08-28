@@ -1,12 +1,52 @@
-# TODO: socks5.sh — status after the twelfth round (owner decisions)
+# TODO: socks5.sh — status after the thirteenth round (one-click invocation)
 
-Plan: `tasks/plan.md` · Spec: `SPEC.md` (re-frozen; unfrozen three times).
+Plan: `tasks/plan.md` · Spec: `SPEC.md` (re-frozen; owner decisions recorded in-place).
 Engine 3proxy 0.9.9.0 @ `da99424eac4092e3722f1a5b1844cfe80478f580`.
 
-**Local suite: 20 files, 1691 assertions, 0 failures, 0 skips — green under `sh`, `dash`,
+**Local suite: 20 files, 1705 assertions, 0 failures, 0 skips — green under `sh`, `dash`,
 `busybox sh` and `bash`.** All 33 shell files parse under `sh -n`, `dash -n` and `busybox sh -n`;
 all four Python tools compile; the CI workflow parses with PyYAML (8 jobs, every one with a
 timeout, no `continue-on-error`).
+
+---
+
+## Round 13: the one-click one-liner
+
+The owner wants the install experience to be `bash <(wget -qO- <RAW_URL>)`, in the style of
+the sing-box one-click scripts. Two halves:
+
+- **The script side.** Under process substitution `$0` is a transient `/dev/fd/*` descriptor
+  that will not exist after the run. Five operator-facing messages printed it (usage, the
+  collision advice, the rollback retry, the summary's re-display line, the uninstall retry).
+  A new `S5_SELF` normalizes it: a real path is kept, a transient descriptor (or `bash`/`sh`
+  from `bash -c "$(…)"` invocations) yields piped-mode phrasing — "re-run the install command
+  and choose 'X' from the menu" — which is honest, because re-running the one-liner opens the
+  management menu when the proxy is installed. Verified end to end by actually invoking the
+  real script through `bash <(cat …) --help` in test_skeleton (with the test-mode environment
+  stripped, so the library-mode guard does not silently skip dispatch — the first version of
+  that test was vacuously green for exactly that reason, and the fix is documented at the
+  test).
+- **The documentation side.** The README's primary install form is now the one-liner against
+  the published raw URL, in wget and curl variants, with a read-it-first alternative and an
+  Alpine note: Alpine ships without bash and busybox ash cannot parse `<(...)` (both verified
+  directly — dash cannot either, which is why the one-liner says `bash` and not `sh`), so
+  Alpine users get `apk add bash` first or the save-and-run form. SPEC §10/§17 record the
+  invocation rule: messages never print the transient `$0`, and `wget … | sh` is forbidden —
+  a pipe feeds the script to the prompts' stdin and breaks the interactive flow.
+
+Assertion accounting (1691 → 1705): +5 process-substitution/usage assertions, +6 hint
+assertions (piped and file modes), +4 README one-liner assertions, −1 retired mktemp
+assertion.
+
+**CI status:** the repository went live during this round (main pushed to
+github.com/91sexboy/One-click-socks5-proxy-setup as a single clean commit, no develop
+history). The first CI run ever completed: 31 of 45 jobs passed — including every unit cell,
+14/16 build cells and 14/16 protocol cells. The 14 failures (CentOS Stream 9 build/protocol,
+the real systemd installs, all ACL-resolution cells, shellcheck, alpine:3.20 OpenRC) are
+undagnosed: GitHub requires admin authentication to read job logs. Fixing them needs the log
+tails pasted in or a token.
+
+---
 
 ---
 

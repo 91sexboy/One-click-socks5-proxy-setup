@@ -57,10 +57,21 @@ assert_contains "README says the password is stored in plaintext" "plaintext" "$
 assert_contains "README explains root can read the credentials" "root" "$readme"
 assert_contains "README recommends SSH/TLS/VPN for sensitive use" "SSH" "$readme"
 assert_contains "README lists the build dependencies" "build-essential" "$readme"
+assert_contains "README names the apt CA bundle the installer adds" \
+    "build-essential ca-certificates" "$readme"
 assert_contains "README says packages are left in place" "left in place" "$readme"
 assert_contains "README says updates are the operator's job" "responsibility" "$readme"
 assert_contains "README names the pinned commit" "da99424eac4092e3722f1a5b1844cfe80478f580" "$readme"
-assert_contains "README uses mktemp in the one-click example" "mktemp" "$readme"
+# The primary install form is the one-click one-liner over the real raw URL,
+# in both the wget and curl variants. It must use bash process substitution
+# (dash and busybox sh cannot parse `<(...)`), and it must not be a pipe --
+# `wget -qO- URL | sh` would feed the script itself to the prompts' stdin and
+# break the interactive flow.
+assert_contains "README shows the one-click wget one-liner" \
+    "bash <(wget -qO- https://raw.githubusercontent.com/" "$readme"
+assert_contains "README shows the one-click curl one-liner" \
+    "bash <(curl -fsSL https://raw.githubusercontent.com/" "$readme"
+assert_contains "README warns that Alpine lacks bash" "apk add bash" "$readme"
 assert_not_contains "README never uses a fixed /tmp path" "/tmp/socks5.sh" "$readme"
 assert_contains "README shows only the socks5 scheme" "socks5://" "$readme"
 assert_not_contains "README never shows a socks4 URI" "socks4://" "$readme"

@@ -134,6 +134,32 @@ assert_not_contains "non-root show leaks no password" "$PASS_OK" "$T_OUT"
 S5_ASSUME_ROOT=1
 
 # ==========================================================================
+# Re-invocation hints. When the script arrives through the one-click form
+# (bash <(wget -qO- URL)) $0 is a transient /dev/fd/* descriptor. Every
+# message that tells the operator how to run a subcommand must either name a
+# real path or point at re-running the installer -- never the descriptor.
+# ==========================================================================
+S5_SELF_SAVED=${S5_SELF:-}
+
+S5_SELF=''
+t_run s5_cmd_hint uninstall
+assert_contains "piped mode points at re-running the installer" \
+    "re-run the install command" "$T_OUT"
+assert_contains "and names the subcommand to choose" "'uninstall'" "$T_OUT"
+assert_not_contains "never the transient path" "/dev/fd" "$T_OUT"
+
+t_run s5_redisplay_hint
+assert_contains "the piped summary hint names the menu" "menu" "$T_OUT"
+assert_not_contains "and never prints a descriptor" "/dev/fd" "$T_OUT"
+
+S5_SELF=/root/socks5.sh
+t_run s5_cmd_hint uninstall
+assert_contains "file mode names the real path" "/root/socks5.sh uninstall" "$T_OUT"
+t_run s5_redisplay_hint
+assert_contains "file mode keeps the direct command" "/root/socks5.sh show" "$T_OUT"
+S5_SELF=$S5_SELF_SAVED
+
+# ==========================================================================
 # restart
 # ==========================================================================
 s5env_reset_transcript
