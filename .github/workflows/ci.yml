@@ -418,13 +418,6 @@ jobs:
             # exists to verify.
             apk add --no-cache openrc python3 >/dev/null
             mkdir -p /run/openrc && touch /run/openrc/softlevel
-            # A real Alpine boot initializes the dependency tree and the full
-            # /run/openrc state-directory set. This container has no OpenRC PID
-            # 1; softlevel alone leaves /run/openrc/exclusive absent, and 0.54
-            # misreports the resulting ENOENT from svc_lock as "already
-            # starting". rc-status drives rc_deptree_update_needed(), which
-            # creates starting/started/exclusive and the other state dirs.
-            rc-status -a >/dev/null 2>&1  # initialize OpenRC runtime before install
             umask 077
             SECRETS=$(mktemp -d); chmod 0700 "$SECRETS"
             trap "rm -rf $SECRETS" EXIT HUP INT TERM

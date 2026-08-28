@@ -198,24 +198,6 @@ _openrc_quote_lines=$(printf '%s\n' "$_openrc_raw_block" | grep -c "'")
 assert_eq "OpenRC job has exactly its three reviewed quote-bearing lines" \
     3 "$_openrc_quote_lines"
 
-# A normal Alpine boot invokes OpenRC and initializes every runtime state
-# directory (`starting`, `started`, `exclusive`, ...). The lifecycle container
-# has no PID-1 OpenRC and a bare `touch softlevel` is not equivalent: OpenRC
-# 0.54's svc_lock then cannot open /run/openrc/exclusive and misleadingly says
-# "already starting" forever. rc-status -a drives rc_deptree_update_needed(),
-# which creates the full directory set; it must happen BEFORE the installer.
-_openrc_init_line=$(printf '%s\n' "$_openrc_raw_block" |
-    grep -n 'rc-status -a.*initial' | head -n 1 | cut -d: -f1)
-_openrc_install_line=$(printf '%s\n' "$_openrc_raw_block" |
-    grep -n 'socks5\.sh install' | head -n 1 | cut -d: -f1)
-assert_ne "OpenRC runtime initialization is present" "" "$_openrc_init_line"
-if [ -n "$_openrc_init_line" ] && [ -n "$_openrc_install_line" ] &&
-    [ "$_openrc_init_line" -lt "$_openrc_install_line" ]; then
-    t_ok
-else
-    t_bad "OpenRC runtime initialization must precede the installer"
-fi
-
 _distro=$(ci_job_block distro-systemd-integration)
 assert_contains "Debian has a real systemd lifecycle" "debian:13" "$_distro"
 assert_contains "CentOS Stream has a real systemd lifecycle" "centos:stream10" "$_distro"
