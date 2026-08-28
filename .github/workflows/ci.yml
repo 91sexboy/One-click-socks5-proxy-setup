@@ -430,18 +430,26 @@ jobs:
             chmod 0600 "$SECRETS/redact.sed"
             sh socks5.sh install < "$SECRETS/answers" > "$SECRETS/install.log" 2>&1 || {
               sed -f "$SECRETS/redact.sed" "$SECRETS/install.log" >&2
-              # OpenRC-state diagnostics: the installer has already said WHAT
-              # failed; this says WHY the manager answered that way -- status
-              # text and exit code, the exclusive-lock directory, the runlevel
-              # view and the process table, then a retried start to show
-              # whether the contention was transient.
-              rc-service socks5-manager status >&2; echo "status exit: $?" >&2
-              ls -la /run/openrc/exclusive /run/openrc/starting /run/openrc/started >&2 2>&1 || true
-              rc-status -a >&2 || true
-              ps aux | grep -E "openrc|supervise|3proxy|logger" | grep -v grep >&2 || true
+              # OpenRC-state diagnostics: set -e MUST be disabled first --
+              # `rc-service status` returning stopped=3 was terminating this
+              # block before any diagnostic beyond that first line could run.
+              # openrc-run's "already starting" is specifically
+              # svc_lock/EWOULDBLOCK, so include the kernel lock table and the
+              # inode of the service's exclusive lock to identify its holder.
+              set +e
+              rc-service socks5-manager status >&2
+              echo "status exit: $?" >&2
+              ls -lai /run/openrc/exclusive /run/openrc/starting /run/openrc/started >&2 2>&1
+              echo "kernel locks:" >&2
+              cat /proc/locks >&2
+              echo "process table:" >&2
+              ps aux >&2
+              rc-status -a >&2
               sleep 2
-              rc-service socks5-manager start >&2; echo "retried start exit: $?" >&2
-              rc-service socks5-manager status >&2; echo "retried status exit: $?" >&2
+              rc-service socks5-manager start >&2
+              echo "retried start exit: $?" >&2
+              rc-service socks5-manager status >&2
+              echo "retried status exit: $?" >&2
               exit 1; }
             sh socks5.sh status
             rc-service socks5-manager status
