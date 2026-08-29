@@ -493,7 +493,14 @@ jobs:
             # A real OpenRC restart, followed by manager and socket proof.
             printf "2\n" | sh socks5.sh restart
             rc-service socks5-manager status
-            ss -ltn | grep ":41080 "
+            if command -v ss >/dev/null 2>&1; then
+              ss -ltn | grep ":41080 "
+            elif command -v netstat >/dev/null 2>&1; then
+              netstat -ltn | grep ":41080 "
+            else
+              echo "neither ss nor netstat is available after installation" >&2
+              exit 1
+            fi
             PORT=41080 PROXY_USER=ciuser PASSFILE="$SECRETS/pass" \
               sh tests/protocol/run_protocol.sh
             printf "2\ny\n" | sh socks5.sh uninstall
