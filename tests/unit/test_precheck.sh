@@ -20,13 +20,7 @@ reset_machine() {
     S5_ASSUME_ROOT=1
     S5_OSRELEASE="${S5_REPO_ROOT}/tests/fixtures/os-release/debian-12"
     s5env_setup_pkgmgrs
-    s5env_answers 'y
-31080
-someuser
-GoodPass_123~x
-y
-y
-'
+    s5env_install_answers y 31080 someuser 'GoodPass_123~x'
 }
 
 # ==========================================================================

@@ -207,12 +207,7 @@ s5env_reset_transcript
 rm -rf "$S5_SYSCONFDIR" "$S5_STATEDIR" "$S5_PREFIX" "$S5_UNITDIR"
 rm -f "$S5_TEST_ROOT/svc_active"
 mkdir -p "$S5_UNITDIR"
-s5env_answers 'y
-31080
-gooduser
-TestPassword_123~x
-y
-'
+s5env_install_answers y 31080 gooduser 'TestPassword_123~x'
 t_run s5_cmd_install <"$S5_TEST_ROOT/answers"
 assert_eq "install succeeds" 0 "$T_STATUS"
 assert_file_exists "config written" "$S5_CFG"
@@ -268,6 +263,8 @@ fi
 # ==========================================================================
 s5env_reset_transcript
 before=$(cat "$S5_USERSCFG")
+# Handwritten on purpose: the already-installed path prompts nothing, so this
+# is not a complete install stream and the builder does not apply.
 s5env_answers 'y
 '
 t_run s5_cmd_install <"$S5_TEST_ROOT/answers"
@@ -301,12 +298,7 @@ rm -f "$S5_UNIT" "$S5_INITSCRIPT" "$S5_TEST_ROOT/svc_active"
 : >"$S5_TEST_ROOT/stub_group"
 mkdir -p "$S5_UNITDIR"
 : >"$S5_TEST_ROOT/stub_start_fail"
-s5env_answers 'y
-31081
-otheruser
-TestPassword_123~x
-y
-'
+s5env_install_answers y 31081 otheruser 'TestPassword_123~x'
 t_run s5_cmd_install <"$S5_TEST_ROOT/answers"
 assert_ne "install fails when the service will not start" 0 "$T_STATUS"
 assert_file_absent "config removed on rollback" "$S5_CFG"
@@ -328,12 +320,7 @@ rm -f "$S5_UNIT" "$S5_INITSCRIPT" "$S5_TEST_ROOT/svc_active"
 : >"$S5_TEST_ROOT/stub_passwd"
 : >"$S5_TEST_ROOT/stub_group"
 : >"$S5_TEST_ROOT/stub_curl_all_fail"
-s5env_answers 'y
-31082
-thirduser
-TestPassword_123~x
-y
-'
+s5env_install_answers y 31082 thirduser 'TestPassword_123~x'
 t_run s5_cmd_install <"$S5_TEST_ROOT/answers"
 assert_ne "install fails when the self-test fails" 0 "$T_STATUS"
 assert_file_absent "config removed after self-test failure" "$S5_CFG"
@@ -349,12 +336,7 @@ rm -f "$S5_UNIT" "$S5_INITSCRIPT" "$S5_TEST_ROOT/svc_active"
 : >"$S5_TEST_ROOT/stub_passwd"
 : >"$S5_TEST_ROOT/stub_group"
 : >"$S5_TEST_ROOT/stub_daemon_reload_fail"
-s5env_answers 'y
-31084
-reloaduser
-TestPassword_123~x
-y
-'
+s5env_install_answers y 31084 reloaduser 'TestPassword_123~x'
 t_run s5_cmd_install <"$S5_TEST_ROOT/answers"
 assert_ne "install fails when systemd cannot reload the unit" 0 "$T_STATUS"
 assert_contains "daemon-reload failure is explained" "reload the systemd manager" "$T_OUT"
@@ -375,12 +357,7 @@ rm -f "$S5_UNIT" "$S5_INITSCRIPT" "$S5_TEST_ROOT/svc_active"
 : >"$S5_TEST_ROOT/stub_passwd"
 : >"$S5_TEST_ROOT/stub_group"
 : >"$S5_TEST_ROOT/stub_active_query_fail"
-s5env_answers 'y
-31085
-queryuser
-TestPassword_123~x
-y
-'
+s5env_install_answers y 31085 queryuser 'TestPassword_123~x'
 t_run s5_cmd_install <"$S5_TEST_ROOT/answers"
 assert_ne "install fails when the active state cannot be queried" 0 "$T_STATUS"
 assert_contains "install names an unverified active state" "could not verify" "$T_OUT"
@@ -430,12 +407,7 @@ rm -f "$S5_TEST_ROOT/svc_latebind" "$S5_TEST_ROOT/svc_latebind_seen" \
 : >"$S5_TEST_ROOT/stub_group"
 mkdir -p "$S5_UNITDIR"
 printf '3\n' >"$S5_TEST_ROOT/svc_latebind"
-s5env_answers 'y
-31087
-lateuser
-TestPassword_123~x
-y
-'
+s5env_install_answers y 31087 lateuser 'TestPassword_123~x'
 printf '%s:%s' lateuser 'TestPassword_123~x' >"$S5_TEST_ROOT/expected_creds"
 t_run s5_cmd_install <"$S5_TEST_ROOT/answers"
 assert_eq "install succeeds when the port binds within the wait window" 0 "$T_STATUS"
@@ -453,12 +425,7 @@ rm -f "$S5_UNIT" "$S5_INITSCRIPT" "$S5_TEST_ROOT/svc_active" \
 : >"$S5_TEST_ROOT/stub_passwd"
 : >"$S5_TEST_ROOT/stub_group"
 printf '999\n' >"$S5_TEST_ROOT/svc_latebind"
-s5env_answers 'y
-31088
-neveruser
-TestPassword_123~x
-y
-'
+s5env_install_answers y 31088 neveruser 'TestPassword_123~x'
 printf '%s:%s' neveruser 'TestPassword_123~x' >"$S5_TEST_ROOT/expected_creds"
 t_run s5_cmd_install <"$S5_TEST_ROOT/answers"
 assert_ne "install fails when the port never binds" 0 "$T_STATUS"
@@ -481,12 +448,7 @@ rm -f "$S5_UNIT" "$S5_INITSCRIPT" "$S5_TEST_ROOT/svc_active" \
 printf '999\n' >"$S5_TEST_ROOT/svc_latebind"
 printf '1\n' >"$S5_TEST_ROOT/svc_die_after"
 : >"$S5_TEST_ROOT/port_probe_count"
-s5env_answers 'y
-31089
-dieuser
-TestPassword_123~x
-y
-'
+s5env_install_answers y 31089 dieuser 'TestPassword_123~x'
 printf '%s:%s' dieuser 'TestPassword_123~x' >"$S5_TEST_ROOT/expected_creds"
 t_run s5_cmd_install <"$S5_TEST_ROOT/answers"
 assert_ne "install fails when the service exits while starting" 0 "$T_STATUS"
@@ -537,12 +499,7 @@ chmod 0755 "$S5_TEST_ROOT/bin/portprobe_failing"
 S5_PORT_PROBE="$S5_TEST_ROOT/bin/portprobe_failing"
 export S5_PORT_PROBE
 : >"$S5_TEST_ROOT/port_probe_count"
-s5env_answers 'y
-31090
-obscureuser
-TestPassword_123~x
-y
-'
+s5env_install_answers y 31090 obscureuser 'TestPassword_123~x'
 t_run s5_cmd_install <"$S5_TEST_ROOT/answers"
 assert_ne "an unobservable listen state fails the install" 0 "$T_STATUS"
 assert_contains "install says it could not verify the port" "cannot verify" "$T_OUT"
@@ -569,12 +526,7 @@ rm -f "$S5_UNIT" "$S5_INITSCRIPT" "$S5_TEST_ROOT/svc_active" \
 : >"$S5_TEST_ROOT/stub_group"
 S5_OSRELEASE="${S5_REPO_ROOT}/tests/fixtures/os-release/alpine-3.20"
 printf '2\n' >"$S5_TEST_ROOT/svc_latebind"
-s5env_answers 'y
-31091
-alpuser
-TestPassword_123~x
-y
-'
+s5env_install_answers y 31091 alpuser 'TestPassword_123~x'
 printf '%s:%s' alpuser 'TestPassword_123~x' >"$S5_TEST_ROOT/expected_creds"
 t_run s5_cmd_install <"$S5_TEST_ROOT/answers"
 assert_eq "openrc install succeeds when the port binds within the wait window" 0 "$T_STATUS"
@@ -602,12 +554,7 @@ rm -f "$S5_UNIT" "$S5_INITSCRIPT" "$S5_TEST_ROOT/svc_active" \
 S5_OSRELEASE="${S5_REPO_ROOT}/tests/fixtures/os-release/alpine-3.20"
 printf '2\n' >"$S5_TEST_ROOT/svc_latebind"
 : >"$S5_TEST_ROOT/svc_start_transient"
-s5env_answers 'y
-31092
-alptruser
-TestPassword_123~x
-y
-'
+s5env_install_answers y 31092 alptruser 'TestPassword_123~x'
 printf '%s:%s' alptruser 'TestPassword_123~x' >"$S5_TEST_ROOT/expected_creds"
 t_run s5_cmd_install <"$S5_TEST_ROOT/answers"
 assert_eq "openrc install succeeds through the transient already-starting refusal" 0 "$T_STATUS"
@@ -630,12 +577,7 @@ rm -f "$S5_UNIT" "$S5_INITSCRIPT" "$S5_TEST_ROOT/svc_active"
 : >"$S5_TEST_ROOT/stub_group"
 S5_OSRELEASE="${S5_REPO_ROOT}/tests/fixtures/os-release/alpine-3.20"
 : >"$S5_TEST_ROOT/svc_start_transient_fail"
-s5env_answers 'y
-31093
-alpdead
-TestPassword_123~x
-y
-'
+s5env_install_answers y 31093 alpdead 'TestPassword_123~x'
 printf '%s:%s' alpdead 'TestPassword_123~x' >"$S5_TEST_ROOT/expected_creds"
 t_run s5_cmd_install <"$S5_TEST_ROOT/answers"
 assert_ne "openrc install fails when a warned start genuinely fails" 0 "$T_STATUS"
@@ -663,12 +605,7 @@ rm -f "$S5_UNIT" "$S5_INITSCRIPT" "$S5_TEST_ROOT/svc_active" \
 S5_OSRELEASE="${S5_REPO_ROOT}/tests/fixtures/os-release/alpine-3.20"
 printf '2\n' >"$S5_TEST_ROOT/svc_latebind"
 : >"$S5_TEST_ROOT/svc_start_locked"
-s5env_answers 'y
-31094
-alplockuser
-TestPassword_123~x
-y
-'
+s5env_install_answers y 31094 alplockuser 'TestPassword_123~x'
 printf '%s:%s' alplockuser 'TestPassword_123~x' >"$S5_TEST_ROOT/expected_creds"
 t_run s5_cmd_install <"$S5_TEST_ROOT/answers"
 assert_eq "openrc install survives a transient start-lock contention" 0 "$T_STATUS"
@@ -708,12 +645,7 @@ s5_static_check_cfg() {
     return 1
 }
 
-s5env_answers 'y
-31083
-fourthuser
-TestPassword_123~x
-y
-'
+s5env_install_answers y 31083 fourthuser 'TestPassword_123~x'
 t_run s5_cmd_install <"$S5_TEST_ROOT/answers"
 assert_ne "install fails when the static check rejects the config" 0 "$T_STATUS"
 assert_contains "the rejection reaches the operator" "SIMULATED STATIC CHECK REJECTION" "$T_OUT"
@@ -741,11 +673,7 @@ mktemp() {
     *) command mktemp "$@" ;;
     esac
 }
-s5env_answers 'y
-31086
-stateuser
-TestPassword_123~x
-'
+s5env_install_answers y 31086 stateuser 'TestPassword_123~x'
 t_run s5_cmd_install <"$S5_TEST_ROOT/answers"
 unset -f mktemp
 assert_ne "install fails when the state file cannot be created" 0 "$T_STATUS"

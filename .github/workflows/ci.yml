@@ -75,6 +75,8 @@ jobs:
         run: |
           python3 -m py_compile tests/protocol/socks_probe.py
           python3 -m py_compile tests/pty/interrupt.py
+          python3 -m py_compile tests/pty/stty_capture.py
+          python3 -m py_compile tests/pty/show_xtrace.py
       - name: Documentation must never advertise SOCKS4
         run: |
           # The allowlist exempts a line from the advertisement check, so every
@@ -334,7 +336,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        include:
+          - runner: ubuntu-24.04
+            locale_stream: zh-default
+          - runner: ubuntu-24.04-arm
+            locale_stream: en-explicit
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Full install lifecycle under real systemd
@@ -352,7 +358,17 @@ jobs:
           # the environment, or the job log. Round 16 order: language (this cell
           # picks blank = Chinese default), one [Y/n] confirmation, then the three
           # values with the password queued exactly once.
-          { printf '\ny\n%s\nciuser\n' "$PORT"; cat "$SECRETS/pass"; printf '\n'; } >"$SECRETS/answers"
+          case "${{ matrix.locale_stream }}" in
+            zh-default) _selector='';;
+            en-explicit) _selector=2;;
+          esac
+          if [ "${{ matrix.locale_stream }}" = zh-default ]; then
+            printf '\ny\n%s\nciuser\n' "$PORT" >"$SECRETS/answers"
+          else
+            printf '2\ny\n%s\nciuser\n' "$PORT" >"$SECRETS/answers"
+          fi
+          cat "$SECRETS/pass" >>"$SECRETS/answers"
+          printf '\n' >>"$SECRETS/answers"
           chmod 0600 "$SECRETS/answers"
           # Redaction uses a sed SCRIPT FILE. Interpolating the password into a
           # sed expression would place it in sed's argv, visible to `ps`.
@@ -362,6 +378,8 @@ jobs:
             sed -f "$SECRETS/redact.sed" "$SECRETS/install.log" >&2; exit 1; }
 
           printf '2\n' | sudo sh socks5.sh status
+          # No-argument mode: selector (2), then menu action 1 (status).
+          printf '2\n1\n' | sudo sh socks5.sh
           sudo systemctl is-active socks5-manager.service
           ss -ltn | grep ":$PORT "
 
@@ -402,7 +420,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: ["alpine:3.20", "alpine:3.24"]
+        include:
+          - image: "alpine:3.20"
+            locale_stream: invalid-then-zh
+          - image: "alpine:3.24"
+            locale_stream: invalid-then-en
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Install lifecycle under OpenRC in ${{ matrix.image }}
@@ -430,12 +452,19 @@ jobs:
             trap "rm -rf $SECRETS" EXIT HUP INT TERM
             tr -dc "A-Za-z0-9._~-" </dev/urandom | head -c 32 > "$SECRETS/pass"
             chmod 0600 "$SECRETS/pass"
-            # Round 16: invalid selector entry first proves the retry, then
-            # 2 = English; [Y/n]; port; username; password once.
-            { printf "9\n2\ny\n41080\nciuser\n"; cat "$SECRETS/pass"; printf "\n"; } > "$SECRETS/answers"
+            if [ "${{ matrix.locale_stream }}" = invalid-then-zh ]; then
+              printf "9\n\ny\n41080\nciuser\n" >"$SECRETS/answers"
+            else
+              printf "9\n2\ny\n41080\nciuser\n" >"$SECRETS/answers"
+            fi
+            cat "$SECRETS/pass" >>"$SECRETS/answers"
+            printf "\n" >>"$SECRETS/answers"
             chmod 0600 "$SECRETS/answers"
             { printf '"'"'s|'"'"'; cat "$SECRETS/pass"; printf '"'"'|***REDACTED***|g\n'"'"'; } > "$SECRETS/redact.sed"
             chmod 0600 "$SECRETS/redact.sed"
+            # Each lifecycle install creates the log inside the OpenRC container;
+            # umask 077 is set before the redirection is opened.
+            umask 077
             sh socks5.sh install < "$SECRETS/answers" > "$SECRETS/install.log" 2>&1 || {
               sed -f "$SECRETS/redact.sed" "$SECRETS/install.log" >&2
               # OpenRC-state diagnostics: set -e MUST be disabled first --
@@ -461,6 +490,10 @@ jobs:
               exit 1; }
             printf "2\n" | sh socks5.sh status
             rc-service socks5-manager status
+            # A real OpenRC restart, followed by manager and socket proof.
+            printf "2\n" | sh socks5.sh restart
+            rc-service socks5-manager status
+            ss -ltn | grep ":41080 "
             PORT=41080 PROXY_USER=ciuser PASSFILE="$SECRETS/pass" \
               sh tests/protocol/run_protocol.sh
             printf "2\ny\n" | sh socks5.sh uninstall
@@ -498,10 +531,13 @@ jobs:
           # left untouched.
           - image: "ubuntu:22.04"
             setup: "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends systemd systemd-sysv ca-certificates"
+            locale_stream: zh-default
           - image: "debian:13"
             setup: "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq systemd systemd-sysv ca-certificates"
+            locale_stream: en-explicit
           - image: "quay.io/centos/centos:stream10"
             setup: "(dnf install -y -q systemd ca-certificates || yum install -y -q systemd ca-certificates)"
+            locale_stream: invalid-then-en
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Full install lifecycle under real systemd in ${{ matrix.image }}
@@ -519,8 +555,15 @@ jobs:
           tr -dc 'A-Za-z0-9._~-' </dev/urandom | head -c 32 >"$SECRETS/pass"
           chmod 0600 "$SECRETS/pass"
           PORT=41080
-          # Round 16: explicit English (2); [Y/n]; port; username; password once.
-          { printf '2\ny\n%s\nciuser\n' "$PORT"; cat "$SECRETS/pass"; printf '\n'; } >"$SECRETS/answers"
+          if [ "${{ matrix.locale_stream }}" = zh-default ]; then
+            printf '\ny\n%s\nciuser\n' "$PORT" >"$SECRETS/answers"
+          elif [ "${{ matrix.locale_stream }}" = invalid-then-en ]; then
+            printf '9\n2\ny\n%s\nciuser\n' "$PORT" >"$SECRETS/answers"
+          else
+            printf '2\ny\n%s\nciuser\n' "$PORT" >"$SECRETS/answers"
+          fi
+          cat "$SECRETS/pass" >>"$SECRETS/answers"
+          printf '\n' >>"$SECRETS/answers"
           chmod 0600 "$SECRETS/answers"
           { printf 's|'; cat "$SECRETS/pass"; printf '|***REDACTED***|g\n'; } >"$SECRETS/redact.sed"
           chmod 0600 "$SECRETS/redact.sed"
@@ -572,7 +615,7 @@ jobs:
           # exits 0, /tmp/answers invisible to the next exec).
           docker exec -i "$CID" sh -c 'umask 077 && cat > /tmp/answers' <"$SECRETS/answers"
           docker exec "$CID" chmod 0600 /tmp/answers
-          docker exec "$CID" sh -c 'sh /src/socks5.sh install </tmp/answers >/tmp/install.log 2>&1' \
+          docker exec "$CID" sh -c 'umask 077; sh /src/socks5.sh install </tmp/answers >/tmp/install.log 2>&1; rc=$?; chmod 0600 /tmp/install.log; exit "$rc"' \
             || { docker exec "$CID" cat /tmp/install.log >"$SECRETS/install.log" 2>&1 || true
                  sed -f "$SECRETS/redact.sed" "$SECRETS/install.log" >&2
                  exit 1; }

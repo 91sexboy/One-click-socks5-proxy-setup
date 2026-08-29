@@ -32,7 +32,7 @@ mkdir -p "$S5_UNITDIR"
 # ==========================================================================
 # Happy path: both callers still behave when the state IS observable.
 # ==========================================================================
-t_run s5env_full_install 31080 portuser 'PortPass_123~x' n
+t_run s5env_full_install 31080 portuser 'PortPass_123~x'
 assert_eq "a normal install passes the listen verification" 0 "$T_STATUS"
 assert_file_exists "the install completed" "$S5_STATE"
 

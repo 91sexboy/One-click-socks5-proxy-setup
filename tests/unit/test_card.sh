@@ -17,6 +17,8 @@ S5T_NAME=test_card
 s5env_setup
 s5env_load
 
+SRC=${S5_SRC:?S5_SRC unset}
+
 # ---------------------------------------------------------------------------
 # 1. Pure validators (no I/O): s5_ipv4_is_canonical
 # ---------------------------------------------------------------------------
@@ -386,5 +388,121 @@ S5_LANG=en
 
 S5_SECRET=''
 unset -f ip hostname
+
+# ---------------------------------------------------------------------------
+# BF-01: the external lookup's response boundary. The curl|head pipeline masks
+# curl's own failure status (pipe status is head's 0), truncates an oversized
+# response to its valid prefix, and command substitution strips trailing
+# newlines -- so a dead endpoint that prints a body, a body with trailing
+# garbage, and a multi-LF body were all accepted. These must fail closed.
+# ---------------------------------------------------------------------------
+S5_LANG=en
+ip() { return 1; }
+hostname() { return 1; }
+
+# curl prints a valid body but FAILS: the lookup must not adopt the address.
+printf '123.123.123.123' >"$S5_TEST_ROOT/stub_ip_body"
+printf '22' >"$S5_TEST_ROOT/stub_ip_code"
+S5_CARD_ADDR='PRIOR-VALUE'
+S5_CARD_KIND=''
+s5_resolve_card_address
+assert_eq "a failed curl with a valid body is not adopted" "SERVER_IPV4" "$S5_CARD_ADDR"
+assert_eq "and falls to the placeholder" "placeholder" "$S5_CARD_KIND"
+rm -f "$S5_TEST_ROOT/stub_ip_body" "$S5_TEST_ROOT/stub_ip_code"
+
+# A body longer than one valid address + one terminator: the extra bytes prove
+# the response is not a single address line, truncation must not rescue it.
+printf '123.123.123.123\r\nX' >"$S5_TEST_ROOT/stub_ip_body"
+S5_CARD_ADDR='PRIOR-VALUE'
+S5_CARD_KIND=''
+s5_resolve_card_address
+assert_eq "oversized valid-prefix body is rejected" "SERVER_IPV4" "$S5_CARD_ADDR"
+rm -f "$S5_TEST_ROOT/stub_ip_body"
+
+# Double trailing LF: a second terminator survives one strip and must reject.
+printf '123.123.123.123\n\n' >"$S5_TEST_ROOT/stub_ip_body"
+S5_CARD_ADDR='PRIOR-VALUE'
+S5_CARD_KIND=''
+s5_resolve_card_address
+assert_eq "double-terminator body is rejected" "SERVER_IPV4" "$S5_CARD_ADDR"
+rm -f "$S5_TEST_ROOT/stub_ip_body"
+
+# Two full lines must reject (the second line is lost to substitution today).
+printf '123.123.123.123\n45.77.10.22\n' >"$S5_TEST_ROOT/stub_ip_body"
+S5_CARD_ADDR='PRIOR-VALUE'
+S5_CARD_KIND=''
+s5_resolve_card_address
+assert_eq "two-line body is rejected" "SERVER_IPV4" "$S5_CARD_ADDR"
+rm -f "$S5_TEST_ROOT/stub_ip_body"
+
+# Exactly one address + one CRLF is the largest legal body: still accepted.
+printf '123.123.123.123\r\n' >"$S5_TEST_ROOT/stub_ip_body"
+S5_CARD_ADDR='PRIOR-VALUE'
+S5_CARD_KIND=''
+s5_resolve_card_address
+assert_eq "exactly-at-cap body is accepted" "123.123.123.123" "$S5_CARD_ADDR"
+assert_eq "with the external kind" "external" "$S5_CARD_KIND"
+rm -f "$S5_TEST_ROOT/stub_ip_body"
+
+# ---------------------------------------------------------------------------
+# BF-01: missed IANA special-purpose ranges. The classifier's comment claims
+# every special-purpose range is rejected; these four were not.
+# ---------------------------------------------------------------------------
+for _sp in 192.31.196.1 192.31.196.254 192.175.48.1 192.175.48.254 \
+    192.52.193.1 192.52.193.254 192.88.99.1 192.88.99.254; do
+    t_run s5_ipv4_is_public "$_sp"
+    assert_eq "special-purpose address is not public: $_sp" 1 "$T_STATUS"
+done
+
+unset -f ip hostname
+
+# ---------------------------------------------------------------------------
+# BF-02: the card contract. SPEC 10: install and show share ONE renderer, the
+# URI is a single unindented line, Host and URI use the same resolved address,
+# and the zh cloud-provider warning carries the port.
+# ---------------------------------------------------------------------------
+S5_LANG=en
+ip() { printf '2: eth0    inet 10.20.30.40/24 scope global eth0\n'; }
+hostname() { return 1; }
+S5_USERNAME=bfuser
+S5_PASSWORD='BfPass_123~x'
+S5_SECRET=$S5_PASSWORD
+S5_PORT=41080
+
+_card=$(s5_render_card 2>/dev/null)
+
+# URI: exactly one, unindented, alone on its line.
+_uri_count=$(printf '%s\n' "$_card" | grep -c '^socks5://' || true)
+assert_eq "the URI is unindented (exactly one line starts at column 0)" 1 "$_uri_count"
+_uri_indented=$(printf '%s\n' "$_card" | grep -c '^[[:space:]]+socks5://' || true)
+assert_eq "no indented copy of the URI exists" 0 "$_uri_indented"
+
+# Host/URI agreement: same address in both places.
+assert_contains "the host field carries the resolved address" "10.20.30.40" "$_card"
+_uri_line=$(printf '%s\n' "$_card" | grep '^socks5://' | head -n 1)
+assert_contains "the URI carries the same address" "@10.20.30.40:41080" "$_uri_line"
+
+# The zh cloud-provider warning must name the port (the zh catalog arm dropped it).
+S5_LANG=zh
+_cardzh=$(s5_render_card 2>/dev/null)
+assert_contains "zh cloud-provider warning names the port" "41080" "$_cardzh"
+assert_contains "zh warning mentions TCP" "TCP" "$_cardzh"
+S5_LANG=en
+
+# Structural: install AND show both go through the shared renderer. s5_cmd_show
+# currently duplicates the card body; this structural pin makes the duplicate
+# visible.
+_show_body=$(sed -n '/^s5_cmd_show() {/,/^}/p' "$SRC")
+if printf '%s\n' "$_show_body" | grep -q 's5_render_card'; then
+    t_ok
+else
+    t_bad "s5_cmd_show must call the shared s5_render_card, not a duplicate body"
+fi
+# A duplicated card body would re-print the URI; show must render exactly one.
+_dup_markers=$(printf '%s\n' "$_show_body" | grep -c 'socks5://\$S5_USERNAME' || true)
+assert_eq "show does not carry its own URI interpolation" 0 "$_dup_markers"
+
+unset -f ip hostname
+S5_SECRET=''
 
 t_summary

@@ -184,7 +184,9 @@ assert_ne "symlinked state file is refused" 0 "$T_STATUS"
 assert_contains "explains the symlink refusal" "symbolic link" "$T_OUT"
 rm -f "$S5_STATE"
 
-# uninstall must refuse too, and delete nothing
+# uninstall must refuse too, and delete nothing. The answer streams from
+# here on stay handwritten on purpose: each is a single [y/N] uninstall
+# confirmation, not a complete install stream.
 ln -s "$S5_TEST_ROOT/elsewhere_state" "$S5_STATE"
 s5env_answers 'y
 '

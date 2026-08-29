@@ -71,6 +71,7 @@ def main():
 
     output = b""
     answered = False
+    _early_status = None
     deadline = time.time() + 15.0
     while time.time() < deadline:
         try:
@@ -78,9 +79,10 @@ def main():
         except OSError:
             break
         if not ready:
-            done, _ = os.waitpid(pid, os.WNOHANG)
+            done, st = os.waitpid(pid, os.WNOHANG)
             if done == pid:
                 pid = 0
+                _early_status = st
                 break
             continue
         try:
@@ -102,9 +104,10 @@ def main():
     if pid:
         status = reap(pid)
     else:
-        # The status was consumed only in the no-output branch above. A child that
-        # exits after PTY EOF is reaped here in the common path.
-        status = 0
+        # The no-output branch consumed the waitpid result and threw it away,
+        # so a child that exited nonzero during a quiet poll passed as success.
+        # Capture the status when it is reaped there instead of zeroing it.
+        status = _early_status if _early_status is not None else 0
     try:
         os.close(master)
     except OSError:

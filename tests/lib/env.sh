@@ -125,8 +125,11 @@ s5env_load() {
 }
 
 # s5env_answers <text> : queue interactive answers, consumed via redirection.
+# 0600 like the install builders: these streams carry no password today, but
+# one uniform mode means no answer file is ever group- or world-readable.
 s5env_answers() {
     printf '%s' "$1" >"$S5_TEST_ROOT/answers"
+    chmod 0600 "$S5_TEST_ROOT/answers"
 }
 
 s5env_reset_transcript() {
@@ -140,25 +143,43 @@ s5env_line_of() {
     if [ -z "$_n" ]; then printf '0'; else printf '%s' "$_n"; fi
 }
 
-# s5env_install_answers <lang> <confirm> <port> <user> <password> : the ONE
-# builder for a complete successful install's interactive input. Round 16
-# contract: language is selected per invocation (blank or 1 = zh, 2 = en), the
-# single install confirmation is [Y/n] (blank = continue), and the custom
-# password is queued exactly ONCE -- a second copy would silently mask a
-# regression back to the removed confirmation read. Tests calling library
-# functions directly set S5_LANG themselves; this builder is for the answer
-# stream only.
+# s5env_install_answers <confirm> <port> <user> <password> : the ONE builder
+# for a complete install's interactive input in LIBRARY mode -- a direct
+# s5_cmd_install call. The selector never runs there (it is dispatched from
+# s5_main, which S5_LIB_ONLY sourcing skips), so the stream starts at the
+# confirmation and queues exactly four lines: confirm, port, username and
+# the custom password -- once; a second copy would silently mask a
+# regression back to the removed confirmation read. No trailing lines: the
+# y/n answers of the firewall and dependency prompts retired in round 10
+# are gone with those prompts. Callers that assert on locale set S5_LANG
+# themselves (sourcing defaults it to en); the language is a variable here,
+# never a queued line.
 s5env_install_answers() {
+    printf '%s\n%s\n%s\n%s\n' "$1" "$2" "$3" "$4" >"$S5_TEST_ROOT/answers"
+    chmod 0600 "$S5_TEST_ROOT/answers"
+}
+
+# s5env_install_cli <lang> <confirm> <port> <user> <password> : the builder
+# for a REAL-PROCESS install (`sh socks5.sh install`). s5_main selects the
+# language before dispatching the command, so this stream is the selector's
+# answer (blank or 1 = zh, 2 = en) followed by the same four install lines
+# as the library builder. Queueing the selector answer into a library-mode
+# stream instead would feed it to the [Y/n] confirmation as an invalid
+# entry -- the install would still succeed, on the retry.
+s5env_install_cli() {
     printf '%s\n%s\n%s\n%s\n%s\n' "$1" "$2" "$3" "$4" "$5" \
         >"$S5_TEST_ROOT/answers"
     chmod 0600 "$S5_TEST_ROOT/answers"
 }
 
-# s5env_full_install : drive a complete successful install with the given
-# port/user/password in the requested language (default en, matching the
-# still-dormant selector's runtime default).
+# s5env_full_install <port> <user> <password> : drive a complete successful
+# install (library mode) with the given port/user/password. The language is
+# pinned here, not queued: no selector runs in library mode, so a language
+# line in the stream would be consumed by the confirmation prompt as an
+# invalid answer and every caller would silently pass on the retry path.
 s5env_full_install() {
-    s5env_install_answers "${S5_LANG:-en}" y "$1" "$2" "$3"
+    S5_LANG=${S5_LANG:-en}
+    s5env_install_answers y "$1" "$2" "$3"
     printf '%s:%s' "$2" "$3" >"$S5_TEST_ROOT/expected_creds"
     s5_cmd_install <"$S5_TEST_ROOT/answers"
 }

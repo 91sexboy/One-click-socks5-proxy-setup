@@ -36,13 +36,7 @@ esac'
 # Install once so the lifecycle commands have something to act on
 # ==========================================================================
 mkdir -p "$S5_UNITDIR"
-s5env_answers 'y
-41080
-lifeuser
-LifePass_1234~x
-y
-y
-'
+s5env_install_answers y 41080 lifeuser 'LifePass_1234~x'
 t_run s5_cmd_install <"$S5_TEST_ROOT/answers"
 assert_eq "install for lifecycle tests succeeded" 0 "$T_STATUS"
 assert_file_exists "config present" "$S5_CFG"
@@ -256,6 +250,9 @@ unset -f sleep
 # no-argument menu
 # ==========================================================================
 s5env_reset_transcript
+# Handwritten on purpose: menu choices are single-answer streams, not
+# complete install streams, so the builder does not apply (99 is the
+# deliberate invalid choice).
 s5env_answers '1
 '
 t_run s5_cmd_auto <"$S5_TEST_ROOT/answers"
@@ -280,6 +277,7 @@ s5env_reset_transcript
 : >"$S5_LOGSINK"
 s5_state_load
 recorded_bin=$S5_BIN
+# Handwritten on purpose: the uninstall confirmation is one [y/N] answer.
 s5env_answers 'y
 '
 t_run s5_cmd_uninstall <"$S5_TEST_ROOT/answers"
@@ -329,6 +327,7 @@ assert_not_contains "uninstall log sink has no password" "$PASS_OK" "$(cat "$S5_
 # uninstall is idempotent
 # ==========================================================================
 s5env_reset_transcript
+# Handwritten on purpose: single [y/N] uninstall confirmation.
 s5env_answers 'y
 '
 t_run s5_cmd_uninstall <"$S5_TEST_ROOT/answers"
@@ -349,13 +348,7 @@ assert_ne "restart reports not installed" 0 "$T_STATUS"
 # a fresh install works after uninstall (no leftover collision)
 s5env_reset_transcript
 rm -f "$S5_TEST_ROOT/svc_active"
-s5env_answers 'y
-41081
-seconduser
-SecondPass_123~x
-y
-n
-'
+s5env_install_answers y 41081 seconduser 'SecondPass_123~x'
 printf '%s:%s' seconduser 'SecondPass_123~x' >"$S5_TEST_ROOT/expected_creds"
 t_run s5_cmd_install <"$S5_TEST_ROOT/answers"
 assert_eq "reinstall after uninstall succeeds" 0 "$T_STATUS"
@@ -374,6 +367,7 @@ assert_eq "still exactly one credential line" 1 "$(grep -c '' "$S5_USERSCFG")"
 # replaced for this final block.
 # ==========================================================================
 s5env_reset_transcript
+# Handwritten on purpose: single [y/N] uninstall confirmation.
 s5env_answers 'y
 '
 t_run s5_cmd_uninstall <"$S5_TEST_ROOT/answers"
@@ -391,12 +385,7 @@ chmod 0755 "$S5_TEST_ROOT/bin/rc-service"
 : >"$S5_TEST_ROOT/stub_passwd"
 : >"$S5_TEST_ROOT/stub_group"
 S5_OSRELEASE="${S5_REPO_ROOT}/tests/fixtures/os-release/alpine-3.20"
-s5env_answers 'y
-41082
-alpruser
-AlpPass_1234~x
-y
-'
+s5env_install_answers y 41082 alpruser 'AlpPass_1234~x'
 printf '%s:%s' alpruser 'AlpPass_1234~x' >"$S5_TEST_ROOT/expected_creds"
 t_run s5_cmd_install <"$S5_TEST_ROOT/answers"
 assert_eq "openrc install for the restart transient test succeeds" 0 "$T_STATUS"

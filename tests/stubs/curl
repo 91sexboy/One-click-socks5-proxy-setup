@@ -57,7 +57,23 @@ case "$*" in
         exit "$_ic"
     fi
     if [ -f "$S5_TEST_ROOT/stub_ip_body" ]; then
-        cat "$S5_TEST_ROOT/stub_ip_body"
+        # Real curl writes --output FILE; honor it when present so the
+        # production capture path (file, not pipe) is exercised.
+        _out=''
+        _prev=''
+        for _a in "$@"; do
+            if [ "$_prev" = "--output" ] || [ "$_prev" = "-o" ]; then
+                _out=$_a
+            fi
+            _prev=$_a
+        done
+        if [ -n "$_out" ]; then
+            cat "$S5_TEST_ROOT/stub_ip_body" >"$_out"
+        else
+            cat "$S5_TEST_ROOT/stub_ip_body"
+        fi
+        _out=''
+        _prev=''
         exit 0
     fi
     exit 7

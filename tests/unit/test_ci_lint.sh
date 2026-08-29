@@ -481,7 +481,7 @@ for _job in systemd-integration openrc-integration distro-systemd-integration; d
 done
 
 # At least one cell exercises the invalid-language retry (openrc 3.20).
-if grep -q 'printf "9' "$CI"; then
+if grep -q 'printf "9' "$CI" || grep -q "printf '9" "$CI"; then
     t_ok
 else
     t_bad "no CI cell exercises the invalid-language retry"
@@ -506,5 +506,39 @@ if grep -nE 'docker exec "\$CID" sh /src/socks5\.sh (status|restart)$' "$CI"; th
 else
     t_ok
 fi
+
+# =========================================================================
+# BF-08: precise workflow-shape and application guards.
+# =========================================================================
+
+# The workflow expands to EXACTLY 45 jobs. A matrix shrink must fail here,
+# not in a CI run.
+_jobs_count=$(awk '/^jobs:/{f=1;next} f && /^  [a-z][a-z0-9-]*:$/{n++} END{print n+0}' "$CI")
+_timeouts=$(grep -c '^[[:space:]]*timeout-minutes:' "$CI")
+assert_eq "eight job definitions (expanding to 45)" 8 "$_jobs_count"
+assert_eq "every definition carries a timeout" "$_jobs_count" "$_timeouts"
+
+# The expansion is 1 lint + 2 unit + 16 build + 16 protocol + 3 acl + 2 systemd
+# + 2 openrc + 3 distro. The structure test must compute this from the
+# definitions themselves.
+_build_imgs=$(awk '/^  build-matrix:/{f=1} f && /^  protocol:/{exit} f && /- "/{c++} END{print c+0}' "$CI")
+_proto_imgs=$(awk '/^  protocol:/{f=1} f && /^  acl-resolution:/{exit} f && /- "/{c++} END{print c+0}' "$CI")
+assert_eq "build matrix has 8 images x 2 runners = 16 cells" 8 "$_build_imgs"
+assert_eq "protocol matrix has 8 images x 2 runners = 16 cells" 8 "$_proto_imgs"
+_expanded=$((1 + 2 + _build_imgs*2 + _proto_imgs*2 + 3 + 2 + 2 + 3))
+assert_eq "workflow expands to exactly 45 jobs" 45 "$_expanded"
+
+# The redaction is APPLIED (sed -f), not just created. Deleting any sed -f
+# application must fail.
+_sedf=$(grep -c 'sed -f.*redact.sed' "$CI")
+if [ "$_sedf" -ge 3 ]; then
+    t_ok
+else
+    t_bad "each lifecycle job must APPLY sed -f redact.sed to its install log"
+fi
+
+# All four Python tools are explicitly compiled.
+_comp4=$(grep -c 'py_compile' "$CI")
+assert_eq "the lint job compiles all 4 Python tools" 4 "$_comp4"
 
 t_summary

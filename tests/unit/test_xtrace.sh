@@ -22,12 +22,8 @@ else
 fi
 
 mkdir -p "$S5_UNITDIR"
-s5env_answers "2
-y
-31080
-xtuser
-$SECRET
-"
+# Real process, so the stream starts with the language selector's answer.
+s5env_install_cli 2 y 31080 xtuser "$SECRET"
 
 # Run the real script with xtrace forced on by the caller.
 out=$(env -u S5_LIB_ONLY sh -x "${S5_SRC}" install <"$S5_TEST_ROOT/answers" 2>&1)

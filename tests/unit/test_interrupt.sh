@@ -37,7 +37,12 @@ assert_not_contains "no pty check failed" "not ok" "$T_OUT"
 # If `stty -g` cannot capture the original state, the script must refuse before
 # running `stty -echo`; otherwise a password prompt can leave the terminal in an
 # un-restorable state.
-t_run python3 "${S5_REPO_ROOT}/tests/pty/stty_capture.py" "$S5_TEST_ROOT" "$S5_TEST_ROOT/bin"
+t_run python3 "${S5_ROOT_TEST_ROOT:-${S5_REPO_ROOT}}/tests/pty/stty_capture.py" "$S5_TEST_ROOT" "$S5_TEST_ROOT/bin"
+assert_eq "English stty-failure scenario passes" 0 "$T_STATUS"
+# BF-07: the Chinese-default selection on a real pty. Blank input selects
+# Chinese; the driver still verifies the same termios invariants.
+t_run python3 "${S5_REPO_ROOT}/tests/pty/stty_capture.py" "$S5_TEST_ROOT" "$S5_TEST_ROOT/bin" ""
+assert_eq "Chinese-default stty-failure scenario passes" 0 "$T_STATUS"
 assert_eq "the stty capture failure scenario passes" 0 "$T_STATUS"
 assert_contains "the capture failure keeps echo enabled" \
     "echo remains enabled" "$T_OUT"

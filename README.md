@@ -374,8 +374,10 @@ at commit `df6885c`, **45 of 45 jobs passed**:
 > The bilingual implementation is itself CI-green: run
 > [`33210744896`](https://github.com/91sexboy/One-click-socks5-proxy-setup/actions/runs/33210744896)
 > at commit `2492ea8` completed 45/45 with the bilingual selector, password-once
-> flow and public-IPv4 card in place, including the Chinese-default, explicit-
-> English and invalid-retry coverage across the seven real lifecycle cells.
+> flow and public-IPv4 card in place, including the Chinese-default, invalid-
+> retry and explicit-English selector paths across the seven real lifecycle
+> cells (each path in at least one cell; the paths are distributed, not
+> per-cell).
 
 Every supported OS family therefore has a real
 install → active/listening → restart → uninstall → cleanliness lifecycle, and

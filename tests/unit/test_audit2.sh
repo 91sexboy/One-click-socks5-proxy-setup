@@ -177,13 +177,7 @@ rm -f "$S5_UNIT" "$S5_INITSCRIPT" "$S5_TEST_ROOT/svc_active"
 : >"$S5_TEST_ROOT/stub_group"
 mkdir -p "$S5_TEST_ROOT/etc" "$S5_UNITDIR"
 chmod 0500 "$S5_TEST_ROOT/etc"
-s5env_answers 'y
-31080
-orphanuser
-OrphanPass_123~x
-y
-y
-'
+s5env_install_answers y 31080 orphanuser 'OrphanPass_123~x'
 t_run s5_cmd_install <"$S5_TEST_ROOT/answers"
 chmod 0700 "$S5_TEST_ROOT/etc"
 assert_ne "install fails when the config directory cannot be created" 0 "$T_STATUS"

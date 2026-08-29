@@ -245,6 +245,7 @@ mkdir -p "$S5_STATEDIR"
 printf 'tag\t0.9.9.0\ncommit\tda99424eac4092e3722f1a5b1844cfe80478f580\norigin\tsource-build\nport\t31080\nusername\tacctuser\nos\tdebian-12\nfamily\tdebian\narch\tamd64\ninit\tsystemd\nlisten\t0.0.0.0\naccount_uid\t900\naccount_gid\t900\ncreated_account\t1\ncreated_group\t1\nstatus\tcomplete\n' >"$S5_STATE"
 chmod 0600 "$S5_STATE"
 : >"$S5_TEST_ROOT/stub_foreign_identity"
+# Handwritten on purpose: single [y/N] uninstall confirmation.
 s5env_answers 'y
 '
 t_run s5_cmd_uninstall <"$S5_TEST_ROOT/answers"
@@ -255,6 +256,8 @@ rm -f "$S5_TEST_ROOT/stub_foreign_identity"
 
 # ==========================================================================
 # Uninstall surfaces the failure and keeps the state file.
+# The answer streams below stay handwritten on purpose: each is a single
+# [y/N] uninstall confirmation, not a complete install stream.
 # ==========================================================================
 reset_db
 S5_OS_FAMILY=debian

@@ -69,10 +69,11 @@ def reap(pid, timeout=10.0):
 
 
 def main():
-    if len(sys.argv) != 3:
-        print("usage: stty_capture.py <test-root> <stub-bin-dir>")
+    if len(sys.argv) not in (3, 4):
+        print("usage: stty_capture.py <test-root> <stub-bin-dir> [lang]")
         return 2
     root, stubbin = sys.argv[1], sys.argv[2]
+    lang = sys.argv[3] if len(sys.argv) == 4 else "2"
     stty = os.path.join(stubbin, "stty")
     with open(stty, "w", encoding="utf-8") as fh:
         fh.write("#!/bin/sh\n")
@@ -112,17 +113,17 @@ def main():
     try:
         _, ok = read_until(master, r"Select \[1-2")
         check(ok, "reached the language selector")
-        os.write(master, b"2\n")
-        _, ok = read_until(master, r"Continue with the installation")
+        os.write(master, lang.encode() + b"\n")
+        _, ok = read_until(master, r"(Continue with the installation|确认开始安装)")
         check(ok, "reached the pre-install confirmation")
         os.write(master, b"y\n")
-        _, ok = read_until(master, r"SOCKS5 port")
+        _, ok = read_until(master, r"(SOCKS5 port|SOCKS5 端口)")
         check(ok, "reached the port prompt")
         os.write(master, b"31080\n")
-        _, ok = read_until(master, r"SOCKS5 username")
+        _, ok = read_until(master, r"(SOCKS5 username|SOCKS5 用户名)")
         check(ok, "reached the username prompt")
         os.write(master, b"captureuser\n")
-        _, ok = read_until(master, r"SOCKS5 password")
+        _, ok = read_until(master, r"(SOCKS5 password|SOCKS5 密码)")
         check(ok, "reached the password prompt")
         time.sleep(0.3)
         check(echo_enabled(slave) is True,

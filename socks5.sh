@@ -261,9 +261,13 @@ esac
 # s5_cmd_hint <subcommand>: phrase describing how the operator runs it.
 s5_cmd_hint() {
     if [ -n "$S5_SELF" ]; then
-        printf "run '%s %s'" "$S5_SELF" "$1"
+        _chf=$(s5_msg cmd.hint.file "$S5_SELF" "$1")
+        printf '%s' "$_chf"
+        _chf=''
     else
-        printf "re-run the install command and choose '%s' from the menu" "$1"
+        _chr=$(s5_msg cmd.hint.rerun "$1")
+        printf '%s' "$_chr"
+        _chr=''
     fi
 }
 
@@ -770,6 +774,87 @@ s5_msg() {
         *) s5_msg_locale_error; return 1 ;;
         esac
         ;;
+    # @s5-msg cmd.not_installed 1
+    cmd.not_installed)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error cmd.not_installed 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '%s 尚未安装。' "${1}" ;;
+        en) printf '%s is not installed.' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg cmd.uninstall.nothing 1
+    cmd.uninstall.nothing)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error cmd.uninstall.nothing 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '此脚本未安装 %s；无需移除。' "${1}" ;;
+        en) printf '%s is not installed by this script; nothing to remove.' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg cmd.restarted 1
+    cmd.restarted)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error cmd.restarted 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '%s 已重启' "${1}" ;;
+        en) printf '%s restarted' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg menu.heading 1
+    menu.heading)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error menu.heading 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '%s 已安装。请选择操作：' "${1}" ;;
+        en) printf '%s is installed. Choose an action:' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg menu.choice_prompt 0
+    menu.choice_prompt)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error menu.choice_prompt 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '请选择 [1-5]：' ;;
+        en) printf 'Choice [1-5]: ' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg uninstall.confirm 0
+    uninstall.confirm)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error uninstall.confirm 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '确认卸载？' ;;
+        en) printf 'Proceed with uninstall?' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg usage.extra_args 2
+    usage.extra_args)
+        [ "$#" -eq 2 ] || { s5_msg_contract_error usage.extra_args 2 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '%s 不接受参数：%s' "${1}" "${2}" ;;
+        en) printf '%s takes no arguments: %s' "${1}" "${2}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg cmd.hint.file 2
+    cmd.hint.file)
+        [ "$#" -eq 2 ] || { s5_msg_contract_error cmd.hint.file 2 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf "运行 '%s %s'" "${1}" "${2}" ;;
+        en) printf "run '%s %s'" "${1}" "${2}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg cmd.hint.rerun 1
+    cmd.hint.rerun)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error cmd.hint.rerun 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf "重新运行安装命令并从菜单中选择 '%s'" "${1}" ;;
+        en) printf "re-run the install command and choose '%s' from the menu" "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
     # @s5-msg input.log_random_port 1
     input.log_random_port)
         [ "$#" -eq 1 ] || { s5_msg_contract_error input.log_random_port 1 "$#"; return 1; }
@@ -1045,20 +1130,12 @@ s5_msg() {
     card.cloud_provider)
         [ "$#" -eq 1 ] || { s5_msg_contract_error card.cloud_provider 1 "$#"; return 1; }
         case "$S5_LANG" in
-        zh) printf '  云服务商       ：你还必须在自己的云安全组 / 网络 ACL 中' ;;
-        en) printf '  Cloud provider : you must ALSO allow inbound TCP %s in your' "${1}" ;;
+        zh) printf '  云服务商       ：你还必须在自己的云安全组 / 网络 ACL 中允许入站 TCP %s。' "${1}" ;;
+        en) printf '  Cloud provider : you must ALSO allow inbound TCP %s in your cloud security group / network ACL.' "${1}" ;;
         *) s5_msg_locale_error; return 1 ;;
         esac
         ;;
-    # @s5-msg card.cloud_provider2 0
-    card.cloud_provider2)
-        [ "$#" -eq 0 ] || { s5_msg_contract_error card.cloud_provider2 0 "$#"; return 1; }
-        case "$S5_LANG" in
-        zh) printf '                   允许入站 TCP 流量。' ;;
-        en) printf '                   cloud security group / network ACL.' ;;
-        *) s5_msg_locale_error; return 1 ;;
-        esac
-        ;;
+
     # @s5-msg card.remember_sgp 1
     card.remember_sgp)
         [ "$#" -eq 1 ] || { s5_msg_contract_error card.remember_sgp 1 "$#"; return 1; }
@@ -6006,7 +6083,11 @@ s5_ipv4_is_public() {
     if [ "$_ipo1" -eq 192 ]; then
         [ "$_ipo2" -eq 0 ] && [ "$_ipo3" -eq 0 ] && return 1
         [ "$_ipo2" -eq 0 ] && [ "$_ipo3" -eq 2 ] && return 1
+        [ "$_ipo2" -eq 31 ] && [ "$_ipo3" -eq 196 ] && return 1
+        [ "$_ipo2" -eq 52 ] && [ "$_ipo3" -eq 193 ] && return 1
+        [ "$_ipo2" -eq 88 ] && [ "$_ipo3" -eq 99 ] && return 1
         [ "$_ipo2" -eq 168 ] && return 1
+        [ "$_ipo2" -eq 175 ] && [ "$_ipo3" -eq 48 ] && return 1
     fi
     if [ "$_ipo1" -eq 198 ]; then
         [ "$_ipo2" -eq 18 ] && return 1
@@ -6051,26 +6132,64 @@ s5_lookup_public_ipv4() {
     # system curlrc can alter it; --noproxy '*' so an ambient proxy variable
     # cannot redirect or observe the request; IPv4 only; HTTPS only; no
     # redirects; bounded; stdin detached. On any failure prints nothing and
-    # returns nonzero. The response is capped and validated before it is
-    # ever spoken of again.
+    # returns nonzero. The response is captured to a 0600 file, never through
+    # a pipe or command substitution: a pipe's status is the LAST command's
+    # (so curl's failure was masked) and substitution strips trailing
+    # newlines (so multi-line and double-terminator bodies collapsed into
+    # valid-looking addresses). The file preserves exact bytes; length and
+    # terminator structure are validated BEFORE any parsing.
     if ! command -v curl >/dev/null 2>&1; then
         return 1
     fi
-    _lpb=$(curl -q -4 --noproxy '*' --proto '=https' --fail --silent \
+    _lpf=$(mktemp "${TMPDIR:-/tmp}/s5ip.XXXXXX") || return 1
+    if ! curl -q -4 --noproxy '*' --proto '=https' --fail --silent \
         --connect-timeout 3 --max-time 5 \
-        "https://icanhazip.com" 2>/dev/null | head -c 17) || {
-        _lpb=''
+        --output "$_lpf" "https://icanhazip.com" </dev/null 2>/dev/null; then
+        rm -f "$_lpf"
+        _lpf=''
         return 1
-    }
-    [ -z "$_lpb" ] && { _lpb=''; return 1; }
-    # Strip at most one trailing terminator: CRLF or bare LF. The patterns must
-    # be real control bytes, not the two-character escapes.
-    _lpcr=$(printf '\r')
-    _lplf=$(printf '\n')
+    fi
+    # Validate the file's line structure with read, not pattern matching: a
+    # trailing-newline byte cannot be built in a shell variable (command
+    # substitution strips it, so every \n-bearing pattern was silently an
+    # empty string), and one read plus one EOF-proving second read rejects a
+    # second line, a double terminator and trailing garbage in one stroke.
+    # Both reads share one descriptor: reopening the path would restart at
+    # byte 0 and make every file look like it had a second identical line.
+    # read's exit status cannot distinguish EOF from EOF-after-a-partial-line
+    # (both nonzero), so content presence is decided by the variable; an
+    # unterminated final line is still one line.
+    exec 3<"$_lpf"
+    _lpb=''
+    IFS= read -r _lpb <&3
+    if [ -z "$_lpb" ]; then
+        exec 3<&-
+        rm -f "$_lpf"
+        _lpb=''
+        _lpf=''
+        return 1
+    fi
+    # A second read returning success means another line exists even when it
+    # is empty (a double terminator reads as an empty line with rc 0); a
+    # nonzero return with an empty variable is the only clean EOF.
+    _lpx=''
+    if IFS= read -r _lpx <&3 || [ -n "$_lpx" ]; then
+        exec 3<&-
+        rm -f "$_lpf"
+        _lpb=''
+        _lpx=''
+        _lpf=''
+        return 1
+    fi
+    exec 3<&-
+    _lpx=''
+    rm -f "$_lpf"
+    _lpf=''
+    # read consumes the LF but leaves a CR from a CRLF terminator on the line.
+    _lpcr=$(printf 'x\r')
+    _lpcr=${_lpcr#x}
     _lpb=${_lpb%"$_lpcr"}
-    _lpb=${_lpb%"$_lplf"}
     _lpcr=''
-    _lplf='' 
     if [ -z "$_lpb" ]; then
         return 1
     fi
@@ -6151,11 +6270,10 @@ s5_render_card() {
     _cvu=$(s5_msg card.label_username); s5_say "$_cvu$S5_USERNAME"
     _cvw=$(s5_msg card.label_password); s5_say "$_cvw$S5_PASSWORD"
     s5_say ""
-    s5_say "  socks5://$S5_USERNAME:$S5_PASSWORD@$S5_CARD_ADDR:$S5_PORT"
+    s5_say "socks5://$S5_USERNAME:$S5_PASSWORD@$S5_CARD_ADDR:$S5_PORT"
     s5_say ""
     _cvf=$(s5_msg card.label_firewall); _cvfw=$(s5_msg card.firewall_untouched); s5_say "$_cvf$_cvfw"
     _cvc=$(s5_msg card.cloud_provider "$S5_PORT"); s5_say "$_cvc"
-    s5_say_msg card.cloud_provider2
     s5_say ""
     case "$S5_CARD_KIND" in
     local) s5_say_msg card.warn_local ;;
@@ -6446,7 +6564,9 @@ s5_usage() {
 
 s5_cmd_status() {
     if ! s5_is_installed; then
-        s5_say "$S5_PROJECT is not installed."
+        _ni=$(s5_msg cmd.not_installed "$S5_PROJECT")
+        s5_say "$_ni"
+        _ni=''
         return "$EX_FAIL"
     fi
     S5_INIT=$(s5_state_get init)
@@ -6483,7 +6603,9 @@ s5_cmd_status() {
 
 s5_cmd_show() {
     if ! s5_is_installed; then
-        s5_say "$S5_PROJECT is not installed."
+        _ni=$(s5_msg cmd.not_installed "$S5_PROJECT")
+        s5_say "$_ni"
+        _ni=''
         return "$EX_FAIL"
     fi
     if ! s5_is_root; then
@@ -6498,35 +6620,19 @@ s5_cmd_show() {
         return "$EX_FAIL"
     fi
     S5_PORT=$(s5_state_get port)
-    # One resolution per card: the Host field and the URI must agree.
-    s5_resolve_card_address
-    _shfw="not modified by this script"
-    s5_say ""
-    s5_say_msg card.details_header
-    _cvs=$(s5_msg card.label_server); s5_say "$_cvs$S5_CARD_ADDR"
-    _cvp=$(s5_msg card.label_port); s5_say "$_cvp$S5_PORT"
-    _cvu=$(s5_msg card.label_username); s5_say "$_cvu$S5_USERNAME"
-    _cvw=$(s5_msg card.label_password); s5_say "$_cvw$S5_PASSWORD"
-    s5_say ""
-    s5_say "  socks5://$S5_USERNAME:$S5_PASSWORD@$S5_CARD_ADDR:$S5_PORT"
-    s5_say ""
-    _cvf=$(s5_msg card.label_firewall); _cvfw=$(s5_msg card.firewall_untouched); s5_say "$_cvf$_cvfw"
-    _cvr=$(s5_msg card.remember_sgp "$S5_PORT"); s5_say "$_cvr"
-    s5_say ""
-    case "$S5_CARD_KIND" in
-    local) s5_say_msg card.warn_local ;;
-    placeholder) s5_say_msg card.warn_placeholder ;;
-    esac
-    s5_say_msg card.warning_encrypted
-    s5_say_msg card.warning_vpn_short
-    s5_say_msg card.rule_end_details
-    s5_say ""
+    # The card is the shared renderer's: show and install must never drift,
+    # so show renders the SAME body. The only show-specific line (the cloud
+    # reminder) is the renderer's remember line, which already carries the
+    # port in both languages.
+    s5_render_card
     return "$EX_OK"
 }
 
 s5_cmd_restart() {
     if ! s5_is_installed; then
-        s5_say "$S5_PROJECT is not installed."
+        _ni=$(s5_msg cmd.not_installed "$S5_PROJECT")
+        s5_say "$_ni"
+        _ni=''
         return "$EX_FAIL"
     fi
     if ! s5_is_root; then
@@ -6553,7 +6659,7 @@ s5_cmd_restart() {
     if ! s5_wait_listening "$S5_PORT"; then
         return "$EX_FAIL"
     fi
-    s5_log "$S5_PROJECT restarted"
+    s5_log_msg cmd.restarted "$S5_PROJECT"
     return "$EX_OK"
 }
 
@@ -6561,7 +6667,9 @@ s5_cmd_restart() {
 # No system package is ever removed. Nothing is deleted recursively.
 s5_cmd_uninstall() {
     if [ ! -e "$S5_STATE" ] && [ ! -L "$S5_STATE" ]; then
-        s5_say "$S5_PROJECT is not installed by this script; nothing to remove."
+        _un=$(s5_msg cmd.uninstall.nothing "$S5_PROJECT")
+        s5_say "$_un"
+        _un=''
         return "$EX_OK"
     fi
     if ! s5_is_root; then
@@ -6588,10 +6696,13 @@ s5_cmd_uninstall() {
     if s5_state_flagged created_account; then _ula=$(s5_msg uninstall.label_account "$S5_SERVICE_USER"); s5_say "$_ula"; fi
     s5_say_msg uninstall.no_firewall_removed
     s5_say_msg uninstall.packages_kept
-    if ! s5_confirm "Proceed with uninstall?"; then
+    _ucq=$(s5_msg uninstall.confirm)
+    if ! s5_confirm "$_ucq"; then
+        _ucq=''
         s5_log_msg uninstall.aborted
         return "$EX_FAIL"
     fi
+    _ucq=''
 
     if ! s5_teardown; then
         s5_err_msg uninstall.incomplete "$S5_STATE"
@@ -6639,13 +6750,17 @@ s5_cmd_auto() {
         return $?
     fi
     s5_say ""
-    s5_say "$S5_PROJECT is installed. Choose an action:"
+    _mh=$(s5_msg menu.heading "$S5_PROJECT")
+    s5_say "$_mh"
+    _mh=''
     s5_say_msg menu.option_status
     s5_say_msg menu.option_show
     s5_say_msg menu.option_restart
     s5_say_msg menu.option_uninstall
     s5_say_msg menu.option_quit
-    printf 'Choice [1-5]: ' >&2
+    _mcp=$(s5_msg menu.choice_prompt)
+    printf '%s' "$_mcp" >&2
+    _mcp=''
     _cha=''
     if ! read -r _cha; then
         s5_err_msg menu.eof
@@ -6688,7 +6803,9 @@ s5_main() {
     if [ "$#" -gt 0 ]; then
         case "$_cmd" in
         install | status | show | restart | uninstall)
-            s5_err "$_cmd takes no arguments: $*"
+            _ea=$(s5_msg usage.extra_args "$_cmd" "$*")
+            s5_err "$_ea"
+            _ea=''
             s5_usage >&2
             return "$EX_USAGE"
             ;;
