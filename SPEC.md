@@ -1,12 +1,12 @@
 # Spec: socks5.sh — one-click SOCKS5 proxy installer
 
-> **Status: FROZEN — bilingual UX implemented locally, CI evidence pending.** The Round 16
-> operator-experience contract is implemented and green locally: per-invocation
+> **Status: IMPLEMENTED — current implementation CI-green; evidence-only documentation run pending.**
+> The Round 16 operator-experience contract is implemented and locally verified: per-invocation
 > Chinese/English selection, default-yes install confirmation, one-read custom passwords, a
-> public-IPv4-first credential card with strict validation, and the separate stock-Alpine
-> entry command. The 3proxy engine, SOCKS5/auth/ACL/state/service/firewall/security contracts
-> were never touched. The recorded 45/45 run predates this round: bilingual CI evidence
-> requires the two new checkpoints described in §18.
+> public-IPv4-first credential card with strict validation, and the separate stock-Alpine entry
+> command. The current implementation commit passed the first fresh 45/45 workflow run;
+> re-freeze after the evidence-only documentation commit also passes 45/45. The 3proxy engine,
+> SOCKS5/auth/ACL/state/service/firewall/security contracts were never touched.
 
 ## 1. Objective
 A single-file POSIX shell script (`socks5.sh`) that interactively installs, verifies, and manages a
@@ -420,8 +420,9 @@ example any SOCKS4-family protocol.
     Enter-generated port/username/password continue using the existing secure generators.
 16. Install and `show` render one exact URI using one resolved IPv4. Public lookup failure is
     nonfatal and yields exactly one localized local/placeholder warning; lookup receives no secret.
-17. A new bilingual implementation CI run passes all 45 jobs, followed by a second 45/45 run for
-    the evidence-only documentation commit. The earlier run remains historical pre-bilingual proof.
+17. Implementation commit `941907b6ca0f6e96664fd9d088eb12fc5fb0c647` passed run
+    `33245460710` with 45/45 jobs. A second 45/45 run for the evidence-only documentation
+    commit remains pending; the older runs remain historical pre-bilingual proof.
 
 ## 16. Non-goals (v1)
 Non-interactive install; `reload`; `reconfigure`; BIND; UDP ASSOCIATE; SOCKS4/4a/4.5 (permanently out
@@ -460,27 +461,22 @@ IPv6-only listeners; log rotation; RHEL/Rocky/Alma.
 
 ## 18. Residual risks and settled decisions
 
-**Verification status (2026-08-28).** GitHub Actions run `33174398814` at commit `df6885c`
-completed **45/45 green**:
+**Verification status (2026-08-29).** The pre-bilingual baseline run `33174398814` at `df6885c`
+completed 45/45 and remains historical. The current audited implementation commit
+`941907b6ca0f6e96664fd9d088eb12fc5fb0c647` completed run `33245460710` with **45/45 green**:
 
 - 16 build cells and 16 protocol cells cover all §3 OS versions on amd64 and arm64;
 - 3 isolated ACL-resolution cells prove hostname targets cannot bypass the destination denies;
-- 2 native Ubuntu 24.04 systemd lifecycles (amd64 + arm64), 3 systemd-as-PID-1 container
-  lifecycles (Ubuntu 22.04, Debian 13, CentOS Stream 10), and 2 OpenRC lifecycles (Alpine 3.20 +
-  3.24) pass install → status/listening → restart → uninstall → cleanliness;
-- lint, three-shell unit coverage and every structural release gate pass.
+- 2 native systemd lifecycle cells, 2 OpenRC lifecycle cells and 3 containerized distro-systemd
+  lifecycle cells cover the seven real service lifecycles, including per-cell locale streams,
+  OpenRC restart/listening proof and a no-argument management-menu path;
+- lint, two unit cells, all structural release gates and all four Python syntax checks pass.
 
-That 45/45 checkpoint is the **pre-bilingual baseline**. It proves the security/protocol/platform
-implementation that this round must preserve; it does not prove the approved bilingual selector,
-password-once or public-IP/card behavior, which is not implemented yet. Those claims require a new
-45/45 implementation run and a second 45/45 post-documentation run before this spec is re-frozen.
-
-This satisfies the pre-bilingual §15 criteria. The earlier pre-CI risks are closed: Alpine/musl builds and both OpenRC
-versions are proven; the Debian/CentOS systemd containers boot and complete; the script's clean-host
-package bootstrap executes in those lifecycle jobs. CI evidence does not erase environmental
-risks: package repositories, DNS and the fixed HTTPS self-test require egress; cloud images may
-differ from the tested base images; and the pinned 3proxy 0.9 branch has no published maintenance
-window, so the operator still owns updates (§17).
+This is the first fresh implementation evidence for the audited fixes. The evidence-only
+ documentation commit and its final 45/45 run remain pending; until then this spec is not
+re-frozen. Environmental risks remain: package repositories, DNS and the fixed HTTPS self-test
+require egress; cloud images may differ from the tested base images; and the pinned 3proxy 0.9
+branch has no published maintenance window, so the operator still owns updates (§17).
 
 **Decided:**
 - Publishing target: `github.com/91sexboy/One-click-socks5-proxy-setup`; the README raw URL is

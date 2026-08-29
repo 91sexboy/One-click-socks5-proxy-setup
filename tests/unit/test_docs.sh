@@ -260,8 +260,12 @@ assert_contains "README distinguishes the CI job scopes" "real engine running th
 # evidence -- add current status next to it.
 assert_contains "README records the fully green CI checkpoint" \
     "45 of 45 jobs passed" "$readme"
-assert_contains "README names the auditable green run" \
+assert_contains "README names the historical baseline run" \
     "33174398814" "$readme"
+assert_contains "README names the current implementation run" \
+    "33245460710" "$readme"
+assert_contains "README links the current implementation run" \
+    "actions/runs/33245460710" "$readme"
 assert_not_contains "README removes the pre-green systemd claim" \
     "No real systemd install lifecycle has completed yet" "$readme"
 assert_not_contains "README no longer claims CI has not been run" \

@@ -371,13 +371,11 @@ at commit `df6885c`, **45 of 45 jobs passed**:
   bootstrapping the build and runtime dependencies from the clean images.
 
 > **Evidence.** The 45/45 run recorded above evidences the pre-bilingual build.
-> The bilingual implementation is itself CI-green: run
-> [`33210744896`](https://github.com/91sexboy/One-click-socks5-proxy-setup/actions/runs/33210744896)
-> at commit `2492ea8` completed 45/45 with the bilingual selector, password-once
-> flow and public-IPv4 card in place, including the Chinese-default, invalid-
-> retry and explicit-English selector paths across the seven real lifecycle
-> cells (each path in at least one cell; the paths are distributed, not
-> per-cell).
+> The current implementation is CI-green: run
+> [`33245460710`](https://github.com/91sexboy/One-click-socks5-proxy-setup/actions/runs/33245460710)
+> at commit `941907b` completed 45/45 with the audited bilingual selector, password-once flow,
+> public-IPv4 card, portable OpenRC listener check, and exact 45-job lifecycle workflow. The
+> evidence-only documentation run for the final published state is recorded below when complete.
 
 Every supported OS family therefore has a real
 install → active/listening → restart → uninstall → cleanliness lifecycle, and
