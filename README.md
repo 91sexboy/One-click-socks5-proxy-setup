@@ -392,14 +392,12 @@ at commit `df6885c`, **45 of 45 jobs passed**:
   bootstrapping the build and runtime dependencies from the clean images.
 
 > **Evidence.** The 45/45 run recorded above evidences the pre-bilingual build.
-> The last published bilingual implementation is CI-green: run
-> [`33245460710`](https://github.com/91sexboy/One-click-socks5-proxy-setup/actions/runs/33245460710)
-> at commit `941907b` completed 45/45, and its evidence-only public-main run
-> [`33246222640`](https://github.com/91sexboy/One-click-socks5-proxy-setup/actions/runs/33246222640)
-> at commit `8ba2af2` also passed **45 of 45 jobs**. The Round 17 candidate changes production and CI
-> behavior and has not yet run in CI; those historical runs must not be cited as proof for the
-> candidate. Fresh implementation and evidence-only run IDs replace this paragraph only after both
-> reach 45/45.
+> The Round 17 implementation is CI-green: run
+> [`33281392984`](https://github.com/91sexboy/One-click-socks5-proxy-setup/actions/runs/33281392984)
+> at commit `3b58e19` passed **45 of 45 jobs**, including the new owner/account/secret-sink audit,
+> exact-address listener proof and real install-twice cell. The evidence-only documentation commit
+> that records this run must also reach 45/45 before the candidate can be closed and tagged. Runs
+> `33245460710` / `33246222640` remain historical evidence for the previous bilingual state.
 
 Every supported OS family therefore has a real
 install → active/listening → restart → uninstall → cleanliness lifecycle, and

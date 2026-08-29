@@ -295,23 +295,20 @@ assert_contains "README records the fully green CI checkpoint" \
     "45 of 45 jobs passed" "$readme"
 assert_contains "README names the historical baseline run" \
     "33174398814" "$readme"
-assert_contains "README names the current implementation run" \
+assert_contains "README names the previous bilingual implementation run" \
     "33245460710" "$readme"
-assert_contains "README links the current implementation run" \
-    "actions/runs/33245460710" "$readme"
-# The evidence-only run for the published state is the newest link in the chain.
-# It was claimed in SPEC and the task docs while no test held it, so a doc edit
-# could silently drop the only pointer to what is actually published.
-assert_contains "README names the published evidence-only run" \
+assert_contains "README names the previous bilingual evidence run" \
     "33246222640" "$readme"
-assert_contains "README links the published evidence-only run" \
-    "actions/runs/33246222640" "$readme"
+assert_contains "README names the Round 17 implementation run" \
+    "33281392984" "$readme"
+assert_contains "README links the Round 17 implementation run" \
+    "actions/runs/33281392984" "$readme"
+assert_contains "README records the Round 17 implementation commit" \
+    "3b58e19" "$readme"
+assert_contains "README requires the evidence-only run before tagging" \
+    "must also reach 45/45 before the candidate" "$readme"
 assert_not_contains "README no longer defers the old evidence-only run" \
     "is recorded below when complete" "$readme"
-assert_contains "README says the Round 17 candidate still needs CI" \
-    "has not yet run in CI" "$readme"
-assert_contains "README refuses to reuse historical evidence for changed code" \
-    "must not be cited as proof" "$readme"
 assert_not_contains "README removes the pre-green systemd claim" \
     "No real systemd install lifecycle has completed yet" "$readme"
 assert_not_contains "README no longer claims CI has not been run" \
@@ -333,15 +330,14 @@ gold=$(cat "$R/tests/golden/openrc-init")
 # asserted in SPEC and the task docs while no test held it, so a doc edit could
 # silently drop the only pointer to what is actually published -- and SPEC
 # simultaneously claimed FROZEN in its header and "remains pending" in §18.
-assert_contains "SPEC names the published evidence-only run" "33246222640" "$spec"
-assert_contains "SPEC marks the changed candidate as awaiting fresh CI" \
-    "ROUND 17 IMPLEMENTATION AWAITING FRESH CI" "$spec"
-assert_contains "SPEC requires two fresh candidate runs" \
-    "candidate awaits two fresh 45/45 runs" "$spec"
-assert_not_contains "SPEC does not still call the old second run pending" \
-    "A second 45/45 run for the evidence-only documentation" "$spec"
-assert_not_contains "SPEC does not still call itself un-re-frozen" \
-    "this spec is not" "$spec"
+assert_contains "SPEC retains the previous published evidence run" "33246222640" "$spec"
+assert_contains "SPEC names the Round 17 implementation run" "33281392984" "$spec"
+assert_contains "SPEC records the full Round 17 implementation commit" \
+    "3b58e194887bf91a06b789353c06033b70c49c59" "$spec"
+assert_contains "SPEC marks implementation green and evidence awaiting" \
+    "ROUND 17 IMPLEMENTATION CI GREEN / EVIDENCE RUN AWAITING" "$spec"
+assert_contains "SPEC explains the closure run needed to pin the evidence ID" \
+    "one final closure commit" "$spec"
 
 # Whatever the golden script does, the SPEC must agree. A SPEC line that
 # explicitly NEGATES a directive ("`need net` is deliberately not used") is

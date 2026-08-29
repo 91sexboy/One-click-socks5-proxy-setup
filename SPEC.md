@@ -1,13 +1,11 @@
 # Spec: socks5.sh — one-click SOCKS5 proxy installer
 
-> **Status: FROZEN CONTRACT / ROUND 17 IMPLEMENTATION AWAITING FRESH CI.** The last published
-> implementation (`941907b6ca0f6e96664fd9d088eb12fc5fb0c647`) and its evidence-only public-main
-> commit (`8ba2af2792c0c76cafe4eaeeda7babf215677c6c`) passed runs `33245460710` and
-> `33246222640`, each 45/45. Those runs are historical evidence for that byte-identical published
-> product, **not** evidence for the current Round 17 working tree. Round 17 changes production and CI
-> behavior and therefore requires a fresh implementation run plus a fresh evidence-only run before
-> this status can return to implementation-verified. The protocol/auth/ACL/firewall boundaries remain
-> frozen.
+> **Status: FROZEN CONTRACT / ROUND 17 IMPLEMENTATION CI GREEN / EVIDENCE RUN AWAITING.**
+> Implementation commit `3b58e194887bf91a06b789353c06033b70c49c59` passed run `33281392984`
+> with 45/45 jobs. The separate evidence-only commit that records that result must also pass 45/45,
+> followed by a closure run after its ID is pinned, before this status returns to fully verified and
+> tag `v1.0.0` is published. Runs `33245460710` / `33246222640` remain historical evidence for the
+> previous bilingual state. The protocol/auth/ACL/firewall boundaries remain frozen.
 
 ## 1. Objective
 A single-file POSIX shell script (`socks5.sh`) that interactively installs, verifies, and manages a
@@ -469,9 +467,10 @@ example any SOCKS4-family protocol.
     Enter-generated port/username/password continue using the existing secure generators.
 16. Install and `show` render one exact URI using one resolved IPv4. Public lookup failure is
     nonfatal and yields exactly one localized local/placeholder warning; lookup receives no secret.
-17. The Round 17 implementation commit passes 45/45, then a separate evidence-only commit recording
-    that run also passes 45/45. Runs `33245460710` and `33246222640` remain historical proof for the
-    last published bilingual state and cannot satisfy this criterion for changed production/CI code.
+17. Round 17 implementation commit `3b58e194887bf91a06b789353c06033b70c49c59` passed run
+    `33281392984` with 45/45 jobs. A separate evidence-only commit records that result and must pass
+    45/45; because a commit cannot contain the ID of the run it triggers, one final closure commit
+    then pins the evidence-run ID and its own reachable-main run must also pass 45/45.
 
 ## 16. Non-goals (v1)
 Non-interactive install; `reload`; `reconfigure`; BIND; UDP ASSOCIATE; SOCKS4/4a/4.5 (permanently out
@@ -513,23 +512,21 @@ IPv6-only listeners; log rotation; RHEL/Rocky/Alma.
 
 ## 18. Residual risks and settled decisions
 
-**Verification status (2026-08-29).** The pre-bilingual baseline run `33174398814` at `df6885c`
-completed 45/45 and remains historical. The last published bilingual implementation commit
-`941907b6ca0f6e96664fd9d088eb12fc5fb0c647` completed run `33245460710` with **45/45 green**:
+**Verification status (2026-08-29).** Round 17 implementation commit
+`3b58e194887bf91a06b789353c06033b70c49c59` passed run `33281392984` with **45/45 green**:
 
-- 16 build cells and 16 protocol cells covered the §3 matrix versions on amd64 and arm64;
-- 3 isolated ACL-resolution cells proved hostname targets could not bypass the destination denies;
-- 2 native systemd lifecycle cells, 2 OpenRC lifecycle cells and 3 containerized distro-systemd
-  lifecycle cells covered the seven real service lifecycles;
-- lint, two unit cells, all structural release gates and all four Python syntax checks passed.
+- all 16 build and 16 protocol cells passed on amd64/arm64;
+- all 3 ACL-resolution cells passed;
+- all 7 real systemd/OpenRC lifecycle cells passed, including the new owner/mode, account,
+  secret-sink, exact-address, logger-path and install-twice assertions;
+- lint, two unit cells, structural release gates and all Python syntax checks passed.
 
-Its evidence-only commit `8ba2af2792c0c76cafe4eaeeda7babf215677c6c` then passed run
-`33246222640` with 45/45. **Round 17 changes `socks5.sh`, tests and the lifecycle workflow, so those
-runs do not verify the candidate.** The candidate awaits two fresh 45/45 runs (§15.17); record them
-here and restore implementation-verified status only after both exist. Environmental risks remain:
-package repositories, DNS and the fixed HTTPS self-test require egress; cloud images may differ from
-the tested base images; and the pinned 3proxy 0.9 branch has no published maintenance window, so the
-operator still owns updates (§17).
+The evidence-only commit recording that implementation result and the closure commit pinning the
+subsequent evidence-run ID still need green runs (§15.17). Until then `v1.0.0` remains a candidate.
+Runs `33245460710` / `33246222640` remain historical evidence for the previous bilingual state.
+Environmental risks remain: package repositories, DNS and the fixed HTTPS self-test require egress;
+cloud images may differ from the tested base images; and the pinned 3proxy 0.9 branch has no
+published maintenance window, so the operator still owns updates (§17).
 
 **Decided:**
 - Publishing target: `github.com/91sexboy/One-click-socks5-proxy-setup`; the README raw URL is
