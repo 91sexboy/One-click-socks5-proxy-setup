@@ -42,6 +42,8 @@ S5_USER_MAX=32
 # curl's CURLE_PROXY. The only exit status that proves a SOCKS handshake was
 # refused by the proxy rather than failing for an unrelated reason.
 S5_CURL_PROXY_ERR=97
+# curl's CURLE_HTTP_RETURNED_ERROR, emitted only when --fail is active.
+S5_CURL_HTTP_ERR=22
 
 # Exit codes
 EX_OK=0
@@ -390,11 +392,6 @@ s5_say() {
 #   * arity/locale failures print the key and the counts ONLY -- never
 #     argument values, which may carry secrets;
 #   * _s5_i18n_* scratch names are reserved for this section.
-#
-# MIGRATION STAGING: the language selector is NOT wired into s5_main yet.
-# Normal runtime stays coherently English (the default below); tests set
-# S5_LANG directly. The selector is activated only after every message
-# domain has been migrated and the untranslated-literal audit reaches zero.
 # ---------------------------------------------------------------------------
 unset S5_LANG _s5_i18n_text
 S5_LANG=en
@@ -783,6 +780,15 @@ s5_msg() {
         *) s5_msg_locale_error; return 1 ;;
         esac
         ;;
+    # @s5-msg cmd.already_installed 1
+    cmd.already_installed)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error cmd.already_installed 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '%s 已安装；无需重复操作' "${1}" ;;
+        en) printf '%s is already installed; nothing to do' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
     # @s5-msg cmd.uninstall.nothing 1
     cmd.uninstall.nothing)
         [ "$#" -eq 1 ] || { s5_msg_contract_error cmd.uninstall.nothing 1 "$#"; return 1; }
@@ -1000,12 +1006,12 @@ s5_msg() {
         *) s5_msg_locale_error; return 1 ;;
         esac
         ;;
-    # @s5-msg collision.remove_or_rename 0
+    # @s5-msg collision.remove_or_rename 1
     collision.remove_or_rename)
-        [ "$#" -eq 0 ] || { s5_msg_contract_error collision.remove_or_rename 0 "$#"; return 1; }
+        [ "$#" -eq 1 ] || { s5_msg_contract_error collision.remove_or_rename 1 "$#"; return 1; }
         case "$S5_LANG" in
-        zh) printf '请删除或重命名它们，或' ;;
-        en) printf 'Remove or rename them, or' ;;
+        zh) printf '请删除或重命名它们，或%s，然后重试。' "${1}" ;;
+        en) printf 'Remove or rename them, or %s, then retry.' "${1}" ;;
         *) s5_msg_locale_error; return 1 ;;
         esac
         ;;
@@ -1199,6 +1205,69 @@ s5_msg() {
         *) s5_msg_locale_error; return 1 ;;
         esac
         ;;
+    # @s5-msg status.heading 1
+    status.heading)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error status.heading 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '%s 状态' "${1}" ;;
+        en) printf '%s status' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg status.service_running 0
+    status.service_running)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error status.service_running 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '运行中' ;;
+        en) printf 'running' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg status.service_not_running 0
+    status.service_not_running)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error status.service_not_running 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '未运行' ;;
+        en) printf 'not running' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg status.service_unverified 0
+    status.service_unverified)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error status.service_unverified 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '状态未验证' ;;
+        en) printf 'state not verified' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg status.listening 2
+    status.listening)
+        [ "$#" -eq 2 ] || { s5_msg_contract_error status.listening 2 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '监听于 %s:%s' "${1}" "${2}" ;;
+        en) printf 'listening on %s:%s' "${1}" "${2}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg status.not_listening 1
+    status.not_listening)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error status.not_listening 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '未监听端口 %s' "${1}" ;;
+        en) printf 'NOT listening on port %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg status.listen_unverified 1
+    status.listen_unverified)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error status.listen_unverified 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '%s（监听状态未验证：未找到 ss 或 netstat）' "${1}" ;;
+        en) printf '%s (listen state not verified: neither ss nor netstat found)' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
     # @s5-msg status.label_service 0
     status.label_service)
         [ "$#" -eq 0 ] || { s5_msg_contract_error status.label_service 0 "$#"; return 1; }
@@ -1232,6 +1301,15 @@ s5_msg() {
         case "$S5_LANG" in
         zh) printf '  引擎     ：' ;;
         en) printf '  engine    : ' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg status.engine_value 2
+    status.engine_value)
+        [ "$#" -eq 2 ] || { s5_msg_contract_error status.engine_value 2 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '3proxy %s（提交 %s）' "${1}" "${2}" ;;
+        en) printf '3proxy %s (commit %s)' "${1}" "${2}" ;;
         *) s5_msg_locale_error; return 1 ;;
         esac
         ;;
@@ -1380,6 +1458,15 @@ s5_msg() {
         *) s5_msg_locale_error; return 1 ;;
         esac
         ;;
+    # @s5-msg rollback.retry_uninstall 1
+    rollback.retry_uninstall)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error rollback.retry_uninstall 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '解决上述问题后，%s' "${1}" ;;
+        en) printf '%s once the problem above is resolved' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
     # @s5-msg rollback.state_dir_foreign 1
     rollback.state_dir_foreign)
         [ "$#" -eq 1 ] || { s5_msg_contract_error rollback.state_dir_foreign 1 "$#"; return 1; }
@@ -1521,6 +1608,24 @@ s5_msg() {
         case "$S5_LANG" in
         zh) printf '%s 中的用户名无效；拒绝显示' "${1}" ;;
         en) printf 'the username in %s is not valid; refusing to display it' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg show.credential_line_count 1
+    show.credential_line_count)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error show.credential_line_count 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '%s 必须恰好包含一行凭据' "${1}" ;;
+        en) printf '%s must contain exactly one credential line' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg show.credential_format 1
+    show.credential_format)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error show.credential_format 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '%s 不符合预期的 user:CL:password 格式' "${1}" ;;
+        en) printf '%s is not in the expected user:CL:password form' "${1}" ;;
         *) s5_msg_locale_error; return 1 ;;
         esac
         ;;
@@ -1982,6 +2087,15 @@ s5_msg() {
         case "$S5_LANG" in
         zh) printf '  原因：此服务器没有出站网络访问。' ;;
         en) printf '  Cause: this server has no outbound network access.' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg network.cause_external_service 0
+    network.cause_external_service)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error network.cause_external_service 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '  原因：固定的外部自检服务返回了 HTTP 错误；这不能证明代理本身有故障。' ;;
+        en) printf '  Cause: the fixed external self-test service returned an HTTP error; this does not prove the proxy itself is faulty.' ;;
         *) s5_msg_locale_error; return 1 ;;
         esac
         ;;
@@ -3398,6 +3512,7 @@ s5_install_traps() {
 S5_OSRELEASE=${S5_OSRELEASE:-/etc/os-release}
 S5_OS_ID=''
 S5_OS_VERSION_ID=''
+S5_OS_ID_LIKE=''
 S5_OS_FAMILY=''
 S5_PKGMGR=''
 S5_INIT=''
@@ -3460,6 +3575,12 @@ s5_map_arch() {
 # compatible, and then refuse.
 s5_detect_platform() {
     _osf=${S5_OSRELEASE:-/etc/os-release}
+    S5_OS_ID=''
+    S5_OS_VERSION_ID=''
+    S5_OS_ID_LIKE=''
+    S5_OS_FAMILY=''
+    S5_PKGMGR=''
+    S5_INIT=''
     if [ ! -r "$_osf" ]; then
         s5_err_msg detect.cannot_read_osrelease "$_osf"
         return "$EX_UNSUPPORTED"
@@ -3467,6 +3588,7 @@ s5_detect_platform() {
 
     S5_OS_ID=$(s5_osrel_get "$_osf" ID)
     S5_OS_VERSION_ID=$(s5_osrel_get "$_osf" VERSION_ID)
+    S5_OS_ID_LIKE=$(s5_osrel_get "$_osf" ID_LIKE)
 
     case "$S5_OS_ID" in
     ubuntu)
@@ -3502,6 +3624,13 @@ s5_detect_platform() {
         fi
         ;;
     rhel | rocky | almalinux)
+        s5_err_msg detect.likely_compatible "$S5_OS_ID" "$S5_OS_VERSION_ID"
+        return "$EX_UNSUPPORTED"
+        ;;
+    esac
+
+    case " $S5_OS_ID_LIKE " in
+    *" rhel "*)
         s5_err_msg detect.likely_compatible "$S5_OS_ID" "$S5_OS_VERSION_ID"
         return "$EX_UNSUPPORTED"
         ;;
@@ -3786,11 +3915,14 @@ s5_err_no_probe() {
     s5_err_msg network.no_probe_hint
 }
 
-# s5_port_free <port> : true when nothing is listening. Never binds.
+# s5_port_free <port> [address] : true when nothing is listening. Never binds.
+# With an address, readiness/status require an exact Local Address:Port match.
+# Without one, prompt-time collision detection rejects the port on any address.
 # Fail-closed: with no probe available we report "not free".
 s5_port_free() {
+    _pfaddr=${2:-}
     if [ "${S5_TEST_MODE:-0}" = "1" ] && [ -n "${S5_PORT_PROBE:-}" ]; then
-        "$S5_PORT_PROBE" "$1"
+        "$S5_PORT_PROBE" "$1" "$_pfaddr"
         return $?
     fi
     if ! _pfc=$(s5_probe_cmd); then
@@ -3805,6 +3937,13 @@ s5_port_free() {
     if [ "$_pfr" -ne 0 ]; then
         s5_warn_msg network.port_probe_cmd_failed "$1" "$_pfc"
         return 2
+    fi
+    if [ -n "$_pfaddr" ]; then
+        if printf '%s\n' "$_pfout" |
+            awk -v endpoint="$_pfaddr:$1" '$4 == endpoint { found=1 } END { exit found ? 0 : 1 }'; then
+            return 1
+        fi
+        return 0
     fi
     if printf '%s\n' "$_pfout" | grep -q "[:.]$1[[:space:]]"; then
         return 1
@@ -4528,7 +4667,6 @@ s5_make_workdir() {
 s5_rm_workdir() {
     case "${1:-}" in
     '' | '/')
-        _brde=${1:-<empty>}
         s5_warn_msg build.rm_refuse_empty
         return 1
         ;;
@@ -4904,7 +5042,7 @@ s5_account_create() {
             return 1
             ;;
         esac
-        if ! adduser -S -D -H -G "$S5_SERVICE_GROUP" -s "$_nl" "$S5_SERVICE_USER"; then
+        if ! adduser -S -D -H -h /nonexistent -G "$S5_SERVICE_GROUP" -s "$_nl" "$S5_SERVICE_USER"; then
             s5_err_msg account.user_create_failed "$S5_SERVICE_USER"
             return 1
         fi
@@ -5301,6 +5439,7 @@ s5_curl_config() {
     printf 'max-time = 20\n'
     printf 'silent\n'
     printf 'show-error\n'
+    printf 'fail\n'
 }
 
 s5_selftest_good() {
@@ -5333,7 +5472,7 @@ s5_selftest_bad() {
 }
 
 s5_direct_egress_ok() {
-    curl -sS -o /dev/null --max-time 15 "$S5_SELFTEST_URL" >/dev/null 2>&1
+    curl -fsS -o /dev/null --max-time 15 "$S5_SELFTEST_URL" >/dev/null 2>&1
 }
 
 s5_dns_ok() {
@@ -5345,15 +5484,21 @@ s5_dns_ok() {
 }
 
 s5_diagnose_failure() {
-    if ! s5_direct_egress_ok; then
-        if ! s5_dns_ok; then
-            printf 'dns-failure'
-            return 0
-        fi
-        printf 'no-egress'
+    if s5_direct_egress_ok; then
+        printf 'proxy-failure'
+        return 0
+    else
+        _sdfr=$?
+    fi
+    if ! s5_dns_ok; then
+        printf 'dns-failure'
         return 0
     fi
-    printf 'proxy-failure'
+    if [ "$_sdfr" -eq "$S5_CURL_HTTP_ERR" ]; then
+        printf 'external-service-failure'
+        return 0
+    fi
+    printf 'no-egress'
     return 0
 }
 
@@ -5361,6 +5506,7 @@ s5_explain_failure() {
     case "$1" in
     dns-failure) s5_say_msg network.cause_dns ;;
     no-egress) s5_say_msg network.cause_no_egress ;;
+    external-service-failure) s5_say_msg network.cause_external_service ;;
     proxy-failure)
         s5_say_msg network.cause_proxy_refused
         s5_say_msg network.cause_check_sgp
@@ -5444,7 +5590,6 @@ _s5_openrc_start() {
     # inactive gets a bounded retry for the lock-contention shape (the third
     # CI run showed Alpine 3.20's re-query answering stopped there); anything
     # else fails closed on the first attempt.
-    _oost=0
     _oon=0
     while [ "$_oon" -le 3 ]; do
         rc-service "$S5_PROJECT" "$1"
@@ -5552,7 +5697,7 @@ s5_port_listening() {
     if ! s5_port_probe_available; then
         return 2
     fi
-    s5_port_free "$S5_PORT"
+    s5_port_free "$S5_PORT" "$S5_LISTEN"
     _spl=$?
     case "$_spl" in
     0) return 1 ;;
@@ -5661,9 +5806,8 @@ s5_collision_check() {
     if [ "$_ccbad" -ne 0 ]; then
         s5_say_msg collision.refuse_overwrite
         _crh=$(s5_cmd_hint uninstall)
-        _crm=$(s5_msg collision.remove_or_rename)
-        s5_say "$_crm $_crh, then retry."
-        _crh=''; _crm='' 
+        s5_say_msg collision.remove_or_rename "$_crh"
+        _crh=''
         return 1
     fi
     return 0
@@ -5979,7 +6123,7 @@ s5_rollback() {
     fi
     if ! s5_teardown; then
         s5_err_msg rollback.incomplete "$S5_STATE"
-        s5_err "$(s5_cmd_hint uninstall) once the problem above is resolved"
+        s5_err_msg rollback.retry_uninstall "$(s5_cmd_hint uninstall)"
         return 1
     fi
     _rbstbuf=$S5_STATE_BUF
@@ -6067,7 +6211,6 @@ s5_ipv4_is_public() {
     _ipo2=${_ipore%%.*}
     _ipore=${_ipore#*.}
     _ipo3=${_ipore%%.*}
-    _ipo4=${_ipore#*.}
     [ "$_ipo1" -eq 0 ] && return 1
     [ "$_ipo1" -eq 10 ] && return 1
     if [ "$_ipo1" -eq 100 ]; then
@@ -6262,7 +6405,6 @@ s5_render_card() {
     # One resolution per card: the Host field and the URI must agree, and the
     # lookup happens only when a card is actually rendered.
     s5_resolve_card_address
-    _psfw="not modified by this script"
     s5_say ""
     s5_say_msg card.ready_header
     _cvs=$(s5_msg card.label_server); s5_say "$_cvs$S5_CARD_ADDR"
@@ -6453,7 +6595,7 @@ s5_cmd_install() {
         return "$_cipc"
     fi
     if s5_is_installed; then
-        s5_log "$S5_PROJECT is already installed; nothing to do"
+        s5_log_msg cmd.already_installed "$S5_PROJECT"
         s5_cmd_status
         return 0
     fi
@@ -6514,14 +6656,14 @@ s5_load_credentials() {
         return 1
     fi
     if [ "$(grep -c '' "$S5_USERSCFG")" -ne 1 ]; then
-        s5_err "$S5_USERSCFG must contain exactly one credential line"
+        s5_err_msg show.credential_line_count "$S5_USERSCFG"
         return 1
     fi
     _lcline=$(head -n 1 "$S5_USERSCFG")
     case "$_lcline" in
     *:CL:*) ;;
     *)
-        s5_err "$S5_USERSCFG is not in the expected user:CL:password form"
+        s5_err_msg show.credential_format "$S5_USERSCFG"
         return 1
         ;;
     esac
@@ -6571,30 +6713,33 @@ s5_cmd_status() {
     fi
     S5_INIT=$(s5_state_get init)
     S5_OS_FAMILY=$(s5_state_get family)
+    S5_LISTEN=$(s5_state_get listen)
     _stport=$(s5_state_get port)
     S5_PORT=$_stport
     s5_service_active
     _stsr=$?
     case "$_stsr" in
-    0) _stsvc=running ;;
-    1) _stsvc="not running" ;;
-    *) _stsvc="state not verified" ;;
+    0) _stsvc=$(s5_msg status.service_running) ;;
+    1) _stsvc=$(s5_msg status.service_not_running) ;;
+    *) _stsvc=$(s5_msg status.service_unverified) ;;
     esac
     s5_port_listening
     _stlp=$?
     if [ "$_stlp" -eq 0 ]; then
-        _stlisten="listening on $(s5_state_get listen):$_stport"
+        _stlisten=$(s5_msg status.listening "$(s5_state_get listen)" "$_stport")
     elif [ "$_stlp" -eq 1 ]; then
-        _stlisten="NOT listening on port $_stport"
+        _stlisten=$(s5_msg status.not_listening "$_stport")
     else
         # Being unable to look is not evidence either way, so claim neither.
-        _stlisten="$_stport (listen state not verified: neither ss nor netstat found)"
+        _stlisten=$(s5_msg status.listen_unverified "$_stport")
     fi
-    s5_say "$S5_PROJECT status"
+    s5_say_msg status.heading "$S5_PROJECT"
     _sts=$(s5_msg status.label_service); s5_say "$_sts$_stsvc ($S5_INIT)"
     _stp=$(s5_msg status.label_port); s5_say "$_stp$_stlisten"
     _stu=$(s5_msg status.label_username); s5_say "$_stu$(s5_state_get username)"
-    _ste=$(s5_msg status.label_engine); s5_say "${_ste}3proxy $(s5_state_get tag) (commit $(s5_state_get commit))"
+    _ste=$(s5_msg status.label_engine)
+    _sev=$(s5_msg status.engine_value "$(s5_state_get tag)" "$(s5_state_get commit)")
+    s5_say "$_ste$_sev"
     _sto=$(s5_msg status.label_origin); s5_say "$_sto$(s5_state_get origin)"
     _stb=$(s5_msg status.label_binary); s5_say "$_stb$S5_BIN"
     _stf=$(s5_msg status.label_firewall); _stfw=$(s5_msg card.firewall_untouched); s5_say "$_stf$_stfw"

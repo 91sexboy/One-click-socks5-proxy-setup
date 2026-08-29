@@ -1,12 +1,13 @@
 # Spec: socks5.sh — one-click SOCKS5 proxy installer
 
-> **Status: IMPLEMENTED — current implementation CI-green; evidence-only documentation run pending.**
-> The Round 16 operator-experience contract is implemented and locally verified: per-invocation
-> Chinese/English selection, default-yes install confirmation, one-read custom passwords, a
-> public-IPv4-first credential card with strict validation, and the separate stock-Alpine entry
-> command. The current implementation commit passed the first fresh 45/45 workflow run;
-> re-freeze after the evidence-only documentation commit also passes 45/45. The 3proxy engine,
-> SOCKS5/auth/ACL/state/service/firewall/security contracts were never touched.
+> **Status: FROZEN CONTRACT / ROUND 17 IMPLEMENTATION AWAITING FRESH CI.** The last published
+> implementation (`941907b6ca0f6e96664fd9d088eb12fc5fb0c647`) and its evidence-only public-main
+> commit (`8ba2af2792c0c76cafe4eaeeda7babf215677c6c`) passed runs `33245460710` and
+> `33246222640`, each 45/45. Those runs are historical evidence for that byte-identical published
+> product, **not** evidence for the current Round 17 working tree. Round 17 changes production and CI
+> behavior and therefore requires a fresh implementation run plus a fresh evidence-only run before
+> this status can return to implementation-verified. The protocol/auth/ACL/firewall boundaries remain
+> frozen.
 
 ## 1. Objective
 A single-file POSIX shell script (`socks5.sh`) that interactively installs, verifies, and manages a
@@ -40,17 +41,28 @@ only — it never offers or documents a SOCKS4-family service.
 - The self-test target is fixed at `https://example.com/` and is **not** operator-overridable.
 
 ## 3. Supported targets
-| OS | `/etc/os-release` | Pkg mgr | Init |
-|---|---|---|---|
-| Ubuntu 22.04, 24.04 | `ID=ubuntu` | apt | systemd |
-| Debian 12, 13 | `ID=debian` | apt | systemd |
-| Alpine 3.20, 3.24 | `ID=alpine` | apk | OpenRC |
-| CentOS Stream 9, 10 | `ID=centos` | dnf, yum fallback | systemd |
+| OS | `/etc/os-release` | Pkg mgr | Init | Minimum version |
+|---|---|---|---|---|
+| Ubuntu | `ID=ubuntu` | apt | systemd | 22.04 or newer |
+| Debian | `ID=debian` | apt | systemd | 12 or newer |
+| Alpine | `ID=alpine` | apk | OpenRC | 3.20 or newer |
+| CentOS Stream | `ID=centos` | dnf, yum fallback | systemd | 9 or newer |
+
+**Version acceptance is a floor, not an enumeration.** A recognized `ID` at or above its minimum
+version installs. The CI matrix proves Ubuntu 22.04/24.04, Debian 12/13, Alpine 3.20/3.24 and
+CentOS Stream 9/10 on both architectures; a release **newer** than those installs on the same code
+path with **no CI evidence behind it**. That is deliberate — refusing every future distro release
+until a new version ships would turn each release into an outage for new users, which is the worse
+failure — but it is untested surface, and the user-facing message advertises the floor form
+("Ubuntu 22.04+, Debian 12+, Alpine 3.20+, CentOS Stream 9+") so nobody is told a newer release was
+verified. Below the floor → hard error.
 
 Arch: `x86_64`/`amd64` and `aarch64`/`arm64` only. Anything else → hard error, never guess.
-**CentOS detection is exact.** Only `ID=centos` (Stream 9/10) installs. RHEL, Rocky, and AlmaLinux
-are recognized via `ID_LIKE=rhel` and told they are *likely compatible*, but v1 **does not install on
-them**. `ID_LIKE` alone never authorizes an install. Any other OS/version → hard error naming the
+**CentOS detection is exact.** Only `ID=centos` (Stream 9 or newer) installs. RHEL, Rocky, and
+AlmaLinux are recognized via `ID_LIKE=rhel` and told they are *likely compatible*, but v1 **does not
+install on
+them**. `ID_LIKE` alone never authorizes an install. Any other OS, or a version below the floor →
+hard error naming the
 detected `ID` and `VERSION_ID`. **EPEL is not required** — `gcc`/`make`/`git` are in base repos.
 
 ## 4. Namespace and permissions
@@ -95,6 +107,10 @@ dispatching a command. Language is neither inherited nor exported, and is never 
 config, or a file. `status`, `show`, `restart`, `uninstall`, `help`, invalid commands and the
 no-argument menu all select again in each new process.
 
+**Every interactive prompt in the script — the selector, the install confirmation, and the three
+value prompts — re-prompts on invalid input at most 5 times, then gives up non-zero.** An unbounded
+retry loop on a stdin that can never satisfy the prompt would hang the install rather than fail it.
+
 **Step 1 — one install confirmation.** After non-mutating prechecks, the selected language shows
 the detected OS/package-manager/init, exact §8 package list and §7 security warning. The sole
 install question ends in `[Y/n]`: Enter/y/Y/yes continues, n/N/no exits, invalid input re-prompts,
@@ -108,8 +124,15 @@ installed when neither `ss` nor `netstat` is present. No secret is collected bef
 **Step 3 — the three values.** Each accepts Enter for a generated value:
 
 1. **Port** — Enter → random `20000–60000`. Custom must be `1024–65535`. Reject if already
-   listening (`ss`, falling back to `netstat`, then a bind probe).
-2. **Username** — Enter → random. Charset `[A-Za-z0-9_-]`, 3–32 chars. Anything else rejected.
+   listening, observed with `ss`, falling back to `netstat`. If neither observer exists the port is
+   **refused fail-closed** rather than assumed free: "cannot determine whether the port is in use" is
+   not the same as "the port is free". There is deliberately **no bind probe** — binding a port to
+   test it is the one thing this script must never do outside its own install step.
+2. **Username** — Enter → random. Validation charset `[A-Za-z0-9_-]`, 3–32 chars; anything else
+   rejected. *Generated* usernames deliberately use the narrower `[a-z0-9]` with an alphabetic first
+   character and a fixed length of 12: generation stays inside the safest subset of what validation
+   accepts, avoiding case-collision and quoting surprises, while a user may still supply any valid
+   name.
 3. **Password** — Enter → generated, **exactly 32 characters**. Typed input is not echoed
    (`stty -echo`) and is read **once**; it is not asked a second time for confirmation. Charset for
    generated and user-supplied passwords alike is **`[A-Za-z0-9._~-]`**, length **12–128**.
@@ -150,7 +173,8 @@ socks -4 -u2 -p<port> -i0.0.0.0
 file order and the first match wins, so a deny placed after the allow would
 never be reached. The terminal `deny *` follows the allow; the `socks` service
 line is last. The static check enforces the count, the presence of each CIDR,
-and the deny-before-allow ordering.
+the deny-before-allow ordering, and that `flush` precedes the first deny — an ACL appended after a
+later `flush` would be silently discarded by the engine.
 
 The nine ranges are this-network, RFC 1918 private space (three blocks), CGNAT,
 loopback, link-local (which covers the `169.254.169.254` cloud-metadata
@@ -232,7 +256,10 @@ strictly safer and removes a prompt.
 
 ## 8. Build procedure
 1. Determine required packages and display them as part of the single §5 confirmation. apt:
-   `git build-essential` · apk: `git build-base musl-dev linux-headers` · dnf: `git gcc make`. Add
+   `git build-essential ca-certificates` · apk: `git build-base musl-dev linux-headers` · dnf:
+   `git gcc make`. The apt list carries `ca-certificates` because a minimal Debian/Ubuntu image can
+   lack a CA bundle, which would fail the HTTPS clone with a certificate error rather than a
+   diagnosable one. Add
    `curl` where absent, and the `ss` provider (`iproute2`, or `iproute` on CentOS Stream) where
    neither `ss` nor `netstat` exists. Installation happens before the port prompt (§5).
 2. `git clone` into `mktemp -d`, then `git checkout <commit>`.
@@ -249,9 +276,15 @@ installed.
 
 ## 9. Service integration
 - **systemd:** `User=socks5proxy`, `Group=socks5proxy`,
-  `ExecStart=<binary> /etc/socks5-manager/3proxy.cfg`, `Restart=on-failure`, plus
-  `NoNewPrivileges=yes`, `ProtectSystem=strict`, `ProtectHome=yes`, `PrivateTmp=yes`. Ports are
-  ≥1024, so no `CAP_NET_BIND_SERVICE`. Logs go to the journal.
+  `ExecStart=<binary> /etc/socks5-manager/3proxy.cfg`, `Restart=on-failure`, `RestartSec=5s`, plus
+  `NoNewPrivileges=yes`, `ProtectSystem=strict`, `ProtectHome=yes`, `PrivateTmp=yes` and the further
+  hardening set `PrivateDevices=yes`, `ProtectKernelTunables=yes`, `ProtectKernelModules=yes`,
+  `ProtectControlGroups=yes`, `LockPersonality=yes`, `SystemCallArchitectures=native`, and an empty
+  `CapabilityBoundingSet=`/`AmbientCapabilities=`. Ports are
+  ≥1024, so no `CAP_NET_BIND_SERVICE` — the empty capability sets make that structural rather than
+  incidental. The unit also carries `Documentation=`, `After=`/`Wants=network-online.target` and
+  `Type=simple`. The rendered unit is pinned byte-for-byte by
+  `tests/golden/socks5-manager.service`, which is the authoritative list. Logs go to the journal.
 - **OpenRC:** `command_user="socks5proxy:socks5proxy"`, `supervisor=supervise-daemon`,
   `depend() { after firewall; use dns logger; }` — `need net` is deliberately **not** used.
   Output goes to syslog through `logger` (`output_logger`/`error_logger`); **no ordinary log
@@ -270,6 +303,13 @@ Stock Alpine's default ash parses `<(...)` before Bash can run, so its one-line 
 
 ```sh
 apk add --no-cache bash wget && bash -c 'bash <(wget -qO- https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-setup/main/socks5.sh)'
+```
+
+A `curl` form of the primary command is documented as an equivalent alternative for hosts that ship
+`curl` but not `wget`:
+
+```sh
+bash <(curl -fsSL https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-setup/main/socks5.sh)
 ```
 
 Under process substitution `$0` is a transient `/dev/fd/*` descriptor: operator-facing messages
@@ -311,8 +351,13 @@ starting the process; this spec makes no such claim. Sequence:
 3. **Start the service.**
 4. **Verify**, each check reported independently: service active
    (`systemctl is-active` / `rc-service status`); the chosen port listening on the configured
-   address; no other proxy port opened by this process; correct credentials proxy a request;
+   address; correct credentials proxy a request;
    **wrong credentials explicitly rejected** — a pass requires that failure.
+   That the engine opens **no proxy port other than the chosen one** is enforced *before* the start,
+   not observed after it: the §6 denylist rejects every additional listener directive and the static
+   check runs before any service is started, so a config able to open a second port cannot reach the
+   engine. There is no runtime socket enumeration, which would depend on `ss`/`netstat` being present
+   and would turn a missing observer into a failed install.
    Every service-state observation is three-valued: active, definitely inactive, or unobservable.
    A failed manager query is never reported as an observed inactive service. Both non-active
    outcomes fail the install; they are simply named correctly.
@@ -384,7 +429,9 @@ relax the test. This gate is not experimental on any cell, Alpine included.
 ## 14. Boundaries
 **Always:** default-deny ACL; `umask 077` before secret writes; record every created resource in
 state; verify the pinned commit; show the pre-install warning; install prerequisites before the port
-prompt.
+prompt. The state file also records provenance and completion — `origin` (always `source-build` in
+v1) and `status` — alongside the created-resource records, because `status` must be able to report
+what was installed without re-deriving it.
 **Ask first (one confirmation):** installing the §8 packages and proceeding with the install.
 Writing anything outside the project namespace is never done at all.
 **Never:** password in argv/env/logs/history; **any firewall functionality at all** — no detect, query, add, delete,
@@ -411,7 +458,9 @@ example any SOCKS4-family protocol.
     rejection cases, BIND, and UDP ASSOCIATE. Any SOCKS4-family success blocks release outright.
 11. No user-facing string, example, or emitted URI mentions SOCKS4, SOCKS4a, or SOCKS4.5.
 12. A real install → verify → uninstall lifecycle passes on Ubuntu, Debian, Alpine and CentOS Stream.
-    No support claim is published for a target whose lifecycle job has not actually run green.
+    The listed matrix versions carry that evidence. Newer releases admitted by the §3 version floors
+    use the same code path but are explicitly **accepted without a claim that CI has verified that
+    exact release**; no document may blur that distinction.
 13. The documented install commands are runnable as written, including the separate stock-Alpine
     bootstrap whose inner string is parsed by Bash rather than ash.
 14. Every invocation selects Chinese/English before dispatch; blank defaults Chinese, invalid input
@@ -420,9 +469,9 @@ example any SOCKS4-family protocol.
     Enter-generated port/username/password continue using the existing secure generators.
 16. Install and `show` render one exact URI using one resolved IPv4. Public lookup failure is
     nonfatal and yields exactly one localized local/placeholder warning; lookup receives no secret.
-17. Implementation commit `941907b6ca0f6e96664fd9d088eb12fc5fb0c647` passed run
-    `33245460710` with 45/45 jobs. A second 45/45 run for the evidence-only documentation
-    commit remains pending; the older runs remain historical pre-bilingual proof.
+17. The Round 17 implementation commit passes 45/45, then a separate evidence-only commit recording
+    that run also passes 45/45. Runs `33245460710` and `33246222640` remain historical proof for the
+    last published bilingual state and cannot satisfy this criterion for changed production/CI code.
 
 ## 16. Non-goals (v1)
 Non-interactive install; `reload`; `reconfigure`; BIND; UDP ASSOCIATE; SOCKS4/4a/4.5 (permanently out
@@ -440,6 +489,9 @@ IPv6-only listeners; log rotation; RHEL/Rocky/Alma.
   Bash executes, document its exact `apk add --no-cache bash wget && bash -c 'bash <(wget …)'`
   one-liner separately. Never use `wget … | sh` (it feeds source into prompt stdin) or a fixed
   `/tmp/socks5.sh` path.
+- Keep the convenient `main` commands but also document an immutable semantic-version tag and the
+  exact SHA-256 of its `socks5.sh`. The README must call it a candidate until two fresh 45/45 runs
+  pass and the tag exists; the tag is created only after the evidence-only run and is never moved.
 - Document the exact `1 中文 / 2 English` selector, Enter=Chinese, invalid retry, per-invocation
   locale, one `[Y/n]` install confirmation, dependencies before values, and one hidden custom
   password read. State that status/show/restart/uninstall/menu and all script-owned output follow
@@ -462,21 +514,22 @@ IPv6-only listeners; log rotation; RHEL/Rocky/Alma.
 ## 18. Residual risks and settled decisions
 
 **Verification status (2026-08-29).** The pre-bilingual baseline run `33174398814` at `df6885c`
-completed 45/45 and remains historical. The current audited implementation commit
+completed 45/45 and remains historical. The last published bilingual implementation commit
 `941907b6ca0f6e96664fd9d088eb12fc5fb0c647` completed run `33245460710` with **45/45 green**:
 
-- 16 build cells and 16 protocol cells cover all §3 OS versions on amd64 and arm64;
-- 3 isolated ACL-resolution cells prove hostname targets cannot bypass the destination denies;
+- 16 build cells and 16 protocol cells covered the §3 matrix versions on amd64 and arm64;
+- 3 isolated ACL-resolution cells proved hostname targets could not bypass the destination denies;
 - 2 native systemd lifecycle cells, 2 OpenRC lifecycle cells and 3 containerized distro-systemd
-  lifecycle cells cover the seven real service lifecycles, including per-cell locale streams,
-  OpenRC restart/listening proof and a no-argument management-menu path;
-- lint, two unit cells, all structural release gates and all four Python syntax checks pass.
+  lifecycle cells covered the seven real service lifecycles;
+- lint, two unit cells, all structural release gates and all four Python syntax checks passed.
 
-This is the first fresh implementation evidence for the audited fixes. The evidence-only
- documentation commit and its final 45/45 run remain pending; until then this spec is not
-re-frozen. Environmental risks remain: package repositories, DNS and the fixed HTTPS self-test
-require egress; cloud images may differ from the tested base images; and the pinned 3proxy 0.9
-branch has no published maintenance window, so the operator still owns updates (§17).
+Its evidence-only commit `8ba2af2792c0c76cafe4eaeeda7babf215677c6c` then passed run
+`33246222640` with 45/45. **Round 17 changes `socks5.sh`, tests and the lifecycle workflow, so those
+runs do not verify the candidate.** The candidate awaits two fresh 45/45 runs (§15.17); record them
+here and restore implementation-verified status only after both exist. Environmental risks remain:
+package repositories, DNS and the fixed HTTPS self-test require egress; cloud images may differ from
+the tested base images; and the pinned 3proxy 0.9 branch has no published maintenance window, so the
+operator still owns updates (§17).
 
 **Decided:**
 - Publishing target: `github.com/91sexboy/One-click-socks5-proxy-setup`; the README raw URL is

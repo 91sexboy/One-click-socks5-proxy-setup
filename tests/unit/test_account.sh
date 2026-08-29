@@ -38,6 +38,8 @@ if s5_account_exists; then t_bad "account should not exist yet"; else t_ok; fi
 t_run s5_account_create
 assert_eq "account created on debian" 0 "$T_STATUS"
 t_assert_called "useradd used" 'useradd'
+t_assert_called "debian account records the no-home path" '-d /nonexistent'
+t_assert_called "debian account uses a nologin shell" '-s /usr/sbin/nologin'
 if s5_account_exists; then t_ok; else t_bad "account should exist after creation"; fi
 if s5_group_exists; then t_ok; else t_bad "group should exist after creation"; fi
 
@@ -58,6 +60,8 @@ assert_eq "nologin path on alpine" "/sbin/nologin" "$(s5_nologin_path)"
 t_run s5_account_create
 assert_eq "account created on alpine" 0 "$T_STATUS"
 t_assert_called "adduser used on alpine" 'adduser'
+t_assert_called "alpine account records the no-home path" '-h /nonexistent'
+t_assert_called "alpine account uses a nologin shell" '-s /sbin/nologin'
 s5env_reset_transcript
 t_run s5_account_remove 1 900 900
 assert_eq "alpine removal succeeds" 0 "$T_STATUS"

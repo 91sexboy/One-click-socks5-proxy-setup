@@ -1,0 +1,4 @@
+NAME="Not RHEL Linux"
+ID=notrhel-linux
+ID_LIKE="notrhel unrelated"
+VERSION_ID="9"

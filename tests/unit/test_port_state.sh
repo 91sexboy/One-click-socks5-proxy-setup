@@ -41,14 +41,14 @@ assert_file_exists "the stub service is active" "$S5_TEST_ROOT/svc_active"
 t_run s5_cmd_status
 assert_eq "status succeeds" 0 "$T_STATUS"
 assert_contains "an observed listener is reported with its address" \
-    "listening on 0.0.0.0:31080" "$T_OUT"
+    "$(s5_msg status.listening 0.0.0.0 31080)" "$T_OUT"
 
 # Stop it: the port becomes observably free.
 rm -f "$S5_TEST_ROOT/svc_active"
 t_run s5_cmd_status
 assert_eq "status succeeds with the service stopped" 0 "$T_STATUS"
-assert_contains "an observed absence is reported as NOT listening" \
-    "NOT listening on port 31080" "$T_OUT"
+assert_contains "an observed absence uses the catalog's not-listening value" \
+    "$(s5_msg status.not_listening 31080)" "$T_OUT"
 
 # ==========================================================================
 # The tri-state contract itself.
@@ -86,7 +86,7 @@ assert_ne "while the service's own port is not free" 0 "$T_STATUS"
 S5_PORT=31080
 t_run s5_cmd_status
 assert_contains "status reports the configured port as listening" \
-    "listening on 0.0.0.0:31080" "$T_OUT"
+    "$(s5_msg status.listening 0.0.0.0 31080)" "$T_OUT"
 rm -f "$S5_TEST_ROOT/svc_active"
 
 # ==========================================================================
@@ -122,8 +122,8 @@ assert_contains "the wait observes the port through the tri-state probe" \
     "s5_port_listening" "$wait_fn"
 assert_contains "and refuses when the listen state cannot be observed" \
     "s5_err_msg service.wait_no_probe" "$wait_fn"
-assert_contains "status reports the unobservable case honestly" \
-    "not verified" "$status_fn"
+assert_contains "status reports the unobservable case through the catalog" \
+    "status.listen_unverified" "$status_fn"
 
 # Drift guard: the availability probe must gate on exactly the same conditions
 # as s5_port_free, or the two can disagree about whether a probe exists.
@@ -184,8 +184,40 @@ S5_PORT=31081
 t_run s5_port_listening
 assert_eq "production: a free port reports 1" 1 "$T_STATUS"
 
+# Prompt-time collision detection remains port-only (a listener on any address
+# occupies the port), but readiness/status must prove the configured address.
+ss() {
+    cat <<'SSOUT'
+State  Recv-Q Send-Q Local Address:Port   Peer Address:Port Process
+LISTEN 0      4096       127.0.0.1:31080        0.0.0.0:*
+SSOUT
+}
+S5_LISTEN=0.0.0.0
+S5_PORT=31080
+t_run s5_port_free 31080
+assert_ne "production: port-only collision sees a listener on another address" 0 "$T_STATUS"
+t_run s5_port_free 31080 0.0.0.0
+assert_eq "production: address-aware probe rejects a same-port address mismatch" 0 "$T_STATUS"
+t_run s5_port_listening
+assert_eq "production: readiness rejects a listener on the wrong address" 1 "$T_STATUS"
+t_run s5_cmd_status
+assert_not_contains "status never prints an address it did not observe" \
+    "$(s5_msg status.listening 0.0.0.0 31080)" "$T_OUT"
+
+# netstat uses the same fourth-field Local Address contract.
+s5_probe_cmd() { printf 'netstat'; return 0; }
+netstat() {
+    cat <<'NETOUT'
+Proto Recv-Q Send-Q Local Address           Foreign Address         State
+tcp        0      0 127.0.0.1:31080         0.0.0.0:*               LISTEN
+NETOUT
+}
+t_run s5_port_free 31080 0.0.0.0
+assert_eq "netstat: address-aware probe rejects a same-port mismatch" 0 "$T_STATUS"
+
 # A probe command that exists but fails is also unobservable; empty output must
 # never be interpreted as proof that the port is free.
+s5_probe_cmd() { printf 'ss'; return 0; }
 ss() { return 1; }
 S5_PORT=31080
 t_run s5_port_free 31080
@@ -218,11 +250,21 @@ assert_eq "and the unobservable path says nothing about being free" "" "$T_OUT"
 t_run s5_cmd_status
 assert_eq "status still succeeds without a probe" 0 "$T_STATUS"
 assert_not_contains "status never claims a listener it could not observe" \
-    "listening on" "$T_OUT"
-assert_contains "status says the listen state was not verified" \
-    "listen state not verified" "$T_OUT"
-assert_contains "and names why" "neither ss nor netstat" "$T_OUT"
+    "$(s5_msg status.listening 0.0.0.0 31080)" "$T_OUT"
+assert_contains "status uses the catalog's unverified listen value" \
+    "$(s5_msg status.listen_unverified 31080)" "$T_OUT"
 assert_not_contains "status does not emit the contradictory port-free warning" \
-    "cannot determine whether port" "$T_OUT"
+    "$(s5_msg network.port_free_unknown 31080)" "$T_OUT"
+
+# The value, not just the label, must follow the per-invocation locale.
+S5_LANG=zh
+t_run s5_cmd_status
+assert_eq "Chinese status succeeds without a probe" 0 "$T_STATUS"
+assert_contains "Chinese status localizes the heading" \
+    "$(s5_msg status.heading "$S5_PROJECT")" "$T_OUT"
+assert_contains "Chinese status localizes the unverified listen value" \
+    "$(s5_msg status.listen_unverified 31080)" "$T_OUT"
+assert_not_contains "Chinese status leaks no old English listen value" \
+    "listen state not verified" "$T_OUT"
 
 t_summary

@@ -377,6 +377,28 @@ jobs:
           sudo sh socks5.sh install <"$SECRETS/answers" >"$SECRETS/install.log" 2>&1 || {
             sed -f "$SECRETS/redact.sed" "$SECRETS/install.log" >&2; exit 1; }
 
+          # One real host repeats install in place. The second invocation must
+          # take the installed/no-op path: no new account or service, no second
+          # credential, and no credential rotation. This is a second invocation
+          # inside an existing 45-job cell, not a new matrix cell.
+          if [ "${{ matrix.locale_stream }}" = zh-default ]; then
+            sudo sha256sum /etc/socks5-manager/users.cfg >"$SECRETS/users.before"
+            chmod 0600 "$SECRETS/users.before"
+            printf '2\n' | sudo sh socks5.sh install >"$SECRETS/install-again.log" 2>&1
+            sudo sha256sum /etc/socks5-manager/users.cfg >"$SECRETS/users.after"
+            chmod 0600 "$SECRETS/users.after" "$SECRETS/install-again.log"
+            cmp "$SECRETS/users.before" "$SECRETS/users.after"
+            test "$(sudo awk 'END { print NR }' /etc/socks5-manager/users.cfg)" -eq 1
+            test "$(getent passwd socks5proxy | wc -l)" -eq 1
+            test "$(getent group socks5proxy | wc -l)" -eq 1
+            test "$(systemctl list-unit-files --no-legend socks5-manager.service | wc -l)" -eq 1
+          fi
+
+          # Checks that unit stubs cannot prove: real owner/group/mode metadata,
+          # account attributes, and absence of the installed password from the
+          # journal, /var/log and shell histories.
+          sudo sh tests/protocol/post_install_audit.sh systemd "$SECRETS" "$HOME"
+
           printf '2\n' | sudo sh socks5.sh status
           # No-argument mode: selector (2), then menu action 1 (status).
           printf '2\n1\n' | sudo sh socks5.sh
@@ -447,6 +469,32 @@ jobs:
             # starting". rc-status drives rc_deptree_update_needed(), which
             # creates starting/started/exclusive and the other state dirs.
             rc-status -a >/dev/null 2>&1  # initialize OpenRC runtime before install
+            # The rendered init script routes both streams through `logger`
+            # (output_logger/error_logger in tests/golden/openrc-init), and the
+            # installer never installs a package that provides it. So `logger`
+            # must already exist on a clean image, or the service would start
+            # with its logging silently broken. This was carried as an
+            # unverified residual risk for several rounds; assert it instead.
+            # Scope, stated honestly: this proves the binary exists and can
+            # deliver to /dev/log when the normal syslog endpoint is present.
+            # The minimal container starts BusyBox syslogd below because it does
+            # not boot the normal logging service. No apostrophe appears in this
+            # comment on purpose: it sits inside a single-quoted sh -c body, the
+            # same construct that broke this job once before.
+            command -v logger >/dev/null || {
+              echo "logger is absent: the rendered OpenRC init would log nowhere" >&2
+              exit 1
+            }
+            # The minimal container does not boot its normal syslog service.
+            # Start BusyBox syslogd solely to make /dev/log reachable; a real
+            # OpenRC host supplies that endpoint during boot.
+            if [ ! -S /dev/log ] && command -v syslogd >/dev/null 2>&1; then
+              syslogd
+            fi
+            logger -t socks5-manager-ci -p daemon.info "openrc logger probe" || {
+              echo "logger exists but failed to run" >&2
+              exit 1
+            }
             umask 077
             SECRETS=$(mktemp -d); chmod 0700 "$SECRETS"
             trap "rm -rf $SECRETS" EXIT HUP INT TERM
@@ -488,6 +536,7 @@ jobs:
               rc-service socks5-manager status >&2
               echo "retried status exit: $?" >&2
               exit 1; }
+            sh tests/protocol/post_install_audit.sh openrc "$SECRETS" /root
             printf "2\n" | sh socks5.sh status
             rc-service socks5-manager status
             # A real OpenRC restart, followed by manager and socket proof.
@@ -627,6 +676,12 @@ jobs:
                  sed -f "$SECRETS/redact.sed" "$SECRETS/install.log" >&2
                  exit 1; }
           docker exec "$CID" rm -f /tmp/answers
+
+          AUDIT_DIR=$(docker exec "$CID" mktemp -d)
+          docker exec "$CID" chmod 0700 "$AUDIT_DIR"
+          docker exec "$CID" sh /src/tests/protocol/post_install_audit.sh \
+            systemd "$AUDIT_DIR" /root
+          docker exec "$CID" rm -rf "$AUDIT_DIR"
 
           docker exec "$CID" sh -c 'printf "2\n" | sh /src/socks5.sh status'
           docker exec "$CID" systemctl is-active socks5-manager.service

@@ -7,8 +7,8 @@
 # structural count of untranslated direct literals (which each message-domain
 # task must lower, never raise).
 #
-# The language selector itself stays DORMANT until every domain is migrated;
-# tests set S5_LANG directly, and normal runtime remains English.
+# The language selector runs before every command dispatch. Tests set S5_LANG
+# directly for focused catalog checks and also exercise the selector end to end.
 
 S5T_NAME=test_i18n
 . "${S5_REPO_ROOT}/tests/lib/assert.sh"
@@ -108,6 +108,29 @@ sed -n '/^s5_msg() {/,/^}/p' "$SRC" | grep -v '^[[:space:]]*# ' >"$_nocat"
 sed "/^s5_msg() {/,/^}/d" "$SRC" >"$_nocat.src"
 direct_total=$(grep -cE 's5_(log|warn|err|say) "[^$]' "$_nocat.src" || true)
 prompt_total=$(grep -cE "printf '[A-Z][^']*' " "$_nocat.src" || true)
+
+# A literal can hide after a leading expansion (`"$VAR English text"`), which
+# the baseline grep above deliberately does not count. Select the final wrapper
+# on label/value composition lines, strip every shell expansion from its
+# argument, and reject any alphabetic residue. Legitimate catalog composition
+# therefore reduces to an empty string; appended raw prose does not.
+expansion_literal_sites=$(
+    grep -nE 's5_(log|warn|err|say) "\$' "$_nocat.src" |
+        while IFS= read -r site; do
+            code=${site#*:}
+            # Greedy prefix selects the final wrapper call on composition lines
+            # such as `_label=$(s5_msg ...); s5_say "$..."`.
+            arg=$(printf '%s\n' "$code" |
+                sed -E 's/^.*s5_(log|warn|err|say) "([^"]*)".*$/\2/')
+            residue=$(printf '%s\n' "$arg" |
+                sed 's/\$([^)]*)//g;s/\${[A-Za-z_][A-Za-z0-9_]*}//g;s/\$[A-Za-z_][A-Za-z0-9_]*//g')
+            if printf '%s\n' "$residue" | grep -q '[[:alpha:]]'; then
+                printf '%s\n' "$site"
+            fi
+        done
+)
+assert_eq "no expansion-leading output contains untranslated text" \
+    "" "$expansion_literal_sites"
 rm -f "$_nocat" "$_nocat.src"
 # The baseline only ever moves DOWN as message domains migrate into the
 # catalog. T3 already removed the password-confirmation literals. Each

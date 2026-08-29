@@ -193,12 +193,36 @@ t_run s5_selftest_bad
 assert_eq "curl 97 is accepted as proof the proxy refused" 0 "$T_STATUS"
 rm -f "$S5_TEST_ROOT/stub_curl_code"
 
-# failure classification
-s5env_reset_transcript
-: >"$S5_TEST_ROOT/stub_no_egress"
-assert_eq "no egress is classified" no-egress "$(s5_diagnose_failure)"
-rm -f "$S5_TEST_ROOT/stub_no_egress"
-assert_eq "egress fine means the proxy is at fault" proxy-failure "$(s5_diagnose_failure)"
+# Failure classification is a four-way decision. Keep it independent from the
+# curl stub so every branch has a direct, falsifiable input.
+diagnose_case() (
+    _dc_egress=$1
+    _dc_dns=$2
+    s5_direct_egress_ok() { return "$_dc_egress"; }
+    s5_dns_ok() { return "$_dc_dns"; }
+    s5_diagnose_failure
+)
+assert_eq "DNS failure is classified" dns-failure "$(diagnose_case 6 1)"
+assert_eq "generic transport failure with DNS is no egress" no-egress "$(diagnose_case 7 0)"
+assert_eq "HTTP failure from the fixed endpoint is external service" \
+    external-service-failure "$(diagnose_case 22 0)"
+assert_eq "direct egress success leaves the proxy as the failing component" \
+    proxy-failure "$(diagnose_case 0 0)"
+
+curl_cfg=$(s5_curl_config "$USER_OK" "$PASS_OK")
+assert_contains "proxy self-test treats HTTP errors as failure" "fail" "$curl_cfg"
+direct_fn=$(sed -n '/^s5_direct_egress_ok() {/,/^}/p' "$S5_SRC")
+assert_contains "direct diagnosis also treats HTTP errors as failure" "-fsS" "$direct_fn"
+
+S5_LANG=en
+t_run s5_explain_failure external-service-failure
+assert_contains "English explains an external self-test outage without blaming the proxy" \
+    "does not prove the proxy itself is faulty" "$T_OUT"
+S5_LANG=zh
+t_run s5_explain_failure external-service-failure
+assert_contains "Chinese explains an external self-test outage without blaming the proxy" \
+    "不能证明代理本身有故障" "$T_OUT"
+S5_LANG=en
 
 # ==========================================================================
 # Full install

@@ -508,6 +508,58 @@ else
 fi
 
 # =========================================================================
+# Round 17: real-host post-install audit and idempotency are present in every
+# applicable lifecycle. The helper owns the security-sensitive details once;
+# each job must invoke it explicitly so one job cannot borrow another's proof.
+# =========================================================================
+post_audit="$R/tests/protocol/post_install_audit.sh"
+assert_file_exists "post-install audit helper exists" "$post_audit"
+post_code=$(grep -v '^[[:space:]]*#' "$post_audit")
+for required in \
+    "stat -c '%U:%G %a'" \
+    '/usr/local/libexec/$project/3proxy' \
+    '/etc/$project' \
+    '/var/lib/$project/state' \
+    '/etc/systemd/system/$project.service' \
+    '/etc/init.d/$project' \
+    '/nonexistent' \
+    '/etc/shadow' \
+    '*/nologin | */false' \
+    'grep -F -l -f' \
+    '/var/log' \
+    '.bash_history' \
+    '.ash_history' \
+    '.sh_history' \
+    '.zsh_history' \
+    'cannot read shell history' \
+    'journalctl --no-pager -o cat' \
+    'cannot read the systemd journal' \
+    's5-ci-secret-probe' \
+    'rm -f "$probe"'; do
+    assert_contains "post-install audit carries $required" "$required" "$post_code"
+done
+assert_not_contains "post-install audit never prints matching secret lines" \
+    'grep -F -n' "$post_code"
+
+for _job in systemd-integration openrc-integration distro-systemd-integration; do
+    _blk=$(ci_job_block "$_job")
+    assert_contains "$_job runs the real post-install audit" \
+        'tests/protocol/post_install_audit.sh' "$_blk"
+done
+openrc_block=$(ci_job_block openrc-integration)
+for required in 'command -v logger' 'command -v syslogd' 'openrc logger probe'; do
+    assert_contains "OpenRC verifies its logger path with $required" "$required" "$openrc_block"
+done
+systemd_block=$(ci_job_block systemd-integration)
+_second_installs=$(printf '%s\n' "$systemd_block" | grep -c 'socks5.sh install' || true)
+assert_eq "systemd integration invokes install twice in one existing cell" 2 "$_second_installs"
+for required in 'sha256sum' 'cmp "$SECRETS/users.before" "$SECRETS/users.after"' \
+    'awk '\''END { print NR }'\''' 'getent passwd socks5proxy' \
+    'getent group socks5proxy' 'systemctl list-unit-files --no-legend'; do
+    assert_contains "systemd idempotency carries $required" "$required" "$systemd_block"
+done
+
+# =========================================================================
 # BF-08: precise workflow-shape and application guards.
 # =========================================================================
 

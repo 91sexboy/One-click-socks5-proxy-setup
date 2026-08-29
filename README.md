@@ -92,6 +92,27 @@ sudo sh socks5.sh
 On stock Alpine this read-it-first form works as-is: the script itself is
 plain POSIX `sh` — only the `<(...)` download form needs Bash.
 
+### Immutable v1.0.0 candidate
+
+`main` is convenient but moves. After the two Round 17 CI checkpoints are green, the exact reviewed
+script will be published as immutable tag `v1.0.0`. The candidate bytes currently have this SHA-256:
+
+```text
+acbfbfe3e6ba0f37f4e2a24ba8a6d68ec5a36513caae2e22e44a0ed28322e0b1  socks5.sh
+```
+
+Once the tag exists, download and verify that immutable artifact before running it as root:
+
+```sh
+wget -qO socks5.sh https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-setup/v1.0.0/socks5.sh
+printf '%s  %s\n' 'acbfbfe3e6ba0f37f4e2a24ba8a6d68ec5a36513caae2e22e44a0ed28322e0b1' socks5.sh | sha256sum -c -
+sudo sh socks5.sh
+```
+
+The tag is **not a released artifact until both fresh 45/45 runs are recorded below**. The
+candidate wording is replaced with release evidence only after that gate passes; the tag is then
+created at the evidence commit and is never moved.
+
 ## The interactive flow
 
 The installer is **interactive**. An install run asks five questions in
@@ -371,18 +392,22 @@ at commit `df6885c`, **45 of 45 jobs passed**:
   bootstrapping the build and runtime dependencies from the clean images.
 
 > **Evidence.** The 45/45 run recorded above evidences the pre-bilingual build.
-> The current implementation is CI-green: run
+> The last published bilingual implementation is CI-green: run
 > [`33245460710`](https://github.com/91sexboy/One-click-socks5-proxy-setup/actions/runs/33245460710)
-> at commit `941907b` completed 45/45 with the audited bilingual selector, password-once flow,
-> public-IPv4 card, portable OpenRC listener check, and exact 45-job lifecycle workflow. The
-> evidence-only documentation run for the final published state is recorded below when complete.
+> at commit `941907b` completed 45/45, and its evidence-only public-main run
+> [`33246222640`](https://github.com/91sexboy/One-click-socks5-proxy-setup/actions/runs/33246222640)
+> at commit `8ba2af2` also passed **45 of 45 jobs**. The Round 17 candidate changes production and CI
+> behavior and has not yet run in CI; those historical runs must not be cited as proof for the
+> candidate. Fresh implementation and evidence-only run IDs replace this paragraph only after both
+> reach 45/45.
 
 Every supported OS family therefore has a real
 install → active/listening → restart → uninstall → cleanliness lifecycle, and
-every advertised OS version/architecture has real build and protocol evidence.
-This is CI evidence, not a promise that every VPS image or network environment
-is identical: the installer still fails closed when its manager, port probe,
-package repository, DNS or egress cannot be verified.
+every OS version/architecture **named in the CI matrix** has real build and protocol evidence.
+Versions newer than the listed matrix are accepted by the documented minimum-version rule, but that
+does not claim CI has verified a future release. This is CI evidence, not a promise that every VPS
+image or network environment is identical: the installer still fails closed when its manager, port
+probe, package repository, DNS or egress cannot be verified.
 What each CI job actually proves is deliberately distinct:
 
 | Job | Cells | What it proves |
@@ -410,7 +435,7 @@ CI passwords are generated at runtime and handed to the protocol scripts as the
 never as a command-line argument, so they cannot reach a job log, `ps`, or a
 child process's environment.
 
-See `SPEC.md` for the specification and `tasks/` for the implementation plan.
+See `SPEC.md` for the complete, frozen behavior and verification contract.
 
 ## License
 

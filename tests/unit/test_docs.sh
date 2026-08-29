@@ -72,9 +72,40 @@ assert_contains "README shows the one-click wget one-liner" \
 assert_contains "README shows the one-click curl one-liner" \
     "bash <(curl -fsSL https://raw.githubusercontent.com/" "$readme"
 assert_contains "README warns that Alpine lacks bash" "apk add bash" "$readme"
+expected_alpine="apk add --no-cache bash wget && bash -c 'bash <(wget -qO- https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-setup/main/socks5.sh)'"
+assert_eq "README pins the exact stock-Alpine bootstrap once" \
+    1 "$(grep -Fxc -- "$expected_alpine" "$R/README.md")"
 assert_not_contains "README never uses a fixed /tmp path" "/tmp/socks5.sh" "$readme"
+release_hash=$(sha256sum "$R/socks5.sh" | cut -d' ' -f1)
+assert_contains "README documents the immutable v1.0.0 URL" \
+    "/v1.0.0/socks5.sh" "$readme"
+assert_contains "README publishes the exact candidate sha256" "$release_hash" "$readme"
+assert_eq "README prints the candidate sha256 exactly twice" 2 \
+    "$(grep -oF "$release_hash" "$R/README.md" | wc -l)"
+assert_contains "README verifies the release with sha256sum" "sha256sum -c -" "$readme"
+assert_contains "README refuses to call the candidate released before CI" \
+    "not a released artifact until both fresh 45/45 runs" "$readme"
 assert_contains "README shows only the socks5 scheme" "socks5://" "$readme"
 assert_not_contains "README never shows a socks4 URI" "socks4://" "$readme"
+
+# The operator contract is public behaviour, not explanatory decoration. Pin
+# the load-bearing phrases so deleting any promise fails this test while normal
+# prose edits around them remain free.
+for contract in \
+    '1 中文 / 2 English' \
+    'Enter alone selects 中文' \
+    'answer is re-asked' \
+    'first question on every run' \
+    'single `[Y/n]` question' \
+    'asks five questions in' \
+    'asked for once; there is no type-it-twice confirmation' \
+    'prints the password to your terminal only' \
+    'source IP and the time of that one request' \
+    'does not carry the port, the username or the password' \
+    'may not be reachable from the internet' \
+    'has no firewall functionality at all'; do
+    assert_contains "README keeps operator contract: $contract" "$contract" "$readme"
+done
 
 # Every SOCKS4 mention must be a rejection statement, never an offer.
 #
@@ -110,6 +141,8 @@ for _tok in 'not supported' 'rejection tests' 'no option' 'only a user-ID' \
         t_bad "allowlist token covers no README line and is a pure hole: $_tok"
     fi
 done
+
+assert_not_contains "public README does not expose internal task ledgers" "tasks/" "$readme"
 
 # --------------------------------------- README explains the -4 / -u2 flags
 assert_contains "README explains -4" "IPv4 destination resolution only" "$readme"
@@ -266,6 +299,19 @@ assert_contains "README names the current implementation run" \
     "33245460710" "$readme"
 assert_contains "README links the current implementation run" \
     "actions/runs/33245460710" "$readme"
+# The evidence-only run for the published state is the newest link in the chain.
+# It was claimed in SPEC and the task docs while no test held it, so a doc edit
+# could silently drop the only pointer to what is actually published.
+assert_contains "README names the published evidence-only run" \
+    "33246222640" "$readme"
+assert_contains "README links the published evidence-only run" \
+    "actions/runs/33246222640" "$readme"
+assert_not_contains "README no longer defers the old evidence-only run" \
+    "is recorded below when complete" "$readme"
+assert_contains "README says the Round 17 candidate still needs CI" \
+    "has not yet run in CI" "$readme"
+assert_contains "README refuses to reuse historical evidence for changed code" \
+    "must not be cited as proof" "$readme"
 assert_not_contains "README removes the pre-green systemd claim" \
     "No real systemd install lifecycle has completed yet" "$readme"
 assert_not_contains "README no longer claims CI has not been run" \
@@ -282,6 +328,20 @@ assert_not_contains "README no longer calls Alpine experimental" "experimental" 
 # ==========================================================================
 spec=$(cat "$R/SPEC.md")
 gold=$(cat "$R/tests/golden/openrc-init")
+
+# The published-state run is the newest link in the evidence chain. It was
+# asserted in SPEC and the task docs while no test held it, so a doc edit could
+# silently drop the only pointer to what is actually published -- and SPEC
+# simultaneously claimed FROZEN in its header and "remains pending" in §18.
+assert_contains "SPEC names the published evidence-only run" "33246222640" "$spec"
+assert_contains "SPEC marks the changed candidate as awaiting fresh CI" \
+    "ROUND 17 IMPLEMENTATION AWAITING FRESH CI" "$spec"
+assert_contains "SPEC requires two fresh candidate runs" \
+    "candidate awaits two fresh 45/45 runs" "$spec"
+assert_not_contains "SPEC does not still call the old second run pending" \
+    "A second 45/45 run for the evidence-only documentation" "$spec"
+assert_not_contains "SPEC does not still call itself un-re-frozen" \
+    "this spec is not" "$spec"
 
 # Whatever the golden script does, the SPEC must agree. A SPEC line that
 # explicitly NEGATES a directive ("`need net` is deliberately not used") is

@@ -1,0 +1,4 @@
+NAME="Oracle Linux Server"
+ID=ol
+ID_LIKE="fedora rhel centos"
+VERSION_ID="9"

@@ -88,16 +88,43 @@ assert_not_contains "and never echoed" "leak" "$T_OUT"
 # ==========================================================================
 # No dead variables.
 # ==========================================================================
-if grep -q S5_INSTALL_ACTIVE "${S5_SRC}"; then
-    t_bad "dead variable still present: S5_INSTALL_ACTIVE"
-else
-    t_ok
-fi
-# every S5_* variable assigned at top level is read somewhere
-for v in S5_ARCHNAME S5_WORKDIR S5_TERM_STATE S5_TERM_MODIFIED \
-    S5_ROLLBACK_ARMED S5_INSTALL_COMPLETE S5_IN_CLEANUP; do
-    n=$(grep -c "$v" "${S5_SRC}")
-    if [ "$n" -ge 2 ]; then t_ok; else t_bad "$v is assigned but never used"; fi
+# Derive every production-style variable assignment rather than maintaining an
+# allowlist. Restrict candidates to S5_* globals and underscore-prefixed locals
+# so assignments embedded in rendered service files (User=, command_user=, ...)
+# are not mistaken for shell variables. Count occurrences, not lines: several
+# locals are assigned and consumed on one line.
+assigned=$(
+    grep -oE '(^[[:space:]]*|;[[:space:]]*)(S5_[A-Z0-9_]+|_[a-z][a-z0-9_]*)=' "$S5_SRC" |
+        sed 's/^[;[:space:]]*//;s/=.*//' | sort -u
+)
+dead=''
+for v in $assigned; do
+    n=$(awk -v needle="$v" '
+        /^[[:space:]]*#/ { next }
+        {
+            s=$0
+            while ((p=index(s,needle)) != 0) {
+                b=(p==1 ? "" : substr(s,p-1,1))
+                a=substr(s,p+length(needle),1)
+                if (b !~ /[A-Za-z0-9_]/ && a !~ /[A-Za-z0-9_]/) n++
+                s=substr(s,p+length(needle))
+            }
+        }
+        END { print n+0 }
+    ' "$S5_SRC")
+    [ "$n" -eq 1 ] && dead="$dead $v"
+done
+assert_eq "every assigned shell variable is read" "" "$dead"
+
+# The boundary in SPEC §14 is permanent, not merely today's absence: the
+# installer must never alter SELinux policy or sshd configuration. Keep the
+# source tokens narrow enough to avoid matching that statement in prose.
+for forbidden in setenforce semanage '/etc/selinux' '/etc/ssh/sshd_config'; do
+    if grep -Fq -- "$forbidden" "$S5_SRC"; then
+        t_bad "production source must never touch SELinux or sshd: $forbidden"
+    else
+        t_ok
+    fi
 done
 
 # ==========================================================================

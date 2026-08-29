@@ -67,6 +67,16 @@ if [ -f "$S5_TEST_ROOT/svc_active" ]; then
     # through the stub, and no port is known. Keep the old catch-all meaning
     # for that case only, so existing lifecycle tests keep their semantics.
     if [ -z "$_active" ] || [ "$_active" = "$1" ]; then
+        # Port-only callers model collision detection: a listener on any address
+        # makes the port busy. Readiness/status callers pass the configured
+        # address as $2 and must see that exact address, not merely the port.
+        if [ -n "${2:-}" ] && [ -n "$_active" ]; then
+            _listen=0.0.0.0
+            if [ -f "$S5_TEST_ROOT/svc_listen" ]; then
+                _listen=$(cat "$S5_TEST_ROOT/svc_listen" 2>/dev/null)
+            fi
+            [ "$_listen" = "$2" ] || exit 0
+        fi
         if [ "$_active" = "$1" ] && [ -f "$S5_TEST_ROOT/svc_latebind" ]; then
             _late=$(cat "$S5_TEST_ROOT/svc_latebind" 2>/dev/null)
             case "$_late" in '' | *[!0-9]*) _late=0 ;; esac

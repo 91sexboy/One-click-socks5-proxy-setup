@@ -70,6 +70,27 @@ check_rhel_like rhel-9
 check_rhel_like rocky-9
 check_rhel_like almalinux-9
 
+# An exact whitespace-delimited ID_LIKE=rhel token selects only the more useful
+# refusal message. It must never select a package manager or authorize install.
+S5_OSRELEASE="$FIX/oracle-9"
+detect_with_state() {
+    s5_detect_platform
+    _dws=$?
+    printf '\nSTATE:%s|%s|%s\n' "$S5_OS_FAMILY" "$S5_PKGMGR" "$S5_INIT"
+    return "$_dws"
+}
+t_run detect_with_state
+assert_eq "an ID_LIKE-only RHEL derivative is refused" "$EX_UNSUPPORTED" "$T_STATUS"
+assert_contains "the derivative receives the likely-compatible refusal" "likely compatible" "$T_OUT"
+assert_contains "the refusal leaves family/pkgmgr/init unset" "STATE:||" "$T_OUT"
+
+# Substrings are not tokens: `notrhel` must not be mistaken for `rhel`.
+S5_OSRELEASE="$FIX/notrhel-9"
+t_run s5_detect_platform
+assert_eq "an ID_LIKE substring is refused generically" "$EX_UNSUPPORTED" "$T_STATUS"
+assert_not_contains "notrhel does not receive the RHEL-specific wording" "likely compatible" "$T_OUT"
+assert_contains "the generic refusal names the derivative ID" "notrhel-linux" "$T_OUT"
+
 # ID_LIKE=rhel alone must never authorise an install
 S5_OSRELEASE="$FIX/rocky-9"
 t_run s5_detect_platform
