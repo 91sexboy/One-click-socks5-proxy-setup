@@ -79,12 +79,12 @@ assert_not_contains "README never uses a fixed /tmp path" "/tmp/socks5.sh" "$rea
 release_hash=$(sha256sum "$R/socks5.sh" | cut -d' ' -f1)
 assert_contains "README documents the immutable v1.0.0 URL" \
     "/v1.0.0/socks5.sh" "$readme"
-assert_contains "README publishes the exact candidate sha256" "$release_hash" "$readme"
-assert_eq "README prints the candidate sha256 exactly twice" 2 \
+assert_contains "README publishes the exact release sha256" "$release_hash" "$readme"
+assert_eq "README prints the release sha256 exactly twice" 2 \
     "$(grep -oF "$release_hash" "$R/README.md" | wc -l)"
 assert_contains "README verifies the release with sha256sum" "sha256sum -c -" "$readme"
-assert_contains "README refuses to call the candidate released before CI" \
-    "not a released artifact until both fresh 45/45 runs" "$readme"
+assert_contains "README gates tag creation on closure CI" \
+    "only after its own 45/45 run succeeds" "$readme"
 assert_contains "README shows only the socks5 scheme" "socks5://" "$readme"
 assert_not_contains "README never shows a socks4 URI" "socks4://" "$readme"
 
@@ -305,10 +305,14 @@ assert_contains "README links the Round 17 implementation run" \
     "actions/runs/33281392984" "$readme"
 assert_contains "README records the Round 17 implementation commit" \
     "3b58e19" "$readme"
-assert_contains "README requires the evidence-only run before tagging" \
-    "must also reach 45/45 before the candidate" "$readme"
-assert_not_contains "README no longer defers the old evidence-only run" \
-    "is recorded below when complete" "$readme"
+assert_contains "README names the Round 17 evidence run" \
+    "33281724740" "$readme"
+assert_contains "README links the Round 17 evidence run" \
+    "actions/runs/33281724740" "$readme"
+assert_contains "README records the Round 17 evidence commit" \
+    "a8ed825" "$readme"
+assert_contains "README gates the immutable tag on closure CI" \
+    "own final reachable-main run passes all 45 jobs" "$readme"
 assert_not_contains "README removes the pre-green systemd claim" \
     "No real systemd install lifecycle has completed yet" "$readme"
 assert_not_contains "README no longer claims CI has not been run" \
@@ -334,10 +338,13 @@ assert_contains "SPEC retains the previous published evidence run" "33246222640"
 assert_contains "SPEC names the Round 17 implementation run" "33281392984" "$spec"
 assert_contains "SPEC records the full Round 17 implementation commit" \
     "3b58e194887bf91a06b789353c06033b70c49c59" "$spec"
-assert_contains "SPEC marks implementation green and evidence awaiting" \
-    "ROUND 17 IMPLEMENTATION CI GREEN / EVIDENCE RUN AWAITING" "$spec"
-assert_contains "SPEC explains the closure run needed to pin the evidence ID" \
-    "one final closure commit" "$spec"
+assert_contains "SPEC names the Round 17 evidence run" "33281724740" "$spec"
+assert_contains "SPEC records the full Round 17 evidence commit" \
+    "a8ed8255fba6c9bf9b8247582d6b77ebf65d8374" "$spec"
+assert_contains "SPEC marks implementation and evidence green" \
+    "FROZEN RELEASE CONTRACT / IMPLEMENTATION AND EVIDENCE CI GREEN" "$spec"
+assert_contains "SPEC gates the tag on the closure run" \
+    "reachable-main run must pass 45/45 before tag" "$spec"
 
 # Whatever the golden script does, the SPEC must agree. A SPEC line that
 # explicitly NEGATES a directive ("`need net` is deliberately not used") is

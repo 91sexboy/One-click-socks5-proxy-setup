@@ -1,11 +1,11 @@
 # Spec: socks5.sh — one-click SOCKS5 proxy installer
 
-> **Status: FROZEN CONTRACT / ROUND 17 IMPLEMENTATION CI GREEN / EVIDENCE RUN AWAITING.**
-> Implementation commit `3b58e194887bf91a06b789353c06033b70c49c59` passed run `33281392984`
-> with 45/45 jobs. The separate evidence-only commit that records that result must also pass 45/45,
-> followed by a closure run after its ID is pinned, before this status returns to fully verified and
-> tag `v1.0.0` is published. Runs `33245460710` / `33246222640` remain historical evidence for the
-> previous bilingual state. The protocol/auth/ACL/firewall boundaries remain frozen.
+> **Status: FROZEN RELEASE CONTRACT / IMPLEMENTATION AND EVIDENCE CI GREEN.** Round 17
+> implementation commit `3b58e194887bf91a06b789353c06033b70c49c59` passed run `33281392984`
+> with 45/45 jobs. Evidence-only commit `a8ed8255fba6c9bf9b8247582d6b77ebf65d8374` passed run
+> `33281724740`, also 45/45. This closure commit pins both; it may become immutable tag `v1.0.0`
+> only after its own reachable-main run passes all 45 jobs. Tag existence is therefore the final
+> release proof. The protocol/auth/ACL/firewall boundaries remain frozen.
 
 ## 1. Objective
 A single-file POSIX shell script (`socks5.sh`) that interactively installs, verifies, and manages a
@@ -468,9 +468,9 @@ example any SOCKS4-family protocol.
 16. Install and `show` render one exact URI using one resolved IPv4. Public lookup failure is
     nonfatal and yields exactly one localized local/placeholder warning; lookup receives no secret.
 17. Round 17 implementation commit `3b58e194887bf91a06b789353c06033b70c49c59` passed run
-    `33281392984` with 45/45 jobs. A separate evidence-only commit records that result and must pass
-    45/45; because a commit cannot contain the ID of the run it triggers, one final closure commit
-    then pins the evidence-run ID and its own reachable-main run must also pass 45/45.
+    `33281392984` with 45/45 jobs. Evidence-only commit
+    `a8ed8255fba6c9bf9b8247582d6b77ebf65d8374` passed run `33281724740`, also 45/45. This closure
+    commit pins both IDs; its reachable-main run must pass 45/45 before tag `v1.0.0` is created.
 
 ## 16. Non-goals (v1)
 Non-interactive install; `reload`; `reconfigure`; BIND; UDP ASSOCIATE; SOCKS4/4a/4.5 (permanently out
@@ -513,7 +513,9 @@ IPv6-only listeners; log rotation; RHEL/Rocky/Alma.
 ## 18. Residual risks and settled decisions
 
 **Verification status (2026-08-29).** Round 17 implementation commit
-`3b58e194887bf91a06b789353c06033b70c49c59` passed run `33281392984` with **45/45 green**:
+`3b58e194887bf91a06b789353c06033b70c49c59` passed run `33281392984` with **45/45 green**.
+Evidence-only commit `a8ed8255fba6c9bf9b8247582d6b77ebf65d8374` passed run `33281724740`,
+also 45/45:
 
 - all 16 build and 16 protocol cells passed on amd64/arm64;
 - all 3 ACL-resolution cells passed;
@@ -521,12 +523,12 @@ IPv6-only listeners; log rotation; RHEL/Rocky/Alma.
   secret-sink, exact-address, logger-path and install-twice assertions;
 - lint, two unit cells, structural release gates and all Python syntax checks passed.
 
-The evidence-only commit recording that implementation result and the closure commit pinning the
-subsequent evidence-run ID still need green runs (§15.17). Until then `v1.0.0` remains a candidate.
-Runs `33245460710` / `33246222640` remain historical evidence for the previous bilingual state.
-Environmental risks remain: package repositories, DNS and the fixed HTTPS self-test require egress;
-cloud images may differ from the tested base images; and the pinned 3proxy 0.9 branch has no
-published maintenance window, so the operator still owns updates (§17).
+This closure commit records both fresh runs. It is tagged `v1.0.0` only after its own reachable-main
+run is 45/45; the tag's existence is the final gate (§15.17). Runs `33245460710` / `33246222640`
+remain historical evidence for the previous bilingual state. Environmental risks remain: package
+repositories, DNS and the fixed HTTPS self-test require egress; cloud images may differ from the
+tested base images; and the pinned 3proxy 0.9 branch has no published maintenance window, so the
+operator still owns updates (§17).
 
 **Decided:**
 - Publishing target: `github.com/91sexboy/One-click-socks5-proxy-setup`; the README raw URL is

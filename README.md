@@ -92,10 +92,10 @@ sudo sh socks5.sh
 On stock Alpine this read-it-first form works as-is: the script itself is
 plain POSIX `sh` — only the `<(...)` download form needs Bash.
 
-### Immutable v1.0.0 candidate
+### Immutable v1.0.0 release
 
-`main` is convenient but moves. After the two Round 17 CI checkpoints are green, the exact reviewed
-script will be published as immutable tag `v1.0.0`. The candidate bytes currently have this SHA-256:
+`main` is convenient but moves. The reviewed script is published as immutable tag `v1.0.0` only
+after this evidence-closure revision passes all 45 CI jobs. Its exact bytes have this SHA-256:
 
 ```text
 acbfbfe3e6ba0f37f4e2a24ba8a6d68ec5a36513caae2e22e44a0ed28322e0b1  socks5.sh
@@ -109,9 +109,9 @@ printf '%s  %s\n' 'acbfbfe3e6ba0f37f4e2a24ba8a6d68ec5a36513caae2e22e44a0ed28322e
 sudo sh socks5.sh
 ```
 
-The tag is **not a released artifact until both fresh 45/45 runs are recorded below**. The
-candidate wording is replaced with release evidence only after that gate passes; the tag is then
-created at the evidence commit and is never moved.
+The tag is created at this evidence-closure commit only after its own 45/45 run succeeds, and is
+never moved. The tag's existence is therefore the final proof that the implementation run, the
+evidence-only run, and the reachable tagged tree all passed.
 
 ## The interactive flow
 
@@ -391,13 +391,13 @@ at commit `df6885c`, **45 of 45 jobs passed**:
 - 2 real OpenRC lifecycles on Alpine 3.20 and 3.24, with the installer itself
   bootstrapping the build and runtime dependencies from the clean images.
 
-> **Evidence.** The 45/45 run recorded above evidences the pre-bilingual build.
-> The Round 17 implementation is CI-green: run
+> **Evidence.** Round 17 implementation commit `3b58e19` passed run
 > [`33281392984`](https://github.com/91sexboy/One-click-socks5-proxy-setup/actions/runs/33281392984)
-> at commit `3b58e19` passed **45 of 45 jobs**, including the new owner/account/secret-sink audit,
-> exact-address listener proof and real install-twice cell. The evidence-only documentation commit
-> that records this run must also reach 45/45 before the candidate can be closed and tagged. Runs
-> `33245460710` / `33246222640` remain historical evidence for the previous bilingual state.
+> with **45 of 45 jobs**. Evidence-only commit `a8ed825` then passed run
+> [`33281724740`](https://github.com/91sexboy/One-click-socks5-proxy-setup/actions/runs/33281724740),
+> also 45/45. This closure revision pins both results; it becomes immutable tag `v1.0.0` only after
+> its own final reachable-main run passes all 45 jobs. Runs `33245460710` / `33246222640` remain
+> historical evidence for the previous bilingual state.
 
 Every supported OS family therefore has a real
 install → active/listening → restart → uninstall → cleanliness lifecycle, and
