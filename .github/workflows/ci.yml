@@ -359,8 +359,8 @@ jobs:
           # picks blank = Chinese default), one [Y/n] confirmation, then the three
           # values with the password queued exactly once.
           case "${{ matrix.locale_stream }}" in
-            zh-default) _selector='';;
-            en-explicit) _selector=2;;
+            zh-default) _selector=''; _direct_selector=1;;
+            en-explicit) _selector=2; _direct_selector=2;;
           esac
           if [ "${{ matrix.locale_stream }}" = zh-default ]; then
             printf '\ny\n%s\nciuser\n' "$PORT" >"$SECRETS/answers"
@@ -377,22 +377,22 @@ jobs:
           sudo sh socks5.sh install <"$SECRETS/answers" >"$SECRETS/install.log" 2>&1 || {
             sed -f "$SECRETS/redact.sed" "$SECRETS/install.log" >&2; exit 1; }
 
-          printf '2\n' | sudo sh socks5.sh status
-          # No-argument mode: selector (2), then menu action 1 (status).
-          printf '2\n1\n' | sudo sh socks5.sh
+          printf '%s\n' "$_direct_selector" | sudo sh socks5.sh status
+          # No-argument mode: the same selected language, then menu action 1 (status).
+          { printf '%s\n' "$_direct_selector"; printf '1\n'; } | sudo sh socks5.sh
           sudo systemctl is-active socks5-manager.service
           ss -ltn | grep ":$PORT "
 
           PORT=$PORT PROXY_USER=ciuser PASSFILE="$SECRETS/pass" \
             sh tests/protocol/run_protocol.sh
 
-          printf '2\n' | sudo sh socks5.sh restart
+          printf '%s\n' "$_direct_selector" | sudo sh socks5.sh restart
           sudo systemctl is-active socks5-manager.service
 
           # `show` discloses the password and therefore refuses unless stdout is
           # a real terminal. Give it a pty and keep its output in a 0600 file
           # that is never printed; only the grep verdict reaches the log.
-          script -qec 'printf "2\n" | sudo sh socks5.sh show' /dev/null >"$SECRETS/show.out" 2>&1
+          script -qec 'printf "%s\n" "$_direct_selector" | sudo sh socks5.sh show' /dev/null >"$SECRETS/show.out" 2>&1
           grep -q 'socks5://ciuser:' "$SECRETS/show.out"
 
           # This script never touches the firewall, so no rule may exist for the port.
@@ -400,7 +400,7 @@ jobs:
             echo "install created a firewall rule; v1 must not" >&2; exit 1
           fi
 
-          printf '2\ny\n' | sudo sh socks5.sh uninstall
+          printf '%s\ny\n' "$_direct_selector" | sudo sh socks5.sh uninstall
           test ! -e /etc/socks5-manager
           test ! -e /var/lib/socks5-manager
           test ! -e /usr/local/libexec/socks5-manager
@@ -488,15 +488,37 @@ jobs:
               rc-service socks5-manager status >&2
               echo "retried status exit: $?" >&2
               exit 1; }
-            printf "2\n" | sh socks5.sh status
+            if [ "${{ matrix.locale_stream }}" = invalid-then-zh ]; then
+            else
+            fi
+            if [ "${{ matrix.locale_stream }}" = invalid-then-zh ]; then
+              printf "\n" | sh socks5.sh status
+            else
+              printf "2\n" | sh socks5.sh status
+            fi
             rc-service socks5-manager status
             # A real OpenRC restart, followed by manager and socket proof.
-            printf "2\n" | sh socks5.sh restart
+            if [ "${{ matrix.locale_stream }}" = invalid-then-zh ]; then
+              printf "\n" | sh socks5.sh restart
+            else
+              printf "2\n" | sh socks5.sh restart
+            fi
             rc-service socks5-manager status
-            ss -ltn | grep ":41080 "
+            if command -v ss >/dev/null 2>&1; then
+              ss -ltn | grep ":41080 "
+            elif command -v netstat >/dev/null 2>&1; then
+              netstat -ltn | grep ":41080 "
+            else
+              echo "neither ss nor netstat is available after installation" >&2
+              exit 1
+            fi
             PORT=41080 PROXY_USER=ciuser PASSFILE="$SECRETS/pass" \
               sh tests/protocol/run_protocol.sh
-            printf "2\ny\n" | sh socks5.sh uninstall
+            if [ "${{ matrix.locale_stream }}" = invalid-then-zh ]; then
+              printf "\n" | sh socks5.sh uninstall
+            else
+              printf "2\n" | sh socks5.sh uninstall
+            fi
             test ! -e /etc/socks5-manager
             test ! -e /var/lib/socks5-manager
             test ! -e /usr/local/libexec/socks5-manager
@@ -621,13 +643,15 @@ jobs:
                  exit 1; }
           docker exec "$CID" rm -f /tmp/answers
 
-          docker exec "$CID" sh -c 'printf "2\n" | sh /src/socks5.sh status'
+          case "${{ matrix.locale_stream }}" in
+            zh-default) _direct_selector='';;
+            en-explicit) _direct_selector=2;;
+            invalid-then-en) _direct_selector='9\n2';;
+          esac
+          printf '%s\n' "$_direct_selector" | docker exec "$CID" sh -c 'sh /src/socks5.sh status'
           docker exec "$CID" systemctl is-active socks5-manager.service
           docker exec "$CID" sh -c "ss -ltn | grep ':$PORT '"
-
-          # The installer's own self-test already proved that correct credentials
-          # work and that wrong credentials are refused; a restart must survive.
-          docker exec "$CID" sh -c 'printf "2\n" | sh /src/socks5.sh restart'
+          printf '%s\n' "$_direct_selector" | docker exec "$CID" sh -c 'sh /src/socks5.sh restart'
           docker exec "$CID" systemctl is-active socks5-manager.service
 
           # No firewall rule may exist for the port: v1 never creates one.
