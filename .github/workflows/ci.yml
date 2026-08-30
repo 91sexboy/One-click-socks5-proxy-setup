@@ -678,6 +678,7 @@ jobs:
             command -v make >/dev/null 2>&1 && exit 1
             command -v gcc >/dev/null 2>&1 && exit 1
             command -v cc >/dev/null 2>&1 && exit 1
+            :
           '
           for peak_file in "$SECRETS/install.peak" "$SECRETS/update.peak" \
             "$SECRETS/restart.peak" "$SECRETS/uninstall.peak"; do
