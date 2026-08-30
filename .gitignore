@@ -4,4 +4,12 @@ __pycache__/
 *.pyc
 
 # Every test scratch tree is created with `mktemp -d` (tests/lib/assert.sh,
-# tests/protocol/start_engine.sh), so nothing else generated belongs here.
+# tests/protocol/start_engine.sh), so no other generated artefact belongs here.
+
+# Local-only working material, deliberately never published (the repository is
+# public). `tests/unit/test_docs.sh` already asserts the README never points at
+# `tasks/`; this keeps the ledgers themselves out too. The full history that did
+# track them is archived on the local `archive/dev-history` branch and in a
+# `git bundle` kept outside this tree.
+.claude/
+tasks/
