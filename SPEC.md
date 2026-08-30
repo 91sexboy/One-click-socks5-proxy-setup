@@ -3,9 +3,12 @@
 > **Status: FROZEN RELEASE CONTRACT / IMPLEMENTATION AND EVIDENCE CI GREEN.** Round 17
 > implementation commit `3b58e194887bf91a06b789353c06033b70c49c59` passed run `33281392984`
 > with 45/45 jobs. Evidence-only commit `a8ed8255fba6c9bf9b8247582d6b77ebf65d8374` passed run
-> `33281724740`, also 45/45. This closure commit pins both; it may become immutable tag `v1.0.0`
-> only after its own reachable-main run passes all 45 jobs. Tag existence is therefore the final
-> release proof. The protocol/auth/ACL/firewall boundaries remain frozen.
+> `33281724740`, also 45/45. Closure commit `91fd13a` passed run `33282068288`, also 45/45, and
+> immutable tag `v1.0.0` was created there. Round 18 is the `v1.0.1` candidate: it removes dead
+> catalog keys, corrects comments that contradicted the code, and folds duplicated checks, leaving
+> operator behaviour unchanged. Its own reachable-main run must pass 45/45 before tag `v1.0.1`.
+> Tag existence is therefore the final release proof. The protocol/auth/ACL/firewall boundaries
+> remain frozen.
 
 ## 1. Objective
 A single-file POSIX shell script (`socks5.sh`) that interactively installs, verifies, and manages a
@@ -250,7 +253,6 @@ Rationale: opening a port is a host-wide, security-relevant change with an owner
 problem that is disproportionate to a v1 whose job is to install one proxy. An earlier revision kept
 read-only detection to print backend-specific advice; the owner removed even that by decision —
 detection is functionality too.
-strictly safer and removes a prompt.
 
 ## 8. Build procedure
 1. Determine required packages and display them as part of the single §5 confirmation. apt:

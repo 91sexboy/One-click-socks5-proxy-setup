@@ -278,7 +278,7 @@ s5_redisplay_hint() {
     if [ -n "$S5_SELF" ]; then
         _rdh=$(s5_msg show.redisplay_with "$S5_SELF")
         s5_say "$_rdh"
-        _rdh='' 
+        _rdh=''
     else
         s5_say_msg show.redisplay_rerun
         s5_say_msg show.redisplay_rerun2
@@ -380,7 +380,7 @@ s5_say() {
 # ---------------------------------------------------------------------------
 # Bilingual message catalog (Round 16).
 #
-# Every script-owned operator message is being migrated into one keyed
+# Every script-owned operator message lives in one keyed
 # catalog. Each key is declared by a `# @s5-msg <key> <arity>` marker and owns
 # BOTH locales in the same case arm, so an untranslated key cannot be added
 # without the parity test seeing it. The catalog has hard rules:
@@ -402,42 +402,6 @@ s5_msg() {
     _s5_i18n_key=$1
     shift
     case "$_s5_i18n_key" in
-    # @s5-msg i18n.sample_plain 1
-    i18n.sample_plain)
-        [ "$#" -eq 1 ] || { s5_msg_contract_error i18n.sample_plain 1 "$#"; return 1; }
-        case "$S5_LANG" in
-        zh) printf '示例纯文本 %s' "${1}" ;;
-        en) printf 'sample plain text %s' "${1}" ;;
-        *) s5_msg_locale_error; return 1 ;;
-        esac
-        ;;
-    # @s5-msg i18n.sample_prompt 1
-    i18n.sample_prompt)
-        [ "$#" -eq 1 ] || { s5_msg_contract_error i18n.sample_prompt 1 "$#"; return 1; }
-        case "$S5_LANG" in
-        zh) printf '请输入 [%s]:' "${1}" ;;
-        en) printf 'please enter [%s]:' "${1}" ;;
-        *) s5_msg_locale_error; return 1 ;;
-        esac
-        ;;
-    # @s5-msg i18n.sample_note 1
-    i18n.sample_note)
-        [ "$#" -eq 1 ] || { s5_msg_contract_error i18n.sample_note 1 "$#"; return 1; }
-        case "$S5_LANG" in
-        zh) printf '已选择端口 %s' "${1}" ;;
-        en) printf 'selected port %s' "${1}" ;;
-        *) s5_msg_locale_error; return 1 ;;
-        esac
-        ;;
-    # @s5-msg i18n.sample_error 1
-    i18n.sample_error)
-        [ "$#" -eq 1 ] || { s5_msg_contract_error i18n.sample_error 1 "$#"; return 1; }
-        case "$S5_LANG" in
-        zh) printf '示例错误 %s' "${1}" ;;
-        en) printf 'sample error %s' "${1}" ;;
-        *) s5_msg_locale_error; return 1 ;;
-        esac
-        ;;
     # @s5-msg detect.unsupported 2
     detect.unsupported)
         [ "$#" -eq 2 ] || { s5_msg_contract_error detect.unsupported 2 "$#"; return 1; }
@@ -969,15 +933,6 @@ s5_msg() {
         *) s5_msg_locale_error; return 1 ;;
         esac
         ;;
-    # @s5-msg rollback.foreign_item 1
-    rollback.foreign_item)
-        [ "$#" -eq 1 ] || { s5_msg_contract_error rollback.foreign_item 1 "$#"; return 1; }
-        case "$S5_LANG" in
-        zh) printf '    %s' "${1}" ;;
-        en) printf '    %s' "${1}" ;;
-        *) s5_msg_locale_error; return 1 ;;
-        esac
-        ;;
 
     # @s5-msg show.redisplay_with 1
     show.redisplay_with)
@@ -1069,15 +1024,6 @@ s5_msg() {
         *) s5_msg_locale_error; return 1 ;;
         esac
         ;;
-    # @s5-msg card.details_header 0
-    card.details_header)
-        [ "$#" -eq 0 ] || { s5_msg_contract_error card.details_header 0 "$#"; return 1; }
-        case "$S5_LANG" in
-        zh) printf '================= SOCKS5 连接信息 =================' ;;
-        en) printf '================= SOCKS5 connection details =================' ;;
-        *) s5_msg_locale_error; return 1 ;;
-        esac
-        ;;
     # @s5-msg card.label_server 0
     card.label_server)
         [ "$#" -eq 0 ] || { s5_msg_contract_error card.label_server 0 "$#"; return 1; }
@@ -1142,15 +1088,6 @@ s5_msg() {
         esac
         ;;
 
-    # @s5-msg card.remember_sgp 1
-    card.remember_sgp)
-        [ "$#" -eq 1 ] || { s5_msg_contract_error card.remember_sgp 1 "$#"; return 1; }
-        case "$S5_LANG" in
-        zh) printf '  请记住在你的云安全组中允许入站 TCP %s。' "${1}" ;;
-        en) printf '  Remember to allow inbound TCP %s in your cloud security group.' "${1}" ;;
-        *) s5_msg_locale_error; return 1 ;;
-        esac
-        ;;
     # @s5-msg card.warning_encrypted 0
     card.warning_encrypted)
         [ "$#" -eq 0 ] || { s5_msg_contract_error card.warning_encrypted 0 "$#"; return 1; }
@@ -1178,30 +1115,12 @@ s5_msg() {
         *) s5_msg_locale_error; return 1 ;;
         esac
         ;;
-    # @s5-msg card.warning_vpn_short 0
-    card.warning_vpn_short)
-        [ "$#" -eq 0 ] || { s5_msg_contract_error card.warning_vpn_short 0 "$#"; return 1; }
-        case "$S5_LANG" in
-        zh) printf '           SOCKS5 不是 VPN。' ;;
-        en) printf '           SOCKS5 is not a VPN.' ;;
-        *) s5_msg_locale_error; return 1 ;;
-        esac
-        ;;
     # @s5-msg card.rule_end 0
     card.rule_end)
         [ "$#" -eq 0 ] || { s5_msg_contract_error card.rule_end 0 "$#"; return 1; }
         case "$S5_LANG" in
         zh) printf '========================================================' ;;
         en) printf '========================================================' ;;
-        *) s5_msg_locale_error; return 1 ;;
-        esac
-        ;;
-    # @s5-msg card.rule_end_details 0
-    card.rule_end_details)
-        [ "$#" -eq 0 ] || { s5_msg_contract_error card.rule_end_details 0 "$#"; return 1; }
-        case "$S5_LANG" in
-        zh) printf '============================================================' ;;
-        en) printf '============================================================' ;;
         *) s5_msg_locale_error; return 1 ;;
         esac
         ;;
@@ -1815,15 +1734,6 @@ s5_msg() {
         case "$S5_LANG" in
         zh) printf '无法删除状态目录 %s；状态已保留以便重试' "${1}" ;;
         en) printf 'could not remove the state directory %s; state was retained for retry' "${1}" ;;
-        *) s5_msg_locale_error; return 1 ;;
-        esac
-        ;;
-    # @s5-msg menu.title 0
-    menu.title)
-        [ "$#" -eq 0 ] || { s5_msg_contract_error menu.title 0 "$#"; return 1; }
-        case "$S5_LANG" in
-        zh) printf 'socks5-manager 管理菜单' ;;
-        en) printf 'socks5-manager management menu' ;;
         *) s5_msg_locale_error; return 1 ;;
         esac
         ;;
@@ -3364,18 +3274,14 @@ s5_prompt_msg() {
 }
 
 # ---------------------------------------------------------------------------
-# Language selection (Round 16, DORMANT until T13).
+# Language selection.
 #
-# Every invocation of the final product will ask this once, before any
-# command dispatch: blank or 1 selects Chinese, 2 selects English, anything
-# else re-prompts (bounded, like every other prompt), EOF fails without
-# dispatching. The prompt is bilingual by necessity -- no locale exists
-# until the operator answers. The choice lives only in S5_LANG for this
-# process: it is never exported, persisted, or written to state.
-#
-# NOT WIRED INTO s5_main YET: the message migration is staged, and wiring
-# the selector now would expose a Chinese menu followed by English errors.
-# Tests call it directly.
+# s5_main calls this once per invocation, before any command dispatch: blank
+# or 1 selects Chinese, 2 selects English, anything else re-prompts (bounded,
+# like every other prompt), EOF fails without dispatching. The prompt is
+# bilingual by necessity -- no locale exists until the operator answers. The
+# choice lives only in S5_LANG for this process: it is never exported,
+# persisted, or written to state.
 # ---------------------------------------------------------------------------
 s5_select_language() {
     _sla=0
@@ -4036,7 +3942,7 @@ s5_prompt_port() {
     _ppa=0
     while [ "$_ppa" -lt 5 ]; do
         _ppa=$((_ppa + 1))
-        s5_prompt_msg input.port_prompt "$S5_RANDPORT_MIN" "$S5_RANDPORT_MAX" 
+        s5_prompt_msg input.port_prompt "$S5_RANDPORT_MIN" "$S5_RANDPORT_MAX"
         _ppin=''
         if ! read -r _ppin; then
             s5_err_msg input.port_eof
@@ -5075,48 +4981,32 @@ s5_account_create() {
 
 # s5_del_user / s5_del_group : try the family's tool, then the other family's,
 # without ever assuming success.
-s5_del_user() {
+# _s5_del_principal <busybox-tool> <shadow-tool> <name> : delete a user or a
+# group with whichever tool the target actually provides. The family's native
+# tool is tried first -- busybox's deluser/delgroup on Alpine, shadow's
+# userdel/groupdel elsewhere -- and the other is the fallback. A tool that is
+# absent, or present but failing, falls through to the next candidate; only
+# both failing is a failure.
+_s5_del_principal() {
     case "$S5_OS_FAMILY" in
-    alpine)
-        if command -v deluser >/dev/null 2>&1 && deluser "$S5_SERVICE_USER" 2>/dev/null; then
-            return 0
-        fi
-        if command -v userdel >/dev/null 2>&1 && userdel "$S5_SERVICE_USER" 2>/dev/null; then
-            return 0
-        fi
-        ;;
-    *)
-        if command -v userdel >/dev/null 2>&1 && userdel "$S5_SERVICE_USER" 2>/dev/null; then
-            return 0
-        fi
-        if command -v deluser >/dev/null 2>&1 && deluser "$S5_SERVICE_USER" 2>/dev/null; then
-            return 0
-        fi
-        ;;
+    alpine) _dpfirst=$1; _dpsecond=$2 ;;
+    *) _dpfirst=$2; _dpsecond=$1 ;;
     esac
+    if command -v "$_dpfirst" >/dev/null 2>&1 && "$_dpfirst" "$3" 2>/dev/null; then
+        return 0
+    fi
+    if command -v "$_dpsecond" >/dev/null 2>&1 && "$_dpsecond" "$3" 2>/dev/null; then
+        return 0
+    fi
     return 1
 }
 
+s5_del_user() {
+    _s5_del_principal deluser userdel "$S5_SERVICE_USER"
+}
+
 s5_del_group() {
-    case "$S5_OS_FAMILY" in
-    alpine)
-        if command -v delgroup >/dev/null 2>&1 && delgroup "$S5_SERVICE_GROUP" 2>/dev/null; then
-            return 0
-        fi
-        if command -v groupdel >/dev/null 2>&1 && groupdel "$S5_SERVICE_GROUP" 2>/dev/null; then
-            return 0
-        fi
-        ;;
-    *)
-        if command -v groupdel >/dev/null 2>&1 && groupdel "$S5_SERVICE_GROUP" 2>/dev/null; then
-            return 0
-        fi
-        if command -v delgroup >/dev/null 2>&1 && delgroup "$S5_SERVICE_GROUP" 2>/dev/null; then
-            return 0
-        fi
-        ;;
-    esac
-    return 1
+    _s5_del_principal delgroup groupdel "$S5_SERVICE_GROUP"
 }
 
 # s5_account_remove <wantgroup> <recorded-uid> <recorded-gid> : returns
@@ -5278,9 +5168,15 @@ s5_static_check_cfg() {
         s5_err_msg static.one_credentials_include
         _scbad=1
     fi
+    # One socks line, and it must be exactly the one this port and listen
+    # address call for. The count and the exact-line test are separate defects
+    # with separate messages, so each is reported once rather than both firing
+    # for a single miscount.
     _scsockcount=$(grep -c '^socks[[:space:]]' "$_scf" || true)
-    if [ "$_scsockcount" -ne 1 ] ||
-        ! grep -qxF "socks -4 -u2 -p$S5_PORT -i$S5_LISTEN" "$_scf"; then
+    if [ "$_scsockcount" -ne 1 ]; then
+        s5_err_msg static.socks_count "$_scsockcount"
+        _scbad=1
+    elif ! grep -qxF "socks -4 -u2 -p$S5_PORT -i$S5_LISTEN" "$_scf"; then
         s5_err_msg static.one_socks_line "$S5_PORT" "$S5_LISTEN"
         _scbad=1
     fi
@@ -5339,12 +5235,6 @@ s5_static_check_cfg() {
     _sccidrcount=$(grep -c '^deny \* \* ' "$_scf" || true)
     if [ "$_sccidrcount" -ne "$_scwant" ]; then
         s5_err_msg static.deny_count "$_scwant" "$_sccidrcount"
-        _scbad=1
-    fi
-
-    _sccount=$(grep -c '^socks[[:space:]]' "$_scf" || true)
-    if [ "$_sccount" -ne 1 ]; then
-        s5_err_msg static.socks_count "$_sccount"
         _scbad=1
     fi
 
@@ -5569,8 +5459,8 @@ s5_service_install() {
 # "starting" while the supervised daemon is still coming up, and a start or
 # restart command issued against a "starting" service is refused with
 # " * WARNING: <svc> is already starting" and a nonzero exit -- even when
-# the daemon is in fact on its way up (observed in the first real CI run;
-# newer OpenRC completes the same install). The exit code answers for the
+# the daemon is in fact on its way up; newer OpenRC completes the same
+# install without the warning. The exit code answers for the
 # COMMAND; only the manager's status answers for the SERVICE. So a nonzero
 # exit is re-classified through the tri-state s5_service_active:
 #   active (0)        -> the service really is starting/started: success,
@@ -5578,8 +5468,11 @@ s5_service_install() {
 #                        socket, exactly as for a zero exit.
 #   inactive (1)      -> genuinely failed: report the original nonzero.
 #   unobservable (2)  -> fail closed, reporting the original nonzero.
-# No sleep is needed: the re-query is a classification, not a wait, and the
-# bounded port wait that follows is already the readiness mechanism.
+# The re-query is a classification, not a wait: readiness itself is settled by
+# the bounded port wait that follows. The inactive arm is the one exception --
+# a start refused under lock contention answers inactive before the lock's
+# holder finishes -- so that arm alone retries, four attempts one second
+# apart, before reporting the original nonzero.
 _s5_openrc_start() {
     # rc-service's exit status reports the start COMMAND, and openrc-run
     # prints "already starting" with a nonzero exit when the service's
@@ -5587,8 +5480,8 @@ _s5_openrc_start() {
     # with another process, not a verdict that the service cannot run. So a
     # nonzero start is re-queried against the manager's own tri-state: active
     # means the start took (the port wait settles readiness); definitely
-    # inactive gets a bounded retry for the lock-contention shape (the third
-    # CI run showed Alpine 3.20's re-query answering stopped there); anything
+    # inactive gets a bounded retry for the lock-contention shape (Alpine
+    # 3.20's re-query can answer stopped while the lock is held); anything
     # else fails closed on the first attempt.
     _oon=0
     while [ "$_oon" -le 3 ]; do
@@ -6854,7 +6747,7 @@ s5_cmd_uninstall() {
         _unh=$(s5_cmd_hint uninstall)
         _unmsg=$(s5_msg uninstall.resolve_then)
         s5_err "$_unmsg $_unh"
-        _unh=''; _unmsg='' 
+        _unh=''; _unmsg=''
         return "$EX_FAIL"
     fi
 

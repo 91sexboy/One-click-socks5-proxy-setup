@@ -151,33 +151,33 @@ S5_LANG=en
 S5_SECRET='RuntimeSecret123'
 s5env_reset_transcript
 
-t_run s5_err_msg i18n.sample_error 'RuntimeSecret123'
+t_run s5_err_msg state.disallowed_char 'RuntimeSecret123'
 assert_eq "err adapter returns success" 0 "$T_STATUS"
 assert_contains "err adapter keeps the [x] prefix" "[x]" "$T_OUT"
 assert_contains "err adapter redacts the secret" "***REDACTED***" "$T_OUT"
 assert_not_contains "err adapter does not leak the secret" "RuntimeSecret123" "$T_OUT"
 
-t_run s5_log_msg i18n.sample_note '41080'
+t_run s5_log_msg input.log_random_port '41080'
 assert_contains "log adapter keeps the [*] prefix" "[*]" "$T_OUT"
 assert_contains "log adapter renders its argument" "41080" "$T_OUT"
 
-t_run s5_say_msg i18n.sample_plain 'plain-value'
+t_run s5_say_msg status.heading 'plain-value'
 assert_contains "say adapter renders plain output" "plain-value" "$T_OUT"
 
 # The prompt adapter writes to stderr without a newline; it must not pollute
 # stdout, which is what a piped installer's captured output would swallow.
 S5_LANG=en
-prompt_out=$(s5_prompt_msg i18n.sample_prompt '20000-60000' 2>/dev/null)
+prompt_out=$(s5_prompt_msg input.password_prompt '20000-60000' 2>/dev/null)
 assert_eq "prompt adapter writes nothing to stdout" "" "$prompt_out"
 
 # Arity enforcement: too few and too many arguments fail, and the failure
 # names only the key and counts -- never the argument values.
-t_run s5_err_msg i18n.sample_error
+t_run s5_err_msg state.disallowed_char
 assert_ne "missing argument fails" 0 "$T_STATUS"
-assert_contains "arity error names the key" "i18n.sample_error" "$T_OUT"
+assert_contains "arity error names the key" "state.disallowed_char" "$T_OUT"
 assert_not_contains "arity error does not print argument values" \
     'sentinel-value' "$T_OUT"
-t_run s5_err_msg i18n.sample_error 'sentinel-value' 'extra-argument'
+t_run s5_err_msg state.disallowed_char 'sentinel-value' 'extra-argument'
 assert_ne "extra argument fails" 0 "$T_STATUS"
 
 # Unknown keys fail loudly in both locales.
@@ -190,9 +190,9 @@ assert_ne "unknown key fails in Chinese too" 0 "$T_STATUS"
 
 # Both locales render the same argument data.
 S5_LANG=en
-en_out=$(s5_say_msg i18n.sample_plain 'Addr-Data-42')
+en_out=$(s5_say_msg status.heading 'Addr-Data-42')
 S5_LANG=zh
-zh_out=$(s5_say_msg i18n.sample_plain 'Addr-Data-42')
+zh_out=$(s5_say_msg status.heading 'Addr-Data-42')
 assert_contains "English renders the argument" 'Addr-Data-42' "$en_out"
 assert_contains "Chinese renders the argument" 'Addr-Data-42' "$zh_out"
 if [ "$en_out" != "$zh_out" ]; then
@@ -207,9 +207,9 @@ fi
 # is that each rendering contains the hostile literal untouched.
 for hostile in '%s %d %n' '..\\..; rm -rf' '`id`' '$(id)' 'a%20b'; do
     S5_LANG=en
-    h1=$(s5_say_msg i18n.sample_plain "$hostile")
+    h1=$(s5_say_msg status.heading "$hostile")
     S5_LANG=zh
-    h2=$(s5_say_msg i18n.sample_plain "$hostile")
+    h2=$(s5_say_msg status.heading "$hostile")
     if printf '%s' "$h1" | grep -qF -- "$hostile" &&
         printf '%s' "$h2" | grep -qF -- "$hostile" &&
         [ "$h1" != "$h2" ]; then
@@ -221,10 +221,10 @@ done
 
 # An unset locale fails closed rather than guessing a language.
 S5_LANG=''
-t_run s5_say_msg i18n.sample_plain 'x'
+t_run s5_say_msg status.heading 'x'
 assert_ne "unset locale fails closed" 0 "$T_STATUS"
 S5_LANG=fr
-t_run s5_say_msg i18n.sample_plain 'x'
+t_run s5_say_msg status.heading 'x'
 assert_ne "unsupported locale fails closed" 0 "$T_STATUS"
 
 # S5_LANG must not leak into child environments from the script's own

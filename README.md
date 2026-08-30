@@ -92,26 +92,35 @@ sudo sh socks5.sh
 On stock Alpine this read-it-first form works as-is: the script itself is
 plain POSIX `sh` — only the `<(...)` download form needs Bash.
 
-### Immutable v1.0.0 release
+### Immutable tagged releases
 
-`main` is convenient but moves. The reviewed script is published as immutable tag `v1.0.0` only
-after this evidence-closure revision passes all 45 CI jobs. Its exact bytes have this SHA-256:
+`main` is convenient but moves, so every reviewed revision is published as an immutable tag.
+
+**`v1.0.0` — published.** Created at closure commit `91fd13a` after its own reachable-main run
+[`33282068288`](https://github.com/91sexboy/One-click-socks5-proxy-setup/actions/runs/33282068288)
+passed all 45 jobs. It is fetchable at
+`https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-setup/v1.0.0/socks5.sh` and its
+bytes have SHA-256 `acbfbfe3e6ba0f37f4e2a24ba8a6d68ec5a36513caae2e22e44a0ed28322e0b1`.
+
+**`v1.0.1` — candidate.** Round 18 removed ten unreferenced catalog keys, corrected three comments
+that contradicted the code they documented, and folded two duplicated checks into one. Operator
+behaviour is unchanged, but the bytes are not, so this revision carries a different SHA-256:
 
 ```text
-acbfbfe3e6ba0f37f4e2a24ba8a6d68ec5a36513caae2e22e44a0ed28322e0b1  socks5.sh
+b15a38f729c324b3301be2f1121439dfb6eb607ece9dbde07400633f8d0ef7ec  socks5.sh
 ```
 
-Once the tag exists, download and verify that immutable artifact before running it as root:
+Download and verify the tagged artifact before running it as root:
 
 ```sh
-wget -qO socks5.sh https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-setup/v1.0.0/socks5.sh
-printf '%s  %s\n' 'acbfbfe3e6ba0f37f4e2a24ba8a6d68ec5a36513caae2e22e44a0ed28322e0b1' socks5.sh | sha256sum -c -
+wget -qO socks5.sh https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-setup/v1.0.1/socks5.sh
+printf '%s  %s\n' 'b15a38f729c324b3301be2f1121439dfb6eb607ece9dbde07400633f8d0ef7ec' socks5.sh | sha256sum -c -
 sudo sh socks5.sh
 ```
 
-The tag is created at this evidence-closure commit only after its own 45/45 run succeeds, and is
-never moved. The tag's existence is therefore the final proof that the implementation run, the
-evidence-only run, and the reachable tagged tree all passed.
+Tag `v1.0.1` is created at this revision only after its own 45/45 run succeeds, and is never moved.
+A tag's existence is therefore the final proof that its implementation run, its evidence-only run,
+and its reachable tagged tree all passed.
 
 ## The interactive flow
 
@@ -395,7 +404,10 @@ at commit `df6885c`, **45 of 45 jobs passed**:
 > [`33281392984`](https://github.com/91sexboy/One-click-socks5-proxy-setup/actions/runs/33281392984)
 > with **45 of 45 jobs**. Evidence-only commit `a8ed825` then passed run
 > [`33281724740`](https://github.com/91sexboy/One-click-socks5-proxy-setup/actions/runs/33281724740),
-> also 45/45. This closure revision pins both results; it becomes immutable tag `v1.0.0` only after
+> also 45/45. Closure commit `91fd13a` then passed run
+> [`33282068288`](https://github.com/91sexboy/One-click-socks5-proxy-setup/actions/runs/33282068288),
+> also 45/45, and tag `v1.0.0` was created there. The Round 18 revision above pins all three
+> results; it becomes immutable tag `v1.0.1` only after
 > its own final reachable-main run passes all 45 jobs. Runs `33245460710` / `33246222640` remain
 > historical evidence for the previous bilingual state.
 
