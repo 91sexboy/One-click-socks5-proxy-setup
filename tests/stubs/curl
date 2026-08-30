@@ -17,6 +17,32 @@ if [ "${1:-}" = "-q" ]; then
     shift
 fi
 
+case "$*" in
+*'/releases/download/engine-3proxy-0.9.9.0-r1/3proxy-'*)
+    if [ -f "$S5_TEST_ROOT/stub_asset_download_fail" ]; then
+        exit 22
+    fi
+    _out=''
+    _prev=''
+    for _a in "$@"; do
+        if [ "$_prev" = "--output" ] || [ "$_prev" = "-o" ]; then
+            _out=$_a
+        fi
+        _prev=$_a
+    done
+    [ -n "$_out" ] || exit 2
+    if [ -f "$S5_TEST_ROOT/stub_asset_truncated" ]; then
+        _size=$(wc -c <"$S5_TEST_ROOT/stub_engine_asset")
+        head -c "$((_size - 1))" "$S5_TEST_ROOT/stub_engine_asset" >"$_out"
+    elif [ -f "$S5_TEST_ROOT/stub_asset_corrupt" ]; then
+        sed '1s/./X/' "$S5_TEST_ROOT/stub_engine_asset" >"$_out"
+    else
+        cp "$S5_TEST_ROOT/stub_engine_asset" "$_out"
+    fi
+    exit 0
+    ;;
+esac
+
 if [ "${1:-}" = "--config" ] && [ "${2:-}" = "-" ]; then
     IN="$S5_TEST_ROOT/curl_stdin"
     cat >>"$IN"

@@ -26,6 +26,23 @@ S5_SERVICE_GROUP=socks5proxy
 S5_PINNED_COMMIT=da99424eac4092e3722f1a5b1844cfe80478f580
 S5_UPSTREAM_TAG=0.9.9.0
 S5_REPO_URL=https://github.com/3proxy/3proxy
+S5_ENGINE_RELEASE=engine-3proxy-0.9.9.0-r1
+S5_ENGINE_BASE_URL=https://github.com/91sexboy/One-click-socks5-proxy-setup/releases/download/$S5_ENGINE_RELEASE
+S5_ASSET_GLIBC_AMD64=3proxy-0.9.9.0-da99424-linux-glibc-amd64
+S5_ASSET_GLIBC_AMD64_SHA=ce3c604d0133df0028b4e9cd93c326b36790db789c769b2a2c78b400b9967a80
+S5_ASSET_GLIBC_AMD64_SIZE=263168
+S5_ASSET_GLIBC_ARM64=3proxy-0.9.9.0-da99424-linux-glibc-arm64
+S5_ASSET_GLIBC_ARM64_SHA=344e482272e5c16d1f9c762d7ed240cda43bb050a53be767e5393a616607ccf5
+S5_ASSET_GLIBC_ARM64_SIZE=279288
+S5_ASSET_MUSL_AMD64=3proxy-0.9.9.0-da99424-linux-musl-amd64
+S5_ASSET_MUSL_AMD64_SHA=ac3fe1a7d52d2b1494d4d00884fc7517acb2340454c2653c95a7346c05d69298
+S5_ASSET_MUSL_AMD64_SIZE=298280
+S5_ASSET_MUSL_ARM64=3proxy-0.9.9.0-da99424-linux-musl-arm64
+S5_ASSET_MUSL_ARM64_SHA=38f2733dfc5d375a4faaebe79f66bd181c7cc3e7b3eb9443c3ac4476fbfeebeb
+S5_ASSET_MUSL_ARM64_SIZE=277624
+S5_ASSET_NAME=''
+S5_ASSET_SHA256=''
+S5_ASSET_SIZE=''
 # Fixed by decision: the self-test target is not configurable.
 S5_SELFTEST_URL=https://example.com/
 
@@ -231,6 +248,10 @@ s5_guard_environment() {
     s5_note_override S5_LOGSINK "${S5_LOGSINK:-}"
     s5_note_override S5_LISTEN "${S5_LISTEN:-}"
     s5_note_override S5_TMPMODE_LOG "${S5_TMPMODE_LOG:-}"
+    s5_note_override S5_TEST_ASSET_SHA256 "${S5_TEST_ASSET_SHA256:-}"
+    s5_note_override S5_TEST_ASSET_SIZE "${S5_TEST_ASSET_SIZE:-}"
+    s5_note_override S5_PROC_NET_TCP "${S5_PROC_NET_TCP:-}"
+    s5_note_override S5_PROC_NET_TCP6 "${S5_PROC_NET_TCP6:-}"
 
     if [ -n "$s5_found_overrides" ]; then
         printf '%s: refusing to run: test-mode variable(s) set outside test mode:%s\n' \
@@ -311,6 +332,8 @@ S5_USERSCFG="$S5_SYSCONFDIR/users.cfg"
 S5_STATE="$S5_STATEDIR/state"
 S5_UNIT="$S5_UNITDIR/$S5_PROJECT.service"
 S5_INITSCRIPT="$S5_INITDIR/$S5_PROJECT"
+S5_PROC_NET_TCP=${S5_PROC_NET_TCP:-/proc/net/tcp}
+S5_PROC_NET_TCP6=${S5_PROC_NET_TCP6:-/proc/net/tcp6}
 S5_LOCKDIR="$S5_ROOTDIR/run/$S5_PROJECT.lock"
 S5_LOCK_OWNER="$S5_LOCKDIR/owner"
 S5_TXNDIR="$S5_STATEDIR/reconfigure-transaction"
@@ -1632,6 +1655,24 @@ s5_msg() {
         *) s5_msg_locale_error; return 1 ;;
         esac
         ;;
+    # @s5-msg status.label_asset 0
+    status.label_asset)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error status.label_asset 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '  资产     ：' ;;
+        en) printf '  asset     : ' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg status.label_sha256 0
+    status.label_sha256)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error status.label_sha256 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '  SHA-256  ：' ;;
+        en) printf '  SHA-256   : ' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
     # @s5-msg status.label_binary 0
     status.label_binary)
         [ "$#" -eq 0 ] || { s5_msg_contract_error status.label_binary 0 "$#"; return 1; }
@@ -2571,15 +2612,6 @@ s5_msg() {
         *) s5_msg_locale_error; return 1 ;;
         esac
         ;;
-    # @s5-msg install.pkg_no_deps 1
-    install.pkg_no_deps)
-        [ "$#" -eq 1 ] || { s5_msg_contract_error install.pkg_no_deps 1 "$#"; return 1; }
-        case "$S5_LANG" in
-        zh) printf '没有适用于包管理器 %s 的依赖列表' "${1}" ;;
-        en) printf 'no dependency list for package manager: %s' "${1}" ;;
-        *) s5_msg_locale_error; return 1 ;;
-        esac
-        ;;
     # @s5-msg install.pkg_meta_failed 0
     install.pkg_meta_failed)
         [ "$#" -eq 0 ] || { s5_msg_contract_error install.pkg_meta_failed 0 "$#"; return 1; }
@@ -2612,8 +2644,8 @@ s5_msg() {
     build.rm_refuse_empty)
         [ "$#" -eq 0 ] || { s5_msg_contract_error build.rm_refuse_empty 0 "$#"; return 1; }
         case "$S5_LANG" in
-        zh) printf '拒绝删除构建目录：<empty>' ;;
-        en) printf 'refusing to remove build directory: <empty>' ;;
+        zh) printf '拒绝删除临时目录：<empty>' ;;
+        en) printf 'refusing to remove temporary directory: <empty>' ;;
         *) s5_msg_locale_error; return 1 ;;
         esac
         ;;
@@ -2621,8 +2653,8 @@ s5_msg() {
     build.rm_failed)
         [ "$#" -eq 1 ] || { s5_msg_contract_error build.rm_failed 1 "$#"; return 1; }
         case "$S5_LANG" in
-        zh) printf '无法删除构建目录 %s' "${1}" ;;
-        en) printf 'could not remove build directory %s' "${1}" ;;
+        zh) printf '无法删除临时目录 %s' "${1}" ;;
+        en) printf 'could not remove temporary directory %s' "${1}" ;;
         *) s5_msg_locale_error; return 1 ;;
         esac
         ;;
@@ -2630,8 +2662,8 @@ s5_msg() {
     build.rm_still_exists)
         [ "$#" -eq 1 ] || { s5_msg_contract_error build.rm_still_exists 1 "$#"; return 1; }
         case "$S5_LANG" in
-        zh) printf '删除后构建目录仍然存在：%s' "${1}" ;;
-        en) printf 'build directory still exists after removal: %s' "${1}" ;;
+        zh) printf '删除后临时目录仍然存在：%s' "${1}" ;;
+        en) printf 'temporary directory still exists after removal: %s' "${1}" ;;
         *) s5_msg_locale_error; return 1 ;;
         esac
         ;;
@@ -2639,8 +2671,8 @@ s5_msg() {
     build.rm_unexpected)
         [ "$#" -eq 1 ] || { s5_msg_contract_error build.rm_unexpected 1 "$#"; return 1; }
         case "$S5_LANG" in
-        zh) printf '拒绝删除非预期的构建目录：%s' "${1}" ;;
-        en) printf 'refusing to remove unexpected build directory: %s' "${1}" ;;
+        zh) printf '拒绝删除非预期的临时目录：%s' "${1}" ;;
+        en) printf 'refusing to remove unexpected temporary directory: %s' "${1}" ;;
         *) s5_msg_locale_error; return 1 ;;
         esac
         ;;
@@ -2657,8 +2689,8 @@ s5_msg() {
     build.copy_failed)
         [ "$#" -eq 0 ] || { s5_msg_contract_error build.copy_failed 0 "$#"; return 1; }
         case "$S5_LANG" in
-        zh) printf '无法将编译好的二进制复制到安装位置' ;;
-        en) printf 'cannot copy the built binary to the install location' ;;
+        zh) printf '无法将已验证的二进制复制到安装位置' ;;
+        en) printf 'cannot copy the verified binary to the install location' ;;
         *) s5_msg_locale_error; return 1 ;;
         esac
         ;;
@@ -2675,71 +2707,80 @@ s5_msg() {
     build.mktmpdir_failed)
         [ "$#" -eq 0 ] || { s5_msg_contract_error build.mktmpdir_failed 0 "$#"; return 1; }
         case "$S5_LANG" in
-        zh) printf '无法创建构建目录' ;;
-        en) printf 'cannot create a build directory' ;;
+        zh) printf '无法创建下载临时目录' ;;
+        en) printf 'cannot create a download temporary directory' ;;
         *) s5_msg_locale_error; return 1 ;;
         esac
         ;;
-    # @s5-msg build.fetching 2
-    build.fetching)
-        [ "$#" -eq 2 ] || { s5_msg_contract_error build.fetching 2 "$#"; return 1; }
+    # @s5-msg asset.unsupported 2
+    asset.unsupported)
+        [ "$#" -eq 2 ] || { s5_msg_contract_error asset.unsupported 2 "$#"; return 1; }
         case "$S5_LANG" in
-        zh) printf '正在从 %s 获取 3proxy %s' "${1}" "${2}" ;;
-        en) printf 'fetching 3proxy %s from %s' "${1}" "${2}" ;;
+        zh) printf '没有适用于 %s/%s 的预编译引擎' "${1}" "${2}" ;;
+        en) printf 'no prebuilt engine is available for %s/%s' "${1}" "${2}" ;;
         *) s5_msg_locale_error; return 1 ;;
         esac
         ;;
-    # @s5-msg build.clone_failed 0
-    build.clone_failed)
-        [ "$#" -eq 0 ] || { s5_msg_contract_error build.clone_failed 0 "$#"; return 1; }
+    # @s5-msg asset.metadata_invalid 1
+    asset.metadata_invalid)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error asset.metadata_invalid 1 "$#"; return 1; }
         case "$S5_LANG" in
-        zh) printf 'git clone 失败' ;;
-        en) printf 'git clone failed' ;;
+        zh) printf '预编译资产元数据无效：%s' "${1}" ;;
+        en) printf 'invalid prebuilt asset metadata: %s' "${1}" ;;
         *) s5_msg_locale_error; return 1 ;;
         esac
         ;;
-    # @s5-msg build.checkout_pinned 1
-    build.checkout_pinned)
-        [ "$#" -eq 1 ] || { s5_msg_contract_error build.checkout_pinned 1 "$#"; return 1; }
+    # @s5-msg asset.fetching 2
+    asset.fetching)
+        [ "$#" -eq 2 ] || { s5_msg_contract_error asset.fetching 2 "$#"; return 1; }
         case "$S5_LANG" in
-        zh) printf '正在检出固定提交 %s' "${1}" ;;
-        en) printf 'checking out pinned commit %s' "${1}" ;;
+        zh) printf '正在下载已验证的 %s（发布 %s）' "${1}" "${2}" ;;
+        en) printf 'downloading verified %s (release %s)' "${1}" "${2}" ;;
         *) s5_msg_locale_error; return 1 ;;
         esac
         ;;
-    # @s5-msg build.checkout_failed 0
-    build.checkout_failed)
-        [ "$#" -eq 0 ] || { s5_msg_contract_error build.checkout_failed 0 "$#"; return 1; }
+    # @s5-msg asset.download_failed 1
+    asset.download_failed)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error asset.download_failed 1 "$#"; return 1; }
         case "$S5_LANG" in
-        zh) printf '检出固定提交失败' ;;
-        en) printf 'git checkout of the pinned commit failed' ;;
+        zh) printf '下载预编译引擎失败：%s' "${1}" ;;
+        en) printf 'failed to download the prebuilt engine: %s' "${1}" ;;
         *) s5_msg_locale_error; return 1 ;;
         esac
         ;;
-    # @s5-msg build.head_mismatch 2
-    build.head_mismatch)
-        [ "$#" -eq 2 ] || { s5_msg_contract_error build.head_mismatch 2 "$#"; return 1; }
+    # @s5-msg asset.size_mismatch 2
+    asset.size_mismatch)
+        [ "$#" -eq 2 ] || { s5_msg_contract_error asset.size_mismatch 2 "$#"; return 1; }
         case "$S5_LANG" in
-        zh) printf 'HEAD 校验失败：期望 %s，实际 %s' "${1}" "${2}" ;;
-        en) printf 'HEAD verification failed: expected %s, got %s' "${1}" "${2}" ;;
+        zh) printf '预编译引擎大小校验失败：期望 %s 字节，实际 %s 字节' "${1}" "${2}" ;;
+        en) printf 'prebuilt engine size check failed: expected %s bytes, got %s bytes' "${1}" "${2}" ;;
         *) s5_msg_locale_error; return 1 ;;
         esac
         ;;
-    # @s5-msg build.head_verified 0
-    build.head_verified)
-        [ "$#" -eq 0 ] || { s5_msg_contract_error build.head_verified 0 "$#"; return 1; }
+    # @s5-msg asset.checksum_mismatch 1
+    asset.checksum_mismatch)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error asset.checksum_mismatch 1 "$#"; return 1; }
         case "$S5_LANG" in
-        zh) printf 'HEAD 已通过固定提交校验' ;;
-        en) printf 'HEAD verified against the pinned commit' ;;
+        zh) printf '预编译引擎 SHA-256 校验失败：%s' "${1}" ;;
+        en) printf 'prebuilt engine SHA-256 verification failed: %s' "${1}" ;;
         *) s5_msg_locale_error; return 1 ;;
         esac
         ;;
-    # @s5-msg build.make_failed 0
-    build.make_failed)
-        [ "$#" -eq 0 ] || { s5_msg_contract_error build.make_failed 0 "$#"; return 1; }
+    # @s5-msg asset.installed_checksum_mismatch 1
+    asset.installed_checksum_mismatch)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error asset.installed_checksum_mismatch 1 "$#"; return 1; }
         case "$S5_LANG" in
-        zh) printf '编译失败（make -f Makefile.Linux）' ;;
-        en) printf 'build failed (make -f Makefile.Linux)' ;;
+        zh) printf '安装后的二进制 SHA-256 校验失败：%s' "${1}" ;;
+        en) printf 'installed binary SHA-256 verification failed: %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg asset.verified 1
+    asset.verified)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error asset.verified 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '预编译引擎已通过 SHA-256 校验：%s' "${1}" ;;
+        en) printf 'prebuilt engine passed SHA-256 verification: %s' "${1}" ;;
         *) s5_msg_locale_error; return 1 ;;
         esac
         ;;
@@ -2747,17 +2788,8 @@ s5_msg() {
     build.no_artifact)
         [ "$#" -eq 0 ] || { s5_msg_contract_error build.no_artifact 0 "$#"; return 1; }
         case "$S5_LANG" in
-        zh) printf '编译没有产生常规的 bin/3proxy 产物' ;;
-        en) printf 'build produced no regular bin/3proxy artifact' ;;
-        *) s5_msg_locale_error; return 1 ;;
-        esac
-        ;;
-    # @s5-msg build.not_executable 0
-    build.not_executable)
-        [ "$#" -eq 0 ] || { s5_msg_contract_error build.not_executable 0 "$#"; return 1; }
-        case "$S5_LANG" in
-        zh) printf '编译出的 bin/3proxy 不可执行' ;;
-        en) printf 'built bin/3proxy is not executable' ;;
+        zh) printf '下载未产生常规的 3proxy 二进制文件' ;;
+        en) printf 'download produced no regular 3proxy binary' ;;
         *) s5_msg_locale_error; return 1 ;;
         esac
         ;;
@@ -3236,6 +3268,42 @@ s5_msg() {
         case "$S5_LANG" in
         zh) printf 'state：用户名无效' ;;
         en) printf 'state: username is not valid' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg state.origin_invalid 0
+    state.origin_invalid)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error state.origin_invalid 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf 'state：安装来源无效' ;;
+        en) printf 'state: install origin is invalid' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg state.asset_invalid 0
+    state.asset_invalid)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error state.asset_invalid 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf 'state：预编译资产名称无效' ;;
+        en) printf 'state: prebuilt asset name is invalid' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg state.sha256_invalid 0
+    state.sha256_invalid)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error state.sha256_invalid 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf 'state：预编译资产 SHA-256 无效' ;;
+        en) printf 'state: prebuilt asset SHA-256 is invalid' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg state.asset_mismatch 0
+    state.asset_mismatch)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error state.asset_mismatch 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf 'state：预编译资产与记录的平台或 SHA-256 不一致' ;;
+        en) printf 'state: prebuilt asset does not match the recorded platform or SHA-256' ;;
         *) s5_msg_locale_error; return 1 ;;
         esac
         ;;
@@ -3719,6 +3787,7 @@ S5_ROLLBACK_ARMED=0
 S5_RECONFIG_ARMED=0
 S5_INSTALL_COMPLETE=0
 S5_WORKDIR=''
+S5_INSTALL_TMP=''
 S5_IN_CLEANUP=0
 S5_LOCK_HELD=0
 S5_LOCK_TOKEN=''
@@ -3738,6 +3807,21 @@ s5_cleanup() {
         else
             _clbad=1
         fi
+    fi
+
+    if [ -n "$S5_INSTALL_TMP" ]; then
+        case "$S5_INSTALL_TMP" in
+        "$S5_PREFIX"/.s5bin.??????)
+            rm -f "$S5_INSTALL_TMP" || _clbad=1
+            if [ ! -e "$S5_INSTALL_TMP" ] && [ ! -L "$S5_INSTALL_TMP" ]; then
+                S5_INSTALL_TMP=''
+            fi
+            ;;
+        *)
+            s5_warn_msg build.rm_unexpected "$S5_INSTALL_TMP"
+            _clbad=1
+            ;;
+        esac
     fi
 
     if [ "$S5_RECONFIG_ARMED" = "1" ]; then
@@ -3838,6 +3922,57 @@ s5_map_arch() {
     esac
 }
 
+s5_select_engine_asset() {
+    _sea_mode=${1:-runtime}
+    case "$S5_OS_FAMILY:$S5_ARCHNAME" in
+    debian:amd64 | el:amd64)
+        S5_ASSET_NAME=$S5_ASSET_GLIBC_AMD64
+        S5_ASSET_SHA256=$S5_ASSET_GLIBC_AMD64_SHA
+        S5_ASSET_SIZE=$S5_ASSET_GLIBC_AMD64_SIZE
+        ;;
+    debian:arm64 | el:arm64)
+        S5_ASSET_NAME=$S5_ASSET_GLIBC_ARM64
+        S5_ASSET_SHA256=$S5_ASSET_GLIBC_ARM64_SHA
+        S5_ASSET_SIZE=$S5_ASSET_GLIBC_ARM64_SIZE
+        ;;
+    alpine:amd64)
+        S5_ASSET_NAME=$S5_ASSET_MUSL_AMD64
+        S5_ASSET_SHA256=$S5_ASSET_MUSL_AMD64_SHA
+        S5_ASSET_SIZE=$S5_ASSET_MUSL_AMD64_SIZE
+        ;;
+    alpine:arm64)
+        S5_ASSET_NAME=$S5_ASSET_MUSL_ARM64
+        S5_ASSET_SHA256=$S5_ASSET_MUSL_ARM64_SHA
+        S5_ASSET_SIZE=$S5_ASSET_MUSL_ARM64_SIZE
+        ;;
+    *)
+        s5_err_msg asset.unsupported "$S5_OS_FAMILY" "$S5_ARCHNAME"
+        return "$EX_UNSUPPORTED"
+        ;;
+    esac
+    if [ "$_sea_mode" = runtime ] && [ "${S5_TEST_MODE:-0}" = 1 ] &&
+        { [ -n "${S5_TEST_ASSET_SHA256:-}" ] || [ -n "${S5_TEST_ASSET_SIZE:-}" ]; }; then
+        if [ -z "${S5_TEST_ASSET_SHA256:-}" ] || [ -z "${S5_TEST_ASSET_SIZE:-}" ]; then
+            s5_err_msg asset.metadata_invalid "$S5_ASSET_NAME"
+            return 1
+        fi
+        S5_ASSET_SHA256=$S5_TEST_ASSET_SHA256
+        S5_ASSET_SIZE=$S5_TEST_ASSET_SIZE
+    fi
+    if [ "${#S5_ASSET_SHA256}" -ne 64 ]; then
+        s5_err_msg asset.metadata_invalid "$S5_ASSET_NAME"
+        return 1
+    fi
+    case "$S5_ASSET_SHA256" in
+    *[!0-9a-f]*) s5_err_msg asset.metadata_invalid "$S5_ASSET_NAME"; return 1 ;;
+    esac
+    case "$S5_ASSET_SIZE" in
+    '' | *[!0-9]* | 0) s5_err_msg asset.metadata_invalid "$S5_ASSET_NAME"; return 1 ;;
+    esac
+    S5_ASSET_URL="$S5_ENGINE_BASE_URL/$S5_ASSET_NAME"
+    return 0
+}
+
 # ID_LIKE is deliberately NEVER used to authorise an install.  RHEL, Rocky and
 # AlmaLinux are recognised only so we can tell the operator they are likely
 # compatible, and then refuse.
@@ -3908,28 +4043,26 @@ s5_detect_platform() {
     return "$EX_UNSUPPORTED"
 }
 
-# s5_build_deps <pkgmgr> : packages needed only to compile 3proxy.
-# ca-certificates is explicit on apt because Debian's git merely recommends
-# it: with APT::Install-Recommends=false the HTTPS clone then fails
-# certificate verification on an otherwise clean host. apk and dnf both pull
-# it as a hard dependency of git, so it is not listed for them.
-s5_build_deps() {
-    case "$1" in
-    apt) printf 'git build-essential ca-certificates\n' ;;
-    apk) printf 'git build-base musl-dev linux-headers\n' ;;
-    dnf | yum) printf 'git gcc make\n' ;;
-    *) return 1 ;;
-    esac
+s5_ca_bundle_available() {
+    for _caf in /etc/ssl/certs/ca-certificates.crt \
+        /etc/pki/tls/certs/ca-bundle.crt \
+        /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem; do
+        if [ -s "$_caf" ]; then
+            return 0
+        fi
+    done
+    return 1
 }
 
-# s5_runtime_deps : tools needed to verify and self-test the installed proxy.
-# curl is added only when absent. A clean host also needs one reliable way to
-# inspect listening TCP ports before the port prompt; install the distro package
-# that provides ss only when neither ss nor netstat (nor a test probe) exists.
+# Runtime-only dependencies. The target host never receives a compiler, make,
+# headers, or Git merely to install the proxy.
 s5_runtime_deps() {
     _rt=''
     if ! command -v curl >/dev/null 2>&1; then
         _rt='curl'
+    fi
+    if ! s5_ca_bundle_available; then
+        if [ -n "$_rt" ]; then _rt="$_rt ca-certificates"; else _rt='ca-certificates'; fi
     fi
     if ! s5_port_probe_available; then
         case "$S5_PKGMGR" in
@@ -3957,7 +4090,7 @@ s5_runtime_deps() {
 # mid-install (chown while applying credential-file ownership, uname on the very
 # next line of s5_precheck, tail in the destination-deny ordering check, rmdir
 # during uninstall, cp for transactional backups, and wc for response bounds).
-S5_BASE_COMMANDS='sed awk grep tr head tail cut id chown chmod mkdir rmdir rm mv cp cat printf stat mktemp dirname uname wc'
+S5_BASE_COMMANDS='sed awk grep tr head tail cut id chown chmod mkdir rmdir rm mv cp cat printf stat mktemp dirname uname wc sha256sum'
 
 s5_require_commands() {
     _miss=''
@@ -4005,6 +4138,9 @@ s5_precheck() {
         return "$EX_UNSUPPORTED"
     fi
     S5_ARCHNAME=$(s5_map_arch "$(uname -m)") || return "$EX_UNSUPPORTED"
+    if ! s5_select_engine_asset production; then
+        return "$EX_UNSUPPORTED"
+    fi
     if ! s5_is_root; then
         s5_err_msg detect.require_root
         return "$EX_FAIL"
@@ -4153,13 +4289,76 @@ s5_random_int() {
     done
 }
 
-# Split out so the fail-closed path in s5_port_free is directly testable
-# (busybox ships netstat as a built-in applet that PATH cannot hide).
-#
-# A probe must WORK, not merely exist: `command -v` alone used to treat a
-# broken ss on PATH as available, which suppressed the iproute2 repair and
-# masked a working netstat behind it. Each candidate is actually run once.
+# Prefer the Linux kernel socket table, which needs no extra package. Fall back
+# to ss/netstat when /proc is unavailable; every candidate must actually work.
+s5_proc_table_valid() {
+    _ptv=$1
+    [ -r "$_ptv" ] || return 1
+    awk '
+        NR == 1 {
+            if ($1 != "sl" || $2 != "local_address" || $3 != "rem_address" || $4 != "st") exit 2
+            header=1
+            next
+        }
+        NF < 4 { exit 2 }
+        $1 !~ /^[0-9]+:$/ || $2 !~ /^[0-9A-F]+:[0-9A-F][0-9A-F][0-9A-F][0-9A-F]$/ ||
+            $3 !~ /^[0-9A-F]+:[0-9A-F][0-9A-F][0-9A-F][0-9A-F]$/ ||
+            $4 !~ /^[0-9A-F][0-9A-F]$/ { exit 2 }
+        END { if (!header) exit 2 }
+    ' "$_ptv" >/dev/null 2>&1
+}
+
+s5_proc_net_available() {
+    s5_proc_table_valid "$S5_PROC_NET_TCP" || return 1
+    if [ -e "$S5_PROC_NET_TCP6" ] || [ -L "$S5_PROC_NET_TCP6" ]; then
+        s5_proc_table_valid "$S5_PROC_NET_TCP6" || return 1
+    fi
+    return 0
+}
+
+s5_ipv4_to_proc_hex() {
+    s5_ipv4_is_canonical "$1" || return 1
+    printf '%s\n' "$1" | awk -F. '{ printf "%02X%02X%02X%02X", $4, $3, $2, $1 }'
+}
+
+# Return 0 when free, 1 when a LISTEN socket owns the port, 2 on read failure.
+s5_proc_port_free() {
+    s5_proc_table_valid "$S5_PROC_NET_TCP" || return 2
+    if [ -e "$S5_PROC_NET_TCP6" ] || [ -L "$S5_PROC_NET_TCP6" ]; then
+        s5_proc_table_valid "$S5_PROC_NET_TCP6" || return 2
+    fi
+    _ppfport=$(printf '%04X' "$1") || return 2
+    if [ -n "${2:-}" ]; then
+        _ppfaddr=$(s5_ipv4_to_proc_hex "$2") || return 2
+        awk -v endpoint="$_ppfaddr:$_ppfport" '
+            NR > 1 && $2 == endpoint && $4 == "0A" { found=1 }
+            END { exit found ? 0 : 1 }
+        ' "$S5_PROC_NET_TCP" >/dev/null 2>&1
+        _ppfrc=$?
+    else
+        _ppffiles=$S5_PROC_NET_TCP
+        if [ -r "$S5_PROC_NET_TCP6" ]; then
+            _ppffiles="$_ppffiles $S5_PROC_NET_TCP6"
+        fi
+        # shellcheck disable=SC2086
+        awk -v suffix=":$_ppfport" '
+            NR > 1 && substr($2, length($2) - 4) == suffix && $4 == "0A" { found=1 }
+            END { exit found ? 0 : 1 }
+        ' $_ppffiles >/dev/null 2>&1
+        _ppfrc=$?
+    fi
+    case "$_ppfrc" in
+    0) return 1 ;;
+    1) return 0 ;;
+    *) return 2 ;;
+    esac
+}
+
 s5_probe_cmd() {
+    if s5_proc_net_available; then
+        printf 'proc'
+        return 0
+    fi
     if command -v ss >/dev/null 2>&1 && ss -ltn >/dev/null 2>&1; then
         printf 'ss'
         return 0
@@ -4195,6 +4394,10 @@ s5_port_free() {
         return 1
     fi
     case "$_pfc" in
+    proc)
+        s5_proc_port_free "$1" "$_pfaddr"
+        return $?
+        ;;
     ss) _pfout=$(ss -ltn 2>/dev/null); _pfr=$? ;;
     netstat) _pfout=$(netstat -ltn 2>/dev/null); _pfr=$? ;;
     *) return 1 ;;
@@ -4537,14 +4740,15 @@ s5_apply_owner_mode() {
 # Reads are validated against a key allowlist and fail closed.
 # ---------------------------------------------------------------------------
 
-S5_STATE_KEYS_ONCE='tag commit origin port username os family arch init listen account_uid account_gid status'
+S5_STATE_KEYS_REQUIRED='tag commit origin port username os family arch init listen account_uid account_gid status'
+S5_STATE_KEYS_OPTIONAL='asset sha256'
 S5_STATE_KEYS_FLAG='created_account created_group created_confdir created_prefix created_bin created_cfg created_users created_unit created_initscript'
 S5_STATE_KEYS_MULTI='package'
 S5_STATE_BUF=''
 S5_STATE_LOADED=0
 
 s5_state_key_known() {
-    for _skk in $S5_STATE_KEYS_ONCE $S5_STATE_KEYS_FLAG $S5_STATE_KEYS_MULTI; do
+    for _skk in $S5_STATE_KEYS_REQUIRED $S5_STATE_KEYS_OPTIONAL $S5_STATE_KEYS_FLAG $S5_STATE_KEYS_MULTI; do
         if [ "$_skk" = "$1" ]; then
             return 0
         fi
@@ -4562,7 +4766,7 @@ s5_state_key_is_flag() {
 }
 
 s5_state_key_is_once() {
-    for _sok in $S5_STATE_KEYS_ONCE; do
+    for _sok in $S5_STATE_KEYS_REQUIRED $S5_STATE_KEYS_OPTIONAL; do
         if [ "$_sok" = "$1" ]; then
             return 0
         fi
@@ -4617,6 +4821,30 @@ s5_state_value_ok() {
             s5_err_msg state.username_invalid
             return 1
         fi
+        ;;
+    origin)
+        case "$2" in
+        source-build | release-asset) ;;
+        *) s5_err_msg state.origin_invalid; return 1 ;;
+        esac
+        ;;
+    asset)
+        case "$2" in
+        3proxy-0.9.9.0-da99424-linux-glibc-amd64 | \
+        3proxy-0.9.9.0-da99424-linux-glibc-arm64 | \
+        3proxy-0.9.9.0-da99424-linux-musl-amd64 | \
+        3proxy-0.9.9.0-da99424-linux-musl-arm64) ;;
+        *) s5_err_msg state.asset_invalid; return 1 ;;
+        esac
+        ;;
+    sha256)
+        if [ "${#2}" -ne 64 ]; then
+            s5_err_msg state.sha256_invalid
+            return 1
+        fi
+        case "$2" in
+        *[!0-9a-f]*) s5_err_msg state.sha256_invalid; return 1 ;;
+        esac
         ;;
     commit)
         # A git object name is exactly 40 hexadecimal characters. The old
@@ -4764,7 +4992,7 @@ EOF
     # normally: rollback and the uninstall retry path depend on that.
     if [ "$(s5_state_get status)" = "complete" ]; then
         _slmiss=''
-        for _slk in $S5_STATE_KEYS_ONCE; do
+        for _slk in $S5_STATE_KEYS_REQUIRED; do
             if [ "$_slk" != status ] && [ -z "$(s5_state_get "$_slk")" ]; then
                 _slmiss="$_slmiss $_slk"
             fi
@@ -4774,6 +5002,33 @@ EOF
             S5_STATE_BUF=''
             S5_STATE_LOADED=0
             return 1
+        fi
+        if [ "$(s5_state_get origin)" = release-asset ]; then
+            _slasset=$(s5_state_get asset)
+            _slsha=$(s5_state_get sha256)
+            if [ -z "$_slasset" ] || [ -z "$_slsha" ]; then
+                s5_err_msg state.complete_missing " asset sha256"
+                S5_STATE_BUF=''
+                S5_STATE_LOADED=0
+                return 1
+            fi
+            _slfamily=$(s5_state_get family)
+            _slarch=$(s5_state_get arch)
+            _slsaved_family=$S5_OS_FAMILY
+            _slsaved_arch=$S5_ARCHNAME
+            S5_OS_FAMILY=$_slfamily
+            S5_ARCHNAME=$_slarch
+            if ! s5_select_engine_asset production || [ "$S5_ASSET_NAME" != "$_slasset" ] ||
+                [ "$S5_ASSET_SHA256" != "$_slsha" ]; then
+                S5_OS_FAMILY=$_slsaved_family
+                S5_ARCHNAME=$_slsaved_arch
+                s5_err_msg state.asset_mismatch
+                S5_STATE_BUF=''
+                S5_STATE_LOADED=0
+                return 1
+            fi
+            S5_OS_FAMILY=$_slsaved_family
+            S5_ARCHNAME=$_slsaved_arch
         fi
     fi
     return 0
@@ -4834,7 +5089,15 @@ s5_state_begin() {
         _s5_state_begin_undo
         return 1
     fi
-    if ! s5_state_add origin "source-build"; then
+    if ! s5_state_add origin "release-asset"; then
+        _s5_state_begin_undo
+        return 1
+    fi
+    if ! s5_state_add asset "$S5_ASSET_NAME"; then
+        _s5_state_begin_undo
+        return 1
+    fi
+    if ! s5_state_add sha256 "$S5_ASSET_SHA256"; then
         _s5_state_begin_undo
         return 1
     fi
@@ -5165,7 +5428,7 @@ s5_with_read_lock() {
 }
 
 # ---------------------------------------------------------------------------
-# Source fetch, pinned-commit verification, and build.
+# Verified release-asset download and installation.
 # ---------------------------------------------------------------------------
 
 s5_make_workdir() {
@@ -5175,18 +5438,22 @@ s5_make_workdir() {
         mktemp -d "$_wdbase/b.XXXXXX"
         return $?
     fi
-    mktemp -d "${TMPDIR:-/tmp}/socks5-manager-build.XXXXXX"
+    _wdbase=/var/tmp
+    if [ ! -d "$_wdbase" ] || [ ! -w "$_wdbase" ]; then
+        _wdbase=${TMPDIR:-/tmp}
+    fi
+    mktemp -d "$_wdbase/socks5-manager-download.XXXXXX"
 }
 
-# s5_rm_workdir <dir> : remove a build directory, but only one that looks like
-# ours, so a bug can never turn this into an arbitrary recursive delete.
+# s5_rm_workdir <dir> : remove a download directory only when its path matches
+# this project's private template.
 s5_rm_workdir() {
     case "${1:-}" in
     '' | '/')
         s5_warn_msg build.rm_refuse_empty
         return 1
         ;;
-    */socks5-manager-build.* | */b.??????)
+    */socks5-manager-download.* | */b.??????)
         if ! rm -rf "$1"; then
             s5_err_msg build.rm_failed "$1"
             return 1
@@ -5234,85 +5501,87 @@ s5_install_binary() {
     if ! s5_mkdir_secure "$S5_PREFIX" "root:root" 0755; then
         return 1
     fi
-    if ! _ibt=$(mktemp "$S5_PREFIX/.s5bin.XXXXXX"); then
+    if ! S5_INSTALL_TMP=$(mktemp "$S5_PREFIX/.s5bin.XXXXXX"); then
         s5_err_msg build.tmp_in_prefix
         return 1
     fi
-    if ! s5_secure_tmp "$_ibt"; then
-        rm -f "$_ibt"
+    if ! s5_secure_tmp "$S5_INSTALL_TMP"; then
+        rm -f "$S5_INSTALL_TMP"
+        S5_INSTALL_TMP=''
         return 1
     fi
-    if ! cat <"$1" >"$_ibt"; then
+    if ! cat <"$1" >"$S5_INSTALL_TMP"; then
         s5_err_msg build.copy_failed
-        rm -f "$_ibt"
+        rm -f "$S5_INSTALL_TMP"
+        S5_INSTALL_TMP=''
         return 1
     fi
-    if ! s5_apply_owner_mode "$_ibt" "root:root" 0755; then
-        rm -f "$_ibt"
+    if ! s5_apply_owner_mode "$S5_INSTALL_TMP" "root:root" 0755; then
+        rm -f "$S5_INSTALL_TMP"
+        S5_INSTALL_TMP=''
         return 1
     fi
-    if ! mv "$_ibt" "$S5_BIN"; then
+    if ! mv "$S5_INSTALL_TMP" "$S5_BIN"; then
         s5_err_msg build.install_failed "$S5_BIN"
-        rm -f "$_ibt"
+        rm -f "$S5_INSTALL_TMP"
+        S5_INSTALL_TMP=''
         return 1
     fi
+    S5_INSTALL_TMP=''
     return 0
 }
 
-s5_build_3proxy() {
+s5_fetch_verified_engine() {
+    if ! s5_select_engine_asset runtime; then
+        return 1
+    fi
     _bwd=$(s5_make_workdir)
     if [ -z "$_bwd" ] || [ ! -d "$_bwd" ]; then
         s5_err_msg build.mktmpdir_failed
         return 1
     fi
     S5_WORKDIR=$_bwd
-    _bsrc="$_bwd/3proxy"
+    _asset_path="$_bwd/$S5_ASSET_NAME"
 
-    s5_log_msg build.fetching "$S5_UPSTREAM_TAG" "$S5_REPO_URL"
-    if ! git clone --quiet "$S5_REPO_URL" "$_bsrc"; then
-        s5_err_msg build.clone_failed
+    s5_log_msg asset.fetching "$S5_ASSET_NAME" "$S5_ENGINE_RELEASE"
+    if ! curl -q --fail --silent --show-error --location \
+        --proto '=https' --proto-redir '=https' \
+        --connect-timeout 10 --max-time 120 --max-filesize "$S5_ASSET_SIZE" \
+        --output "$_asset_path" "$S5_ASSET_URL" </dev/null; then
+        s5_err_msg asset.download_failed "$S5_ASSET_NAME"
         s5_release_workdir
         return 1
     fi
-
-    s5_log_msg build.checkout_pinned "$S5_PINNED_COMMIT"
-    if ! git -C "$_bsrc" checkout --quiet --detach "$S5_PINNED_COMMIT"; then
-        s5_err_msg build.checkout_failed
-        s5_release_workdir
-        return 1
-    fi
-
-    _bhead=$(git -C "$_bsrc" rev-parse HEAD 2>/dev/null | tr -d ' \t\n')
-    if [ "$_bhead" != "$S5_PINNED_COMMIT" ]; then
-        s5_err_msg build.head_mismatch "$S5_PINNED_COMMIT" "${_bhead:-<empty>}"
-        s5_release_workdir
-        return 1
-    fi
-    s5_log_msg build.head_verified
-
-    if ! _bout=$(cd "$_bsrc" && make -f Makefile.Linux 2>&1); then
-        s5_err_msg build.make_failed
-        printf '%s\n' "$_bout" | tail -n 20 >&2
-        s5_release_workdir
-        return 1
-    fi
-
-    if [ ! -f "$_bsrc/bin/3proxy" ] || [ -L "$_bsrc/bin/3proxy" ]; then
+    if [ ! -f "$_asset_path" ] || [ -L "$_asset_path" ]; then
         s5_err_msg build.no_artifact
         s5_release_workdir
         return 1
     fi
-    if [ ! -x "$_bsrc/bin/3proxy" ]; then
-        s5_err_msg build.not_executable
+    _asset_size=$(wc -c <"$_asset_path" 2>/dev/null | tr -d '[:space:]')
+    if [ "$_asset_size" != "$S5_ASSET_SIZE" ]; then
+        s5_err_msg asset.size_mismatch "$S5_ASSET_SIZE" "${_asset_size:-unknown}"
         s5_release_workdir
         return 1
     fi
-
-    if ! s5_install_binary "$_bsrc/bin/3proxy"; then
+    _asset_hash=$(sha256sum "$_asset_path" 2>/dev/null | awk '{ print $1 }')
+    if [ "$_asset_hash" != "$S5_ASSET_SHA256" ]; then
+        s5_err_msg asset.checksum_mismatch "$S5_ASSET_NAME"
         s5_release_workdir
         return 1
     fi
+    s5_log_msg asset.verified "$S5_ASSET_NAME"
 
+    if ! s5_install_binary "$_asset_path"; then
+        s5_release_workdir
+        return 1
+    fi
+    _installed_hash=$(sha256sum "$S5_BIN" 2>/dev/null | awk '{ print $1 }')
+    if [ "$_installed_hash" != "$S5_ASSET_SHA256" ]; then
+        s5_err_msg asset.installed_checksum_mismatch "$S5_BIN"
+        rm -f "$S5_BIN" || true
+        s5_release_workdir
+        return 1
+    fi
     s5_log_msg build.installed "$S5_BIN"
     if ! s5_release_workdir; then
         return 1
@@ -6785,16 +7054,7 @@ s5_confirm_yes() {
 }
 
 s5_required_packages() {
-    _srpb=$(s5_build_deps "$S5_PKGMGR") || {
-        s5_err_msg install.pkg_no_deps "$S5_PKGMGR"
-        return 1
-    }
-    _srpr=$(s5_runtime_deps) || return 1
-    if [ -n "$_srpr" ]; then
-        printf '%s %s' "$_srpb" "$_srpr"
-    else
-        printf '%s' "$_srpb"
-    fi
+    s5_runtime_deps
 }
 
 s5_preinstall_warning() {
@@ -6833,7 +7093,7 @@ s5_install_dependencies() {
             return 1
         }
         # shellcheck disable=SC2086
-        if ! DEBIAN_FRONTEND=noninteractive apt-get install -y $_idall; then
+        if ! DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends $_idall; then
             s5_err_msg install.pkg_install_failed
             return 1
         fi
@@ -6848,13 +7108,13 @@ s5_install_dependencies() {
     dnf)
         if command -v dnf >/dev/null 2>&1; then
             # shellcheck disable=SC2086
-            if ! dnf install -y $_idall; then
+            if ! dnf install -y --setopt=install_weak_deps=False $_idall; then
                 s5_err_msg install.pkg_install_failed
                 return 1
             fi
         else
             # shellcheck disable=SC2086
-            if ! yum install -y $_idall; then
+            if ! yum install -y --setopt=install_weak_deps=False $_idall; then
                 s5_err_msg install.pkg_install_failed
                 return 1
             fi
@@ -7406,7 +7666,7 @@ s5_install_steps() {
 
     if ! s5_state_mark created_prefix; then return 1; fi
     if ! s5_state_mark created_bin; then return 1; fi
-    if ! s5_build_3proxy; then
+    if ! s5_fetch_verified_engine; then
         return 1
     fi
 
@@ -7656,7 +7916,11 @@ _s5_cmd_status_locked() {
     _ste=$(s5_msg status.label_engine)
     _sev=$(s5_msg status.engine_value "$(s5_state_get tag)" "$(s5_state_get commit)")
     s5_say "$_ste$_sev"
-    _sto=$(s5_msg status.label_origin); s5_say "$_sto$(s5_state_get origin)"
+    _sto=$(s5_msg status.label_origin); _storigin=$(s5_state_get origin); s5_say "$_sto$_storigin"
+    if [ "$_storigin" = release-asset ]; then
+        _sta=$(s5_msg status.label_asset); s5_say "$_sta$(s5_state_get asset)"
+        _sth=$(s5_msg status.label_sha256); s5_say "$_sth$(s5_state_get sha256)"
+    fi
     _stb=$(s5_msg status.label_binary); s5_say "$_stb$S5_BIN"
     _stf=$(s5_msg status.label_firewall); _stfw=$(s5_msg card.firewall_untouched); s5_say "$_stf$_stfw"
     return "$EX_OK"

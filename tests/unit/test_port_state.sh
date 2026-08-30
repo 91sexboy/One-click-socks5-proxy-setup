@@ -61,6 +61,33 @@ printf '31080\n' >"$S5_TEST_ROOT/svc_active"
 t_run s5_port_listening
 assert_eq "an observably occupied port is status 0 (listening)" 0 "$T_STATUS"
 
+# The production-first /proc adapter needs no iproute package.
+printf '  sl  local_address rem_address   st\n   0: 00000000:9C40 00000000:0000 0A\n   1: 0100007F:A078 00000000:0000 0A\n' >"$S5_PROC_NET_TCP"
+printf '  sl  local_address rem_address   st\n' >"$S5_PROC_NET_TCP6"
+t_run s5_proc_port_free 40000
+assert_eq "/proc adapter finds a wildcard listener" 1 "$T_STATUS"
+t_run s5_proc_port_free 41080 127.0.0.1
+assert_eq "/proc adapter finds an exact loopback listener" 1 "$T_STATUS"
+t_run s5_proc_port_free 41081
+assert_eq "/proc adapter reports an unused port free" 0 "$T_STATUS"
+assert_eq "IPv4 conversion matches Linux socket-table order" 0100007F \
+    "$(s5_ipv4_to_proc_hex 127.0.0.1)"
+
+printf '' >"$S5_PROC_NET_TCP"
+t_run s5_proc_port_free 41081
+assert_eq "empty proc table is unobservable, never free" 2 "$T_STATUS"
+printf 'bad header\n' >"$S5_PROC_NET_TCP"
+t_run s5_proc_port_free 41081
+assert_eq "malformed proc table is unobservable" 2 "$T_STATUS"
+printf '  sl  local_address rem_address   st\n   0: malformed 00000000:0000 0A\n' >"$S5_PROC_NET_TCP"
+t_run s5_proc_port_free 41081
+assert_eq "malformed proc socket row is unobservable" 2 "$T_STATUS"
+printf '  sl  local_address rem_address   st\n' >"$S5_PROC_NET_TCP"
+printf 'bad header\n' >"$S5_PROC_NET_TCP6"
+t_run s5_proc_port_free 41081
+assert_eq "malformed tcp6 table also fails closed" 2 "$T_STATUS"
+printf '  sl  local_address rem_address   st\n' >"$S5_PROC_NET_TCP6"
+
 # ==========================================================================
 # The answer must be about the port asked for, not about the service.
 #

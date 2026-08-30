@@ -3,7 +3,9 @@
 A single-file POSIX shell script that installs, verifies and manages a
 **password-authenticated SOCKS5 proxy** on a server you own or are authorised to
 manage. The proxy engine is [3proxy](https://github.com/3proxy/3proxy) 0.9.9.0,
-compiled from one pinned upstream commit.
+built once by this project's CI from one pinned upstream commit; the target
+server downloads and verifies the matching native binary and does not compile
+anything.
 
 > **SOCKS5 is not a VPN.** Read [Security](#security) before you use this.
 
@@ -108,14 +110,14 @@ an existing installation, visible single-entry custom passwords, strict public-I
 connection cards, and additional safety checks. Its exact candidate bytes have this SHA-256:
 
 ```text
-e52f8fc48ef017ecb85f96bb80eaad492f5611cbfbc321bd504967936b934878  socks5.sh
+a9fe345f9bff4d801b3f962b4fa5c02edb9ccf8c1225553ab4e75f2aa26ccde1  socks5.sh
 ```
 
 Download and verify the tagged artifact after `v1.1.0` is published:
 
 ```sh
 wget -qO socks5.sh https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-setup/v1.1.0/socks5.sh
-printf '%s  %s\n' 'e52f8fc48ef017ecb85f96bb80eaad492f5611cbfbc321bd504967936b934878' socks5.sh | sha256sum -c -
+printf '%s  %s\n' 'a9fe345f9bff4d801b3f962b4fa5c02edb9ccf8c1225553ab4e75f2aa26ccde1' socks5.sh | sha256sum -c -
 sudo sh socks5.sh
 ```
 
@@ -164,9 +166,9 @@ install prompts and the pre-install warning, the post-install result and its
 credential card, the management menu, `status`, `show`, `restart`,
 `uninstall`, and error messages. The choice is not saved between runs: every
 run starts with the language question again. Subcommand names stay English in
-both languages, and output that comes from other programs — package-manager
-progress, compiler output, service-manager messages — is passed through
-exactly as those programs print it, untranslated.
+both languages, and output that comes from other programs — package-manager or
+service-manager messages — is passed through exactly as those programs print
+it, untranslated.
 
 ## The credential card
 
@@ -187,7 +189,7 @@ The address on the card is either:
 1. **A strictly validated public IPv4, observed from outside.** The script
    makes one short HTTPS request to a fixed endpoint and uses the source IP
    that request came from — but only after strict validation that it is a
-   is a public IPv4; anything malformed or non-public is discarded. The
+   public IPv4; anything malformed or non-public is discarded. The
    response is capped at 17 bytes. What the endpoint sees is the source IP and
    the time of that one request, nothing else. The request does not carry the
    port, username or password.
@@ -261,30 +263,43 @@ ever granted.
 On Alpine, OpenRC sends the engine's output to syslog through `logger`; no
 ordinary log file is created.
 
-## Build dependencies
+## Runtime dependencies and verified engine assets
 
-The script compiles 3proxy from a pinned commit, so a toolchain is installed
-first. The exact list is displayed as part of the single pre-install confirmation,
-before anything is installed:
+The target server **does not compile 3proxy** and does not need Git, Make, GCC,
+C headers or a source checkout. This project publishes four native dynamic
+binaries from pinned commit `da99424eac4092e3722f1a5b1844cfe80478f580` in the
+immutable engine release `engine-3proxy-0.9.9.0-r1`:
 
-| Package manager | Packages |
+| Target | Release asset |
 |---|---|
-| `apt` | `git build-essential ca-certificates` |
-| `apk` | `git build-base musl-dev linux-headers` |
-| `dnf` / `yum` | `git gcc make` |
+| Ubuntu / Debian / CentOS Stream, amd64 | `3proxy-0.9.9.0-da99424-linux-glibc-amd64` |
+| Ubuntu / Debian / CentOS Stream, arm64 | `3proxy-0.9.9.0-da99424-linux-glibc-arm64` |
+| Alpine, amd64 | `3proxy-0.9.9.0-da99424-linux-musl-amd64` |
+| Alpine, arm64 | `3proxy-0.9.9.0-da99424-linux-musl-arm64` |
 
-Two runtime tools are added only when they are genuinely missing:
+The asset name, exact byte length and SHA-256 are embedded in `socks5.sh`.
+The installer follows HTTPS redirects only, caps the response, verifies the
+exact size and embedded SHA-256 before installation, and verifies the final
+installed file again. A mismatch fails closed; it never falls back to local
+source compilation.
 
-- `curl`, used by the post-install self-test.
-- whichever package provides `ss` — `iproute2` on Debian, Ubuntu and Alpine,
-  `iproute` on CentOS Stream. The port prompt has to be able to see which ports
-  are already listening, so this is installed *before* you are asked for a port.
-  On a host that already has `ss` or `netstat`, nothing extra is installed.
+Only genuinely missing runtime packages are installed:
 
-**These packages are intentionally left in place.** Neither the end of the
-install nor `uninstall` removes them — the script never removes a system
-package, because it cannot know what else on your server depends on one. Remove
-them yourself if you want to.
+- `curl`, used for the engine download and post-install self-test;
+- `ca-certificates`, when no supported CA bundle exists;
+- an `ss` provider only when `/proc/net/tcp{,6}`, `ss` and `netstat` are all
+  unavailable or unusable (`iproute2` on Debian/Ubuntu/Alpine, `iproute` on
+  CentOS Stream).
+
+APT uses `--no-install-recommends`, DNF/YUM disable weak dependencies, and APK
+uses `--no-cache`. These runtime packages are intentionally left in place:
+`uninstall` never removes system packages because it cannot know what else on
+the server depends on them.
+
+The low-memory lifecycle gate runs clean Debian 12, Alpine 3.20 and CentOS
+Stream 9 targets with a **128 MiB memory limit and no swap**. That limit covers
+the target-side install, service start, authentication checks, in-place update
+and uninstall; CI compilation happens separately and is not charged to the VPS.
 
 ## Updates are your responsibility
 
@@ -294,7 +309,7 @@ This release pins one upstream commit:
 3proxy 0.9.9.0 @ da99424eac4092e3722f1a5b1844cfe80478f580
 ```
 
-The binary is built from that commit and is **not** managed by your
+The installed binary comes from that commit and is **not** managed by your
 distribution's package manager, so it receives no automatic security updates.
 3proxy's `lts` channel is defined upstream only as "the 0.9 branch", with no
 published support window, so do not assume upstream security backports reach
@@ -400,13 +415,14 @@ The suite includes a pseudo-terminal test that sends a real `SIGINT` during
 visible password entry and asserts no state, transaction, lock or build residue
 is left behind, plus regression tests for hostile state files, inherited
 `umask 0000`/`0022`, and `sh -x` credential leakage. Python is used by test
-tooling only; `socks5.sh` itself depends on POSIX `sh`, `git`, `make`, a C
-compiler and `curl`.
+tooling only; `socks5.sh` itself depends on POSIX `sh`, `curl`, `sha256sum` and
+standard base utilities.
 
-The real compilation, the OS/architecture build matrix, the seven protocol
-acceptance cases, the destination-ACL hostname test, `shellcheck`, and the real
-service lifecycles are **CI only** — see `.github/workflows/ci.yml`. A green
-local suite does not imply those passed.
+The four engine assets are compiled in the separate release workflow. The
+OS/architecture compatibility matrix, seven protocol acceptance cases,
+destination-ACL hostname test, `shellcheck`, and real service lifecycles are
+**CI only** — see `.github/workflows/ci.yml`. A green local suite does not imply
+those passed.
 
 The published v1.0.0 baseline is green on GitHub-hosted runners. In run
 [`33174398814`](https://github.com/91sexboy/One-click-socks5-proxy-setup/actions/runs/33174398814)
@@ -434,26 +450,25 @@ at commit `df6885c`, **45 of 45 jobs passed**:
 > earn its own final reachable-main 45/45 run before release. Runs `33245460710` / `33246222640` remain
 > historical evidence for the previous bilingual state.
 
-The published v1.0.0 evidence covers a real install/restart/uninstall lifecycle
-for every supported OS family. The v1.1.0 candidate extends those same jobs with
-in-place update coverage; that added evidence is pending its first complete CI
-run. Every OS version/architecture **named in the CI matrix** retains real build
-and protocol coverage. Versions newer than the listed matrix are accepted by
-the documented minimum-version rule, but that does not claim CI has verified a
-future release. This is CI evidence, not a promise that every VPS image or
-network environment is identical: the installer still fails closed when its
-manager, port probe, package repository, DNS or egress cannot be verified.
+The published v1.0.0 evidence covers the earlier source-build lifecycle for
+every supported OS family. Run `33308776407` proves the transactional update
+work on that source-build implementation. The release-asset implementation
+must earn a new complete CI run; the older runs remain historical evidence and
+are not presented as low-memory proof. Every OS version/architecture named in
+the CI matrix still receives real asset compatibility and protocol coverage.
+Versions newer than the listed matrix are accepted by the documented
+minimum-version rule, but that does not claim CI has verified a future release.
 What each CI job actually proves is deliberately distinct:
 
 | Job | Cells | What it proves |
 |---|---|---|
 | `lint` | 1 | `shellcheck`, Python syntax, and the workflow's own structural guards |
 | `unit` | 2 | this suite under `sh`, `dash` and `busybox sh`, on amd64 and arm64 |
-| `build-matrix` | 16 | the pinned commit compiles on every OS/arch |
+| `build-matrix` | 16 | the matching release asset loads on every OS/arch combination without a target-side toolchain |
 | `protocol` | 16 | the seven protocol cases against a **real engine running the rendered config** — not a service install |
 | `acl-resolution` | 3 | the destination denies hold for **domain** targets, in an isolated container with a fake metadata endpoint |
 | `systemd-integration` | 2 | a **real** install → update → verify → uninstall lifecycle under systemd, on the runner itself |
-| `openrc-integration` | 2 | the same under **real** OpenRC on Alpine, bootstrapping its own toolchain from a clean image |
+| `openrc-integration` | 2 | the same under **real** OpenRC on Alpine, installing only runtime dependencies in the clean image |
 | `distro-systemd-integration` | 3 | the same on Ubuntu 22.04, Debian and CentOS Stream, with systemd booted as PID 1 in a privileged container |
 
 Together the last three give one real install-and-update lifecycle per supported
@@ -474,5 +489,6 @@ See `SPEC.md` for the complete behavior and verification contract.
 
 ## License
 
-MIT — see [LICENSE](LICENSE). 3proxy is not bundled; it is fetched and compiled
-at install time under its own separate license.
+MIT — see [LICENSE](LICENSE). 3proxy source is not bundled; the verified engine
+assets are built separately from the pinned upstream commit under its own
+license.

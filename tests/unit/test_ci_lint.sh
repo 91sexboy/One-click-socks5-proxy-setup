@@ -170,33 +170,24 @@ for _job in systemd-integration openrc-integration distro-systemd-integration; d
 done
 
 # All four promised OS families must have a REAL service-install lifecycle. The
-# build matrix only compiles, and the protocol job runs the engine directly
+# The compatibility matrix loads one published asset; the protocol job runs the engine directly
 # without installing a service, so neither can stand in for this.
 assert_contains "Ubuntu has a real systemd lifecycle" \
     "ubuntu-24.04" "$(ci_job_block systemd-integration)"
 assert_contains "Alpine has a real OpenRC lifecycle" \
     "alpine:3." "$(ci_job_block openrc-integration)"
 
-# The OpenRC job is one outer shell script containing `docker ... sh -c '...'.
-# A raw single quote anywhere in that inner body closes the outer quote early:
-# `sh -n` can still report a syntactically valid (but completely rearranged)
-# script, while the runner executes fragments as host commands and the
-# container sees an unterminated block. Exactly three LINES in the RAW job
-# block (comments included -- a shell quote in a comment still participates in
-# lexing when the whole comment is inside the outer quote) may contain a single
-# quote: the opening `sh -c '`, the redaction line's established `"'"'"'`
-# escape, and the closing quote. Any fourth line is an unescaped quote that
-# corrupts the boundary; force deliberate review if the quoting strategy ever
-# changes. Do NOT use ci_job_block here: it strips comments and once made this
-# guard miss the two apostrophes that broke the sixth CI run.
+# The OpenRC job now uses one outer script plus a `docker exec sh -c` body. The
+# raw quote-line count is pinned so an unescaped apostrophe cannot silently
+# rearrange which commands run on the host versus in the container.
 _openrc_raw_block=$(awk '
     $0 == "  openrc-integration:" { in_job = 1; next }
     in_job && /^  [a-z][a-z0-9-]*:$/ { exit }
     in_job { print }
 ' "$CI")
 _openrc_quote_lines=$(printf '%s\n' "$_openrc_raw_block" | grep -c "'")
-assert_eq "OpenRC job has exactly its three reviewed quote-bearing lines" \
-    3 "$_openrc_quote_lines"
+assert_eq "OpenRC job has exactly its six reviewed quote-bearing lines" \
+    6 "$_openrc_quote_lines"
 
 # A normal Alpine boot invokes OpenRC and initializes every runtime state
 # directory (`starting`, `started`, `exclusive`, ...). The lifecycle container
@@ -217,8 +208,8 @@ else
 fi
 
 _distro=$(ci_job_block distro-systemd-integration)
-assert_contains "Debian has a real systemd lifecycle" "debian:13" "$_distro"
-assert_contains "CentOS Stream has a real systemd lifecycle" "centos:stream10" "$_distro"
+assert_contains "Debian has a real systemd lifecycle" "debian:12" "$_distro"
+assert_contains "CentOS Stream has a real systemd lifecycle" "centos:stream9" "$_distro"
 assert_contains "the distro lifecycle boots a real init as PID 1" "/sbin/init" "$_distro"
 assert_contains "and waits for the manager before installing" \
     "is-system-running" "$_distro"
@@ -562,6 +553,9 @@ for required in 'sha256sum --check "$SECRETS/bin.before"' \
 done
 for _job in openrc-integration distro-systemd-integration; do
     _blk=$(ci_job_block "$_job")
+    assert_contains "$_job enforces the 128 MiB target limit" '--memory=128m --memory-swap=128m' "$_blk"
+    assert_contains "$_job records target memory peak" 'memory.peak' "$_blk"
+    assert_contains "$_job checks the OOM verdict" 'State.OOMKilled' "$_blk"
     assert_contains "$_job performs a real in-place update" 'update.answers' "$_blk"
     assert_contains "$_job checks transaction cleanup" 'reconfigure-transaction' "$_blk"
 done
@@ -587,8 +581,8 @@ assert_eq "protocol matrix has 8 images x 2 runners = 16 cells" 8 "$_proto_imgs"
 _expanded=$((1 + 2 + _build_imgs*2 + _proto_imgs*2 + 3 + 2 + 2 + 3))
 assert_eq "workflow expands to exactly 45 jobs" 45 "$_expanded"
 
-# The redaction is APPLIED (sed -f), not just created. Deleting any sed -f
-# application must fail.
+# The redaction is APPLIED in every lifecycle job that can emit a generated
+# password on failure.
 _sedf=$(grep -c 'sed -f.*redact.sed' "$CI")
 if [ "$_sedf" -ge 3 ]; then
     t_ok

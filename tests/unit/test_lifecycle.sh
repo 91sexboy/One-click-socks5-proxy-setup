@@ -58,7 +58,7 @@ assert_contains "status shows the port" "41080" "$T_OUT"
 assert_contains "status shows the username" "lifeuser" "$T_OUT"
 assert_contains "status shows the engine version" "0.9.9.0" "$T_OUT"
 assert_contains "status shows the pinned commit" "da99424e" "$T_OUT"
-assert_contains "status shows the install origin" "source-build" "$T_OUT"
+assert_contains "status shows the install origin" "release-asset" "$T_OUT"
 assert_contains "status reports the service running" "running" "$T_OUT"
 assert_not_contains "status never prints the password" "$PASS_OK" "$T_OUT"
 

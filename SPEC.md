@@ -32,7 +32,9 @@ only — it never offers or documents a SOCKS4-family service.
 ## 2. Tech stack (verified 2026-08-23)
 - 3proxy tag `0.9.9.0`, pinned commit `da99424eac4092e3722f1a5b1844cfe80478f580` — confirmed via the
   GitHub API to be that tag, dated 2026-08-22. Source: `https://github.com/3proxy/3proxy` over HTTPS.
-- Build: `make -f Makefile.Linux` from the repository root; artifact `bin/3proxy`.
+- Engine assets: release `engine-3proxy-0.9.9.0-r1`, built once by this project's CI as four dynamic
+  glibc/musl × amd64/arm64 binaries. Target hosts select one fixed asset and verify its embedded size
+  and SHA-256 before and after atomic installation; they never compile or automatically fall back.
 - `auth strong` — man page at pinned ref: "username/password authentication required".
 - `socks -u2` — same ref: "(for socks) require username/password in authentication methods". `-u`
   alone means "Never ask for username/password", so `-u2` is required, not `-u`.
@@ -65,7 +67,7 @@ AlmaLinux are recognized via `ID_LIKE=rhel` and told they are *likely compatible
 install on
 them**. `ID_LIKE` alone never authorizes an install. Any other OS, or a version below the floor →
 hard error naming the
-detected `ID` and `VERSION_ID`. **EPEL is not required** — `gcc`/`make`/`git` are in base repos.
+detected `ID` and `VERSION_ID`. **EPEL and a target-side toolchain are not required.**
 
 ## 4. Namespace and permissions
 | Resource | Path | Owner | Mode |
@@ -257,25 +259,25 @@ problem that is disproportionate to a v1 whose job is to install one proxy. An e
 read-only detection to print backend-specific advice; the owner removed even that by decision —
 detection is functionality too.
 
-## 8. Build procedure
-1. Determine required packages and display them as part of the single §5 confirmation. apt:
-   `git build-essential ca-certificates` · apk: `git build-base musl-dev linux-headers` · dnf:
-   `git gcc make`. The apt list carries `ca-certificates` because a minimal Debian/Ubuntu image can
-   lack a CA bundle, which would fail the HTTPS clone with a certificate error rather than a
-   diagnosable one. Add
-   `curl` where absent, and the `ss` provider (`iproute2`, or `iproute` on CentOS Stream) where
-   neither `ss` nor `netstat` exists. Installation happens before the port prompt (§5).
-2. `git clone` into `mktemp -d`, then `git checkout <commit>`.
-3. Assert `git rev-parse HEAD` equals the pinned commit exactly. Mismatch → abort and clean up.
-4. From the repository root, run `make -f Makefile.Linux`.
-5. Copy **only** `bin/3proxy` to `/usr/local/libexec/socks5-manager/3proxy`. **Never** run
-   `make install`, `scripts/postinstall.sh`, or any upstream service-install script; never install
-   or enable upstream's `3proxy.service`.
-6. Remove the temporary clone directory.
+## 8. Verified engine-asset installation
+1. After platform/architecture detection, map Debian/Ubuntu/CentOS Stream to glibc and Alpine to
+   musl, then select the fixed amd64/arm64 asset from release `engine-3proxy-0.9.9.0-r1`.
+2. Show only genuinely missing runtime packages in the confirmation: curl, ca-certificates and an
+   `ss` provider only when `/proc/net/tcp{,6}`, ss and netstat are all unusable. APT disables
+   recommends, DNF/YUM disable weak deps, APK uses `--no-cache`.
+3. Download to a private temporary directory over HTTPS with HTTPS-only redirects, a time limit and
+   a byte cap. Validate regular/non-symlink type, exact embedded byte length and embedded SHA-256.
+4. Atomically copy only the verified binary to `/usr/local/libexec/socks5-manager/3proxy`, set
+   `root:root 0755`, and verify the installed file's SHA-256 again. Any mismatch fails closed and
+   triggers normal rollback; there is no source-build or distro-package fallback.
+5. New state records `origin=release-asset`, the exact asset name and SHA-256. Legacy complete states
+   with `origin=source-build` remain valid for status, update, restart and uninstall; an in-place
+   credential/port update never changes their existing binary.
+6. Remove the download directory. Runtime packages are not removed during uninstall.
 
-Build dependencies, `curl` and the `ss` provider are **not** removed — not after install, not during
-uninstall. The script never uninstalls a system package; the README lists what may have been
-installed.
+The four release assets are built separately from pinned commit
+`da99424eac4092e3722f1a5b1844cfe80478f580`; release builds are serial, single-target,
+`-O2 -fno-lto`, without optional SSL/PCRE/PAM/plugins, and are stripped before attestation.
 
 ## 9. Service integration
 - **systemd:** `User=socks5proxy`, `Group=socks5proxy`,
@@ -418,12 +420,13 @@ and process start time to distinguish a live owner from a stale lock without a t
   Ubuntu (systemd on the runner), Debian (systemd as PID 1 in a privileged container), Alpine
   (OpenRC), CentOS Stream (systemd as PID 1 in a privileged container). Each v1.1.0 candidate job is
   configured to run install → update → status → active → listening → restart → uninstall →
-  cleanliness; that added update evidence is not considered passed until the candidate CI completes.
-  A compile-only cell and a direct-engine protocol cell do **not** satisfy this: neither installs a
-  service. The Debian and CentOS images deliberately ship without `git`, a compiler, `curl` or an
-  `ss` provider, so these jobs also prove the installer bootstraps its own prerequisites on a clean
-  host.
-- **Build matrix:** the pinned commit must compile on 8 OS versions × 2 architectures.
+  cleanliness; that update evidence is not considered passed until the release-asset candidate CI
+  completes. A compatibility-only cell and a direct-engine protocol cell do **not** satisfy this:
+  neither installs a service. The Debian and CentOS images deliberately ship without `git`, a
+  compiler, `curl` or an `ss` provider, so these jobs prove the installer adds only missing runtime
+  prerequisites on a clean host.
+- **Asset compatibility matrix:** the matching pinned release binary must load on 8 OS versions × 2
+  architectures without installing a target-side toolchain.
 - **Update safety:** a confirmed update reuses one service/account/binary, rotates one credential,
   verifies the new proxy, and restores the old verified proxy on failure.
 - **Cleanliness:** after uninstall no project file or account remains, no system package was removed,
@@ -434,9 +437,9 @@ systemd targets need systemd-capable containers or VMs (`systemctl` in a plain c
 run `33174398814` at commit `df6885c`: all build/protocol/ACL cells and all seven real service
 lifecycles (§18).
 
-The 16 protocol cells build the pinned commit, render the production config and run the engine
-**directly** — they prove the protocol boundary, not a service install. Real init-system
-installation is covered separately, once per promised OS family (§13).
+The 16 protocol cells download the pinned release asset for their libc/architecture, render the
+production config and run the engine **directly** — they prove the protocol boundary, not a service
+install. Real init-system installation is covered separately, once per promised OS family (§13).
 
 **Release gate (hard).** If integration testing of the pinned version shows SOCKS4 or SOCKS4a
 successfully establishing a proxy connection, the test **fails** and release **must not proceed**.
@@ -446,10 +449,10 @@ relax the test. This gate is not experimental on any cell, Alpine included.
 
 ## 14. Boundaries
 **Always:** default-deny ACL; `umask 077` before secret writes; record every created resource in
-state; verify the pinned commit; show the pre-install warning; install prerequisites before the port
-prompt. The state file also records provenance and completion — `origin` (always `source-build` in
-v1) and `status` — alongside the created-resource records, because `status` must be able to report
-what was installed without re-deriving it.
+state; verify the selected release asset by embedded size/SHA-256; show the pre-install warning;
+install runtime prerequisites before the port prompt. State records provenance and completion: new
+installs use `origin=release-asset` plus validated `asset`/`sha256`; legacy
+`origin=source-build` states remain supported.
 **Ask first:** one default-yes confirmation before a fresh install, and one default-no confirmation before
 an in-place update. Writing anything outside the project namespace is never done at all.
 **Never:** password in argv/env/logs/history; **any firewall functionality at all** — no detect, query, add, delete,
@@ -530,7 +533,9 @@ RHEL/Rocky/Alma.
 - State plainly: the password is plaintext in a permission-protected file readable by root and the
   proxy process; SOCKS5 auth is **cleartext on the wire**; SOCKS5 is **not** an encrypted VPN;
   sensitive use should be combined with SSH, TLS, or a VPN.
-- List build dependencies that may have been installed, noting they are intentionally left in place.
+- Document the immutable engine release, four libc/architecture assets, embedded size/SHA checks,
+  target-side no-compile policy, 128 MiB gate, and only the runtime dependencies that may be left in
+  place.
 - State that v1 pins one upstream commit, so **the operator owns updates**. 3proxy's `lts` channel is
   defined upstream only as "the 0.9 branch" with no published support window — do not imply upstream
   security backports reach this install automatically.

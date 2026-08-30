@@ -19,7 +19,7 @@ T_TRANSCRIPT=""
 # test file calls, so no file can build a narrower stub set and silently lose
 # the detector. They exit non-zero: a forbidden command should fail loudly, not
 # let the caller proceed as though it had worked.
-T_FORBIDDEN_CMDS='passwd chpasswd sudo doas su'
+T_FORBIDDEN_CMDS='passwd chpasswd sudo doas su git make gcc cc'
 
 # A PATH stub is not enough. busybox implements passwd, chpasswd and su as
 # built-in applets and resolves those names to the applet regardless of PATH, so

@@ -13,6 +13,10 @@ S5_LIB_ONLY=1
 export S5_LIB_ONLY
 # shellcheck source=/dev/null
 . "${S5_SRC}"
+S5_PROC_NET_TCP="$S5_TEST_ROOT/proc-net-tcp"
+S5_PROC_NET_TCP6="$S5_TEST_ROOT/proc-net-tcp6"
+printf '  sl  local_address rem_address   st\n' >"$S5_PROC_NET_TCP"
+printf '  sl  local_address rem_address   st\n' >"$S5_PROC_NET_TCP6"
 
 # --------------------------------------------------------------------------
 # Port validation
@@ -161,18 +165,28 @@ assert_eq "random port is a valid port" 0 "$T_STATUS"
 # --------------------------------------------------------------------------
 S5_PORT_PROBE=''
 export S5_PORT_PROBE
+_saved_proc=$S5_PROC_NET_TCP
+_saved_proc6=$S5_PROC_NET_TCP6
+S5_PROC_NET_TCP="$S5_TEST_ROOT/no-proc-tcp"
+S5_PROC_NET_TCP6="$S5_TEST_ROOT/no-proc-tcp6"
 ss() { return 1; }
 netstat() { return 1; }
 t_run s5_probe_cmd
-assert_eq "a broken ss with no netstat means no probe" 1 "$T_STATUS"
+assert_eq "no proc table and broken ss/netstat means no probe" 1 "$T_STATUS"
 S5_PKGMGR=apt
-assert_eq "a broken ss still plans the probe package" "iproute2" "$(s5_runtime_deps 2>/dev/null)"
+s5_ca_bundle_available() { return 0; }
+assert_eq "no working probe plans the small probe package" "iproute2" "$(s5_runtime_deps 2>/dev/null)"
 
 netstat() { printf 'Proto Recv-Q\n'; return 0; }
 t_run s5_probe_cmd
-assert_eq "a broken ss falls back to a working netstat" 0 "$T_STATUS"
-assert_eq "and netstat is the selected probe" "netstat" "$(s5_probe_cmd)"
-unset -f ss netstat
+assert_eq "broken ss falls back to a working netstat" 0 "$T_STATUS"
+assert_eq "netstat is selected when proc is unavailable" "netstat" "$(s5_probe_cmd)"
+S5_PROC_NET_TCP=$_saved_proc
+S5_PROC_NET_TCP6=$_saved_proc6
+printf '  sl  local_address rem_address   st\n' >"$S5_PROC_NET_TCP"
+printf '  sl  local_address rem_address   st\n' >"$S5_PROC_NET_TCP6"
+unset -f ss netstat s5_ca_bundle_available
+assert_eq "proc table is normally the preferred probe" proc "$(s5_probe_cmd)"
 
 # A probe that answers "cannot determine" (status 2) is never reported as a
 # busy port, in either the manual or the random path.

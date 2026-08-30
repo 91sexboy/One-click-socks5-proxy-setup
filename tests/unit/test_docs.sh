@@ -56,12 +56,15 @@ assert_contains "README warns authentication is cleartext" "cleartext" "$readme"
 assert_contains "README says the password is stored in plaintext" "plaintext" "$readme"
 assert_contains "README explains root can read the credentials" "root" "$readme"
 assert_contains "README recommends SSH/TLS/VPN for sensitive use" "SSH" "$readme"
-assert_contains "README lists the build dependencies" "build-essential" "$readme"
-assert_contains "README names the apt CA bundle the installer adds" \
-    "build-essential ca-certificates" "$readme"
-assert_contains "README says packages are left in place" "left in place" "$readme"
+assert_contains "README says target hosts do not compile" "does not compile" "$readme"
+assert_contains "README names the runtime CA dependency" "ca-certificates" "$readme"
+assert_not_contains "README no longer requires build-essential on target hosts" "build-essential" "$readme"
+assert_contains "README says runtime packages are left in place" "left in place" "$readme"
 assert_contains "README says updates are the operator's job" "responsibility" "$readme"
 assert_contains "README names the pinned commit" "da99424eac4092e3722f1a5b1844cfe80478f580" "$readme"
+assert_contains "README names the immutable engine release" "engine-3proxy-0.9.9.0-r1" "$readme"
+assert_contains "README documents embedded digest verification" "embedded SHA-256" "$readme"
+assert_contains "README documents the 128 MiB gate" "128 MiB" "$readme"
 # The primary install form is the one-click one-liner over the real raw URL,
 # in both the wget and curl variants. It must use bash process substitution
 # (dash and busybox sh cannot parse `<(...)`), and it must not be a pipe --
@@ -206,13 +209,13 @@ assert_contains "ACL test checks the literal IP path" "by literal IP" "$acl"
 assert_contains "ACL test blocks the release on bypass" "RELEASE BLOCKER" "$acl"
 assert_contains "ACL test cites the pinned source evidence" "src/acl.c" "$acl"
 
-# ---------------------------------------------------- CI defines 16 build cells
+# -------------------------------------- CI defines 16 asset-compatibility cells
 ci=$(cat "$R/.github/workflows/ci.yml")
 for img in 'ubuntu:22.04' 'ubuntu:24.04' 'debian:12' 'debian:13' \
     'alpine:3.20' 'alpine:3.24' 'centos:stream9' 'centos:stream10'; do
     assert_contains "CI covers $img" "$img" "$ci"
 done
-# 8 images x 2 runners in both the build and protocol matrices = 16 cells each
+# 8 images x 2 runners in both the compatibility and protocol matrices = 16 cells each
 buildimgs=$(printf '%s\n' "$ci" | awk '/^  build-matrix:/,/^  protocol:/' | grep -c '^          - "')
 assert_eq "build matrix declares 8 images" 8 "$buildimgs"
 protoimgs=$(printf '%s\n' "$ci" | awk '/^  protocol:/,/^  acl-resolution:/' | grep -c '^          - "')

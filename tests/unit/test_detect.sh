@@ -125,32 +125,27 @@ for bad in i686 i386 armv7l riscv64 ppc64le s390x mips; do
     assert_eq "$bad is rejected" "$EX_UNSUPPORTED" "$T_STATUS"
 done
 
-# --- build dependency lists match SPEC section 8 ---
-# ca-certificates is explicit on apt because Debian's git only recommends it;
-# with Install-Recommends=false the HTTPS clone then fails certificate
-# verification on an otherwise clean host. apk/dnf pull it as a hard
-# dependency of git, so it is not listed there.
-assert_eq "apt deps" "git build-essential ca-certificates" "$(s5_build_deps apt)"
-assert_eq "apk deps" "git build-base musl-dev linux-headers" "$(s5_build_deps apk)"
-assert_eq "dnf deps" "git gcc make" "$(s5_build_deps dnf)"
-assert_eq "yum deps match dnf" "git gcc make" "$(s5_build_deps yum)"
-
-# --- curl is only added to the dependency list when it is genuinely absent ---
+# --- only missing runtime dependencies are installed on target hosts ---
 t_stub curl 0
-assert_eq "curl present: not in extra deps" "" "$(s5_runtime_deps)"
+s5_ca_bundle_available() { return 0; }
+s5_probe_cmd() { printf 'proc'; return 0; }
+assert_eq "complete runtime has no package plan" "" "$(s5_required_packages)"
+
 rm -f "$S5_TEST_ROOT/bin/curl"
 OLDPATH=$PATH
 PATH="$S5_TEST_ROOT/bin"
 export PATH
-s5_probe_cmd() { printf 'ss'; return 0; }
 assert_eq "curl absent: added to deps" "curl" "$(s5_runtime_deps)"
 PATH=$OLDPATH
 export PATH
 
-# A minimal supported host may have neither ss nor netstat. The installer must
-# select the distro's package that provides ss before it asks the operator for a
-# port; otherwise a clean host aborts before dependency installation can run.
 t_stub curl 0
+s5_ca_bundle_available() { return 1; }
+assert_eq "missing CA bundle is installed" "ca-certificates" "$(s5_runtime_deps)"
+s5_ca_bundle_available() { return 0; }
+
+# A supported host without /proc socket tables, ss or netstat needs the small
+# distro package that supplies ss before the port prompt.
 s5_probe_cmd() { return 1; }
 S5_PKGMGR=apt
 assert_eq "apt adds iproute2 when no port probe exists" "iproute2" "$(s5_runtime_deps)"
@@ -160,21 +155,21 @@ S5_PKGMGR=dnf
 assert_eq "dnf adds iproute when no port probe exists" "iproute" "$(s5_runtime_deps)"
 S5_PKGMGR=yum
 assert_eq "yum adds iproute when no port probe exists" "iproute" "$(s5_runtime_deps)"
-s5_probe_cmd() { printf 'ss'; return 0; }
+s5_probe_cmd() { printf 'proc'; return 0; }
 S5_PKGMGR=apt
-assert_eq "an existing port probe needs no probe package" "" "$(s5_runtime_deps)"
+assert_eq "the kernel socket table needs no probe package" "" "$(s5_runtime_deps)"
 
-# The package plan is covered by the initial installation confirmation. The
-# dependency step itself must not consume one of the user's port/user/password
-# answers as a second confirmation.
+# The package step must not consume an interactive answer, and apt must avoid
+# recommendations when a genuinely missing runtime dependency is installed.
 s5_confirm() { return 1; }
+s5_ca_bundle_available() { return 1; }
 t_stub apt-get 0
 S5_PKGMGR=apt
 S5_PORT_PROBE="$S5_TEST_ROOT/bin/portprobe"
 t_run s5_install_dependencies
-assert_eq "dependency installation does not ask a second confirmation" 0 "$T_STATUS"
-t_assert_called "dependency installation still updates apt metadata" 'apt-get update'
-t_assert_called "dependency installation still installs the build packages" 'apt-get install -y'
+assert_eq "runtime dependency installation asks no second confirmation" 0 "$T_STATUS"
+t_assert_called "dependency installation updates apt metadata" 'apt-get update'
+t_assert_called "apt avoids recommended packages" 'apt-get install -y --no-install-recommends ca-certificates'
 : >"$T_TRANSCRIPT"
 unset -f s5_confirm
 

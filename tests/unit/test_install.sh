@@ -31,6 +31,9 @@ assert_mode "state file is 0600" 600 "$S5_STATE"
 
 s5_state_mark created_confdir
 s5_state_add port 31080
+assert_eq "new state records release-asset origin" release-asset "$(s5_state_get origin)"
+assert_eq "new state records the selected asset" "$S5_ASSET_NAME" "$(s5_state_get asset)"
+assert_eq "new state records the embedded digest" "$S5_ASSET_SHA256" "$(s5_state_get sha256)"
 if s5_state_flagged created_confdir; then t_ok; else t_bad "flag should be recorded"; fi
 if s5_state_flagged created_bin; then t_bad "unset flag must not read as set"; else t_ok; fi
 assert_eq "state records the port" 31080 "$(s5_state_get port)"

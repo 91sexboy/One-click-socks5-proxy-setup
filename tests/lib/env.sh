@@ -7,7 +7,7 @@ s5env_setup() {
     t_mktestroot
     t_stub_init
 
-    for s in git make systemctl rc-service curl; do
+    for s in systemctl rc-service curl; do
         cp "${S5_REPO_ROOT}/tests/stubs/$s" "$S5_TEST_ROOT/bin/$s"
         chmod 0755 "$S5_TEST_ROOT/bin/$s"
     done
@@ -98,6 +98,15 @@ PROBE
 
     printf '%s\n' da99424eac4092e3722f1a5b1844cfe80478f580 >"$S5_TEST_ROOT/stub_head"
 
+    printf '#!/bin/sh\nexit 0\n' >"$S5_TEST_ROOT/stub_engine_asset"
+    chmod 0700 "$S5_TEST_ROOT/stub_engine_asset"
+    S5_TEST_ASSET_SHA256=$(sha256sum "$S5_TEST_ROOT/stub_engine_asset" | cut -d' ' -f1)
+    S5_TEST_ASSET_SIZE=$(wc -c <"$S5_TEST_ROOT/stub_engine_asset" | tr -d '[:space:]')
+    S5_PROC_NET_TCP="$S5_TEST_ROOT/proc-net-tcp"
+    S5_PROC_NET_TCP6="$S5_TEST_ROOT/proc-net-tcp6"
+    printf '  sl  local_address rem_address   st\n' >"$S5_PROC_NET_TCP"
+    printf '  sl  local_address rem_address   st\n' >"$S5_PROC_NET_TCP6"
+
     S5_TEST_MODE=1
     S5_LIB_ONLY=1
     S5_PORT_PROBE="$S5_TEST_ROOT/bin/portprobe"
@@ -105,6 +114,8 @@ PROBE
     S5_ASSUME_ROOT=1
     S5_SKIP_OWNERSHIP=1
     export S5_TEST_MODE S5_LIB_ONLY S5_PORT_PROBE S5_OSRELEASE S5_ASSUME_ROOT S5_SKIP_OWNERSHIP
+    export S5_TEST_ASSET_SHA256 S5_TEST_ASSET_SIZE
+    export S5_PROC_NET_TCP S5_PROC_NET_TCP6
 }
 
 s5env_setup_pkgmgrs() {
@@ -128,6 +139,9 @@ s5env_account_stubs() {
 s5env_load() {
     # shellcheck source=/dev/null
     . "${S5_SRC}"
+    S5_ASSET_NAME=$S5_ASSET_GLIBC_AMD64
+    S5_ASSET_SHA256=$S5_ASSET_GLIBC_AMD64_SHA
+    S5_ASSET_SIZE=$S5_ASSET_GLIBC_AMD64_SIZE
     S5_STUB_CFG="$S5_CFG"
     S5_STUB_UNIT="$S5_UNIT"
     S5_STUB_INITSCRIPT="$S5_INITSCRIPT"

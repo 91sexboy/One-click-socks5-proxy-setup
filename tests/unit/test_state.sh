@@ -142,6 +142,59 @@ reject_case "commit 39 chars" "commit	da99424eac4092e3722f1a5b1844cfe80478f58
 status	complete"
 reject_case "commit 41 chars" "commit	da99424eac4092e3722f1a5b1844cfe80478f5800
 status	complete"
+t_run s5_state_value_ok origin source-build
+assert_eq "legacy source-build origin remains valid" 0 "$T_STATUS"
+t_run s5_state_value_ok origin release-asset
+assert_eq "release-asset origin is valid" 0 "$T_STATUS"
+t_run s5_state_value_ok origin unknown-source
+assert_ne "unknown install origin is rejected" 0 "$T_STATUS"
+t_run s5_state_value_ok asset bad-asset
+assert_ne "unknown release asset is rejected" 0 "$T_STATUS"
+t_run s5_state_value_ok sha256 deadbeef
+assert_ne "short asset digest is rejected" 0 "$T_STATUS"
+reject_case "release asset state without artifact metadata" "tag	0.9.9.0
+commit	da99424eac4092e3722f1a5b1844cfe80478f580
+origin	release-asset
+port	31080
+username	gooduser
+family	debian
+init	systemd
+listen	0.0.0.0
+arch	amd64
+os	debian-12
+account_uid	900
+account_gid	900
+status	complete"
+reject_case "release asset state with a cross-architecture asset" "tag	0.9.9.0
+commit	da99424eac4092e3722f1a5b1844cfe80478f580
+origin	release-asset
+asset	3proxy-0.9.9.0-da99424-linux-glibc-arm64
+sha256	344e482272e5c16d1f9c762d7ed240cda43bb050a53be767e5393a616607ccf5
+port	31080
+username	gooduser
+family	debian
+init	systemd
+listen	0.0.0.0
+arch	amd64
+os	debian-12
+account_uid	900
+account_gid	900
+status	complete"
+reject_case "release asset state with a mismatched digest" "tag	0.9.9.0
+commit	da99424eac4092e3722f1a5b1844cfe80478f580
+origin	release-asset
+asset	3proxy-0.9.9.0-da99424-linux-glibc-amd64
+sha256	344e482272e5c16d1f9c762d7ed240cda43bb050a53be767e5393a616607ccf5
+port	31080
+username	gooduser
+family	debian
+init	systemd
+listen	0.0.0.0
+arch	amd64
+os	debian-12
+account_uid	900
+account_gid	900
+status	complete"
 reject_case "control character in a value" "$(printf 'origin\tsource\001build')"
 
 # ==========================================================================
@@ -171,6 +224,29 @@ if s5_is_installed; then
 else
     t_ok
 fi
+
+# A complete release-asset state with a matching tuple and digest loads.
+rm -rf "$S5_STATEDIR"
+write_state "tag	0.9.9.0
+commit	da99424eac4092e3722f1a5b1844cfe80478f580
+origin	release-asset
+asset	3proxy-0.9.9.0-da99424-linux-glibc-amd64
+sha256	ce3c604d0133df0028b4e9cd93c326b36790db789c769b2a2c78b400b9967a80
+port	31080
+username	gooduser
+family	debian
+init	systemd
+listen	0.0.0.0
+arch	amd64
+os	debian-12
+account_uid	900
+account_gid	900
+status	complete"
+t_run s5_state_load
+assert_eq "matching release-asset state loads" 0 "$T_STATUS"
+s5_state_load >/dev/null 2>&1
+assert_eq "release state keeps its asset" \
+    3proxy-0.9.9.0-da99424-linux-glibc-amd64 "$(s5_state_get asset)"
 
 # ==========================================================================
 # A symlinked state file is refused.

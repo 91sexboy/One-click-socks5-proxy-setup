@@ -6,7 +6,7 @@ cannot express: a SOCKS5 handshake offering only "no authentication", a SOCKS5
 BIND request, and a SOCKS5 UDP ASSOCIATE request.
 
 It is NOT a runtime dependency of socks5.sh and must never become one.
-socks5.sh depends only on POSIX sh, git, make, a C compiler and curl.
+socks5.sh depends only on POSIX sh, curl, sha256sum and standard base utilities.
 
 Credentials are read from stdin ("user\\npassword\\n") so they never appear in
 argv and therefore never in CI logs.

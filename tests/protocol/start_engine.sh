@@ -1,7 +1,7 @@
 #!/bin/sh
 # tests/protocol/start_engine.sh - CI ONLY.
 #
-# Builds 3proxy from the pinned commit, renders the production configuration,
+# Installs a prebuilt release candidate, renders the production configuration,
 # and starts the engine in the background so run_protocol.sh and
 # acl_resolution.sh can exercise the protocol boundary without needing systemd
 # or OpenRC.
@@ -25,6 +25,7 @@ OUTDIR=${OUTDIR:-$(mktemp -d)}
 PORT=${PORT:-41080}
 PROXY_USER=${PROXY_USER:-ciuser}
 PASSFILE=${PASSFILE:?PASSFILE must point at a 0600 file holding the password}
+ENGINE_BIN=${ENGINE_BIN:-}
 
 if [ ! -f "$PASSFILE" ] || [ -L "$PASSFILE" ]; then
     printf 'PASSFILE must be a regular non-symlink file: %s\n' "$PASSFILE" >&2
@@ -33,6 +34,11 @@ fi
 _pfmode=$(stat -c '%a' "$PASSFILE" 2>/dev/null || printf '')
 if [ "$_pfmode" != 600 ]; then
     printf 'PASSFILE must have mode 0600, found %s: %s\n' "${_pfmode:-unknown}" "$PASSFILE" >&2
+    exit 2
+fi
+if [ -n "$ENGINE_BIN" ] &&
+    { [ ! -f "$ENGINE_BIN" ] || [ -L "$ENGINE_BIN" ] || [ ! -x "$ENGINE_BIN" ]; }; then
+    printf 'ENGINE_BIN must be an executable regular non-symlink file: %s\n' "$ENGINE_BIN" >&2
     exit 2
 fi
 
@@ -52,8 +58,16 @@ export S5_TEST_MODE S5_TEST_ROOT S5_LIB_ONLY S5_SKIP_OWNERSHIP S5_ASSUME_ROOT S5
 # shellcheck source=/dev/null
 . "$REPO/socks5.sh"
 
-printf 'building 3proxy at pinned commit %s\n' "$S5_PINNED_COMMIT" >&2
-s5_build_3proxy
+if [ -n "$ENGINE_BIN" ]; then
+    printf 'installing supplied verified release engine %s\n' "$ENGINE_BIN" >&2
+    s5_install_binary "$ENGINE_BIN"
+else
+    s5_detect_platform
+    S5_ARCHNAME=$(s5_map_arch "$(uname -m)")
+    s5_select_engine_asset
+    printf 'downloading verified release engine %s\n' "$S5_ASSET_NAME" >&2
+    s5_fetch_verified_engine
+fi
 
 S5_PORT=$PORT
 S5_USERNAME=$PROXY_USER

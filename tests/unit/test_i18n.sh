@@ -630,7 +630,7 @@ assert_contains "Chinese is selected before dispatch" "未知子命令" "$T_OUT"
 # BF-03: catalog semantic parity. Every key's zh and en arms must consume the
 # SAME number of %s placeholders as the declared arity -- a structural arm
 # count proves nothing about content. card.cloud_provider's zh arm dropped
-# the port this way; build.fetching, fs.atomic_mode/owner and
+# the port this way; asset.fetching, fs.atomic_mode/owner and
 # state.unknown_key/duplicate_key swap argument semantics between locales.
 # ---------------------------------------------------------------------------
 _parity_bad=''
@@ -658,13 +658,13 @@ assert_eq "every key consumes its declared arity of placeholders in both locales
 S5_LANG=en
 _s1=SNT-ARG-ONE
 _s2=SNT-ARG-TWO
-_o=$(s5_msg build.fetching "$_s1" "$_s2")
-assert_contains "en build.fetching carries arg1" "$_s1" "$_o"
-assert_contains "en build.fetching carries arg2" "$_s2" "$_o"
+_o=$(s5_msg asset.fetching "$_s1" "$_s2")
+assert_contains "en asset.fetching carries arg1" "$_s1" "$_o"
+assert_contains "en asset.fetching carries arg2" "$_s2" "$_o"
 S5_LANG=zh
-_o=$(s5_msg build.fetching "$_s1" "$_s2")
-assert_contains "zh build.fetching carries arg1" "$_s1" "$_o"
-assert_contains "zh build.fetching carries arg2" "$_s2" "$_o"
+_o=$(s5_msg asset.fetching "$_s1" "$_s2")
+assert_contains "zh asset.fetching carries arg1" "$_s1" "$_o"
+assert_contains "zh asset.fetching carries arg2" "$_s2" "$_o"
 
 S5_LANG=en
 _o=$(s5_msg fs.atomic_mode "$_s1" "$_s2")

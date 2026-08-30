@@ -27,8 +27,8 @@ R="${S5_REPO_ROOT}"
 # script unconditionally assigns it before the first read (so whatever the
 # caller exported is discarded).
 # ==========================================================================
-reads=$(grep -oE '\$\{S5_[A-Z_]+:-' "${S5_SRC}" | sed -e 's/\${//' -e 's/:-//' | sort -u)
-guarded=$(grep 's5_note_override' "${S5_SRC}" | grep -oE 'S5_[A-Z_]+ ' | tr -d ' ' | sort -u)
+reads=$(grep -oE '\$\{S5_[A-Z0-9_]+:-' "${S5_SRC}" | sed -e 's/\${//' -e 's/:-//' | sort -u)
+guarded=$(grep 's5_note_override' "${S5_SRC}" | grep -oE 'S5_[A-Z0-9_]+ ' | tr -d ' ' | sort -u)
 
 # The harness exports several overrides, so a production-mode probe must clear
 # every one of them. The clear-list is derived from the guard list itself, so it
@@ -143,18 +143,18 @@ else
     t_bad "created_confdir must be recorded before the directory is created"
 fi
 
-build=$(line_of 's5_build_3proxy')
+fetch=$(line_of 's5_fetch_verified_engine')
 mark_prefix=$(line_of 's5_state_mark created_prefix')
 mark_bin=$(line_of 's5_state_mark created_bin')
-if [ -n "$mark_prefix" ] && [ -n "$build" ] && [ "$mark_prefix" -lt "$build" ]; then
+if [ -n "$mark_prefix" ] && [ -n "$fetch" ] && [ "$mark_prefix" -lt "$fetch" ]; then
     t_ok
 else
-    t_bad "created_prefix must be recorded before the build installs the binary"
+    t_bad "created_prefix must be recorded before the asset install creates the binary"
 fi
-if [ -n "$mark_bin" ] && [ -n "$build" ] && [ "$mark_bin" -lt "$build" ]; then
+if [ -n "$mark_bin" ] && [ -n "$fetch" ] && [ "$mark_bin" -lt "$fetch" ]; then
     t_ok
 else
-    t_bad "created_bin must be recorded before the build installs the binary"
+    t_bad "created_bin must be recorded before the asset install creates the binary"
 fi
 
 w_users=$(line_of 's5_atomic_write "\$S5_USERSCFG"')
