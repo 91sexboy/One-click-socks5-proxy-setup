@@ -40,7 +40,11 @@ while [ "$i" -lt 120 ]; do
 done
 [ "$i" -lt 120 ] || { printf '%s did not finish\n' "$UNIT" >&2; exit 1; }
 status=$(systemctl show "$UNIT.service" -p ExecMainStatus --value)
-peak=$(systemctl show "$UNIT.service" -p MemoryPeak --value)
+cgroup=$(systemctl show "$UNIT.service" -p ControlGroup --value)
+case "$cgroup" in /*) ;; *) printf '%s has invalid cgroup: %s\n' "$UNIT" "$cgroup" >&2; exit 1;; esac
+peak_file="/sys/fs/cgroup${cgroup}/memory.peak"
+[ -r "$peak_file" ] || { printf '%s memory peak file is unreadable: %s\n' "$UNIT" "$peak_file" >&2; exit 1; }
+peak=$(cat "$peak_file")
 case "$status:$peak" in
     0:[0-9]*) ;;
     *) printf '%s failed: status=%s peak=%s\n' "$UNIT" "$status" "$peak" >&2; exit 1;;

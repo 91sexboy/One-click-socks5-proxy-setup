@@ -573,7 +573,7 @@ assert_contains "systemd scopes enforce 128 MiB" 'MemoryMax=134217728' \
     "$(cat "$R/.github/scripts/run-systemd-memory-gate.sh")"
 assert_contains "systemd scopes disable swap" 'MemorySwapMax=0' \
     "$(cat "$R/.github/scripts/run-systemd-memory-gate.sh")"
-assert_contains "systemd lifecycle records scoped peak memory" 'MemoryPeak' \
+assert_contains "systemd lifecycle records scoped peak memory" 'memory.peak' \
     "$(cat "$R/.github/scripts/run-systemd-memory-gate.sh")"
 assert_contains "systemd performs a real in-place update" 'update.answers' "$_distro_mem"
 assert_contains "systemd checks transaction cleanup" 'reconfigure-transaction' "$_distro_mem"
