@@ -189,7 +189,7 @@ t_assert_never_called "restart does not reinstall the unit" 'systemctl enable'
 t_assert_never_called "restart does not rebuild" 'make -f'
 assert_not_contains "restart never prints the password" "$PASS_OK" "$T_OUT"
 
-# there is no reload and no reconfigure subcommand in v1. The language
+# There is no public reload or reconfigure subcommand. The language selector
 # selector reads stdin first, so each real-script invocation feeds it.
 printf '2\n' >"$S5_TEST_ROOT/lang"
 t_run env -u S5_LIB_ONLY sh "$S5_SRC" reload <"$S5_TEST_ROOT/lang"
@@ -264,6 +264,14 @@ s5env_answers '5
 '
 t_run s5_cmd_auto <"$S5_TEST_ROOT/answers"
 assert_eq "menu quit exits 0" 0 "$T_STATUS"
+
+s5env_answers '6
+
+'
+t_run s5_cmd_auto <"$S5_TEST_ROOT/answers"
+assert_eq "menu update can be cancelled with Enter" 0 "$T_STATUS"
+assert_contains "menu exposes the update action" "update" "$T_OUT"
+assert_contains "cancelled menu update preserves the proxy" "unchanged" "$T_OUT"
 
 s5env_answers '99
 '

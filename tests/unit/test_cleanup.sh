@@ -58,25 +58,13 @@ assert_contains "the harness's own cleanup trap is still in place" \
     "t_cleanup_root" "$trapbefore"
 
 # ==========================================================================
-# Terminal state is captured with `stty -g` and restored verbatim.
+# Password input is intentionally visible and must not alter terminal state.
 # ==========================================================================
-if grep -q 'stty -g' "${S5_SRC}"; then
-    t_ok
+if grep -qE 'stty|S5_TERM_STATE|S5_TERM_MODIFIED|s5_term_restore' "${S5_SRC}"; then
+    t_bad "visible password input must not manipulate terminal echo"
 else
-    t_bad "the full termios state must be saved with stty -g"
-fi
-if grep -q 'stty "\$S5_TERM_STATE"' "${S5_SRC}"; then
     t_ok
-else
-    t_bad "the saved termios state must be restored verbatim"
 fi
-
-S5_TERM_MODIFIED=1
-S5_TERM_STATE='fake:state'
-s5_term_restore 2>/dev/null
-rc=$?
-assert_eq "term restore is safe when stty cannot apply the state" 0 "$rc"
-assert_eq "term restore clears the modified flag" 0 "$S5_TERM_MODIFIED"
 
 # ==========================================================================
 # The build directory is always removed, and only if it looks like ours.

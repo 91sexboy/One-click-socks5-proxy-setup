@@ -149,20 +149,25 @@ s5env_reset_transcript
 S5_PORT=31080
 t_run s5_selftest_good "$USER_OK" "$PASS_OK"
 assert_eq "correct credentials pass the self-test" 0 "$T_STATUS"
-t_assert_called "curl reads its config from stdin" 'curl --config -'
+t_assert_called "curl ignores curlrc and reads config from stdin" 'curl -q --config -'
 t_assert_no_secret_in_argv "password never appears in curl argv" "$PASS_OK"
 assert_contains "stdin carried the proxy user" "proxy-user" "$(cat "$S5_TEST_ROOT/curl_stdin")"
 assert_contains "stdin carried the fixed self-test URL" "https://example.com/" "$(cat "$S5_TEST_ROOT/curl_stdin")"
 
 s5env_reset_transcript
-t_run s5_selftest_bad
+t_run s5_selftest_bad "$USER_OK" "$PASS_OK"
 assert_eq "wrong credentials are rejected, which is a pass" 0 "$T_STATUS"
+assert_contains "bad-password probe uses the configured username" \
+    "proxy-user = \"$USER_OK:" "$(cat "$S5_TEST_ROOT/curl_stdin")"
+assert_not_contains "bad-password probe never retries the correct credential" \
+    "proxy-user = \"$USER_OK:$PASS_OK\"" "$(cat "$S5_TEST_ROOT/curl_stdin")"
+t_assert_called "bad-password probe ignores curlrc" 'curl -q --config -'
 t_assert_no_secret_in_argv "bad-credential probe leaks nothing either" "$PASS_OK"
 
 # if a wrong password were accepted, the check must fail
 s5env_reset_transcript
 : >"$S5_TEST_ROOT/stub_curl_accept_all"
-t_run s5_selftest_bad
+t_run s5_selftest_bad "$USER_OK" "$PASS_OK"
 assert_ne "accepting bad credentials fails the check" 0 "$T_STATUS"
 assert_contains "accepting bad credentials is reported as a security failure" "SECURITY" "$T_OUT"
 rm -f "$S5_TEST_ROOT/stub_curl_accept_all"
@@ -178,7 +183,7 @@ rm -f "$S5_TEST_ROOT/stub_curl_accept_all"
 for badcode in 7 6 28 35; do
     s5env_reset_transcript
     printf '%s\n' "$badcode" >"$S5_TEST_ROOT/stub_curl_code"
-    t_run s5_selftest_bad
+    t_run s5_selftest_bad "$USER_OK" "$PASS_OK"
     assert_ne "curl $badcode is not accepted as proof of rejection" 0 "$T_STATUS"
     assert_contains "curl $badcode is reported as inconclusive" "inconclusive" "$T_OUT"
     assert_contains "curl $badcode names the status it saw" "$badcode" "$T_OUT"
@@ -189,7 +194,7 @@ done
 # The boundary itself: 97 is the one code that does count.
 s5env_reset_transcript
 printf '97\n' >"$S5_TEST_ROOT/stub_curl_code"
-t_run s5_selftest_bad
+t_run s5_selftest_bad "$USER_OK" "$PASS_OK"
 assert_eq "curl 97 is accepted as proof the proxy refused" 0 "$T_STATUS"
 rm -f "$S5_TEST_ROOT/stub_curl_code"
 
@@ -212,7 +217,8 @@ assert_eq "direct egress success leaves the proxy as the failing component" \
 curl_cfg=$(s5_curl_config "$USER_OK" "$PASS_OK")
 assert_contains "proxy self-test treats HTTP errors as failure" "fail" "$curl_cfg"
 direct_fn=$(sed -n '/^s5_direct_egress_ok() {/,/^}/p' "$S5_SRC")
-assert_contains "direct diagnosis also treats HTTP errors as failure" "-fsS" "$direct_fn"
+assert_contains "direct diagnosis treats HTTP errors as failure" "-fsS" "$direct_fn"
+assert_contains "direct diagnosis ignores curlrc" "curl -q" "$direct_fn"
 
 S5_LANG=en
 t_run s5_explain_failure external-service-failure
@@ -283,20 +289,20 @@ else
 fi
 
 # ==========================================================================
-# Idempotency: a second install is a no-op plus status
+# Existing install: Enter safely cancels reconfiguration
 # ==========================================================================
 s5env_reset_transcript
 before=$(cat "$S5_USERSCFG")
-# Handwritten on purpose: the already-installed path prompts nothing, so this
-# is not a complete install stream and the builder does not apply.
-s5env_answers 'y
+# The reconfiguration confirmation is default-no; no value prompts follow.
+s5env_answers '
 '
 t_run s5_cmd_install <"$S5_TEST_ROOT/answers"
-assert_eq "second install exits 0" 0 "$T_STATUS"
-assert_contains "second install says it is already installed" "already installed" "$T_OUT"
-assert_eq "credentials untouched by the second install" "$before" "$(cat "$S5_USERSCFG")"
-t_assert_never_called "second install creates no account" 'useradd'
-t_assert_never_called "second install rebuilds nothing" 'make -f'
+assert_eq "default-no reconfiguration exits 0" 0 "$T_STATUS"
+assert_contains "existing install offers an in-place update" "updated" "$T_OUT"
+assert_contains "default-no reconfiguration is cancelled" "unchanged" "$T_OUT"
+assert_eq "credentials remain untouched after cancellation" "$before" "$(cat "$S5_USERSCFG")"
+t_assert_never_called "cancelled reconfiguration creates no account" 'useradd'
+t_assert_never_called "cancelled reconfiguration rebuilds nothing" 'make -f'
 users_lines=$(grep -c '' "$S5_USERSCFG")
 assert_eq "still exactly one credential line" 1 "$users_lines"
 

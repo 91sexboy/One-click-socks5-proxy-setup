@@ -13,6 +13,10 @@ printf 'curl' >>"$T"
 for a in "$@"; do printf ' %s' "$a" >>"$T"; done
 printf '\n' >>"$T"
 
+if [ "${1:-}" = "-q" ]; then
+    shift
+fi
+
 if [ "${1:-}" = "--config" ] && [ "${2:-}" = "-" ]; then
     IN="$S5_TEST_ROOT/curl_stdin"
     cat >>"$IN"
@@ -37,7 +41,13 @@ if [ "${1:-}" = "--config" ] && [ "${2:-}" = "-" ]; then
         exit 0
     fi
     got=$(grep '^proxy-user' "$IN" | tail -n 1 | sed -e 's/^[^=]*=[[:space:]]*//' -e 's/^"//' -e 's/"$//')
-    want=$(cat "$S5_TEST_ROOT/expected_creds" 2>/dev/null || printf '')
+    if [ -f "$S5_TEST_ROOT/expected_creds" ]; then
+        want=$(cat "$S5_TEST_ROOT/expected_creds" 2>/dev/null || printf '')
+    elif [ -f "$S5_TEST_ROOT/etc/socks5-manager/users.cfg" ]; then
+        want=$(sed 's/:CL:/:/' "$S5_TEST_ROOT/etc/socks5-manager/users.cfg" 2>/dev/null)
+    else
+        want=''
+    fi
     if [ -n "$want" ] && [ "$got" = "$want" ]; then
         exit 0
     fi

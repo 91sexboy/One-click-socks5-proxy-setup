@@ -295,6 +295,11 @@ S5_USERNAME=''
 feed '
 '
 s5_prompt_username <"$S5_TEST_ROOT/in" >/dev/null 2>&1
+assert_eq "empty input generates a 12-character username" 12 "${#S5_USERNAME}"
+case "$S5_USERNAME" in
+[a-z][a-z0-9][a-z0-9][a-z0-9][a-z0-9][a-z0-9][a-z0-9][a-z0-9][a-z0-9][a-z0-9][a-z0-9][a-z0-9]) t_ok ;;
+*) t_bad "generated username has the wrong shape: [$S5_USERNAME]" ;;
+esac
 t_run s5_valid_username "$S5_USERNAME"
 assert_eq "empty input generates a valid username" 0 "$T_STATUS"
 
@@ -370,31 +375,38 @@ cat >"$S5_TEST_ROOT/check-secret-exports.sh" <<'EXPORT_CHECK'
 #!/bin/sh
 export S5_PASSWORD=InheritedPassword123
 export S5_SECRET=InheritedSecret123
-export S5_READ_VALUE=InheritedReadValue123
 export _vp=InheritedValidator123
 export _pw1=InheritedPromptOne123
-export _pw2=InheritedPromptTwo123
 export _lcline=InheritedCredentialLine123
 export _lcp=InheritedLoadedPassword123
 export _stp=InheritedProbePassword123
+export _isu=InheritedRenderedUsers123
+export _scline=InheritedStaticLine123
+export _scpass=InheritedStaticPassword123
+export _tx_users_body=InheritedTransactionUsers123
+export _tx_cfg_body=InheritedTransactionConfig123
 S5_LIB_ONLY=1
 export S5_LIB_ONLY
 . "$S5_SRC"
 S5_PASSWORD=FreshPassword123
 S5_SECRET=FreshSecret123
-S5_READ_VALUE=FreshReadValue123
 _vp=FreshValidator123
 _pw1=FreshPromptOne123
-_pw2=FreshPromptTwo123
 _lcline='freshuser:CL:FreshCredentialLine123'
 _lcp=FreshLoadedPassword123
 _stp=FreshProbePassword123
+_isu='freshuser:CL:FreshRenderedUsers123'
+_scline='freshuser:CL:FreshStaticLine123'
+_scpass=FreshStaticPassword123
+_tx_users_body='freshuser:CL:FreshTransactionUsers123'
+_tx_cfg_body=FreshTransactionConfig123
 env
 EXPORT_CHECK
 chmod 0700 "$S5_TEST_ROOT/check-secret-exports.sh"
 t_run sh "$S5_TEST_ROOT/check-secret-exports.sh"
 assert_eq "the inherited-export probe itself runs" 0 "$T_STATUS"
-for secret_name in S5_PASSWORD S5_SECRET S5_READ_VALUE _vp _pw1 _pw2 _lcline _lcp _stp; do
+for secret_name in S5_PASSWORD S5_SECRET _vp _pw1 _lcline _lcp _stp \
+    _isu _scline _scpass _tx_users_body _tx_cfg_body; do
     assert_not_contains "[$secret_name] has no inherited export attribute" \
         "$secret_name=" "$T_OUT"
 done

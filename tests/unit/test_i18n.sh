@@ -335,15 +335,18 @@ rm -f "$S5_TEST_ROOT/lang_in"
 # T3: default-yes install confirmation and password-once.
 # ---------------------------------------------------------------------------
 
-# Structural: the install confirmation uses a default-YES helper ending in
-# [Y/n]; the uninstall confirmation keeps the default-NO [y/N]. Two separate
-# helpers so the destructive path can never inherit the safe default.
-install_confirm=$(grep -n 's5_confirm_yes' "$SRC" | head -n 1)
+# Structural: the fresh-install path uses the default-YES helper ending in
+# [Y/n]; reconfiguration and uninstall use default-NO helpers. The public
+# install wrapper performs precheck/locking, while the locked implementation
+# owns both fresh-install and reconfiguration prompts.
+install_body=$(sed -n '/^_s5_cmd_install_locked() {/,/^}/p' "$SRC")
+install_confirm=$(printf '%s\n' "$install_body" | grep -n 's5_confirm_yes' | head -n 1)
+reconfigure_call=$(grep -n 's5_confirm_no "$_rcq"' "$SRC" | head -n 1)
 uninstall_call=$(grep -n 's5_confirm "$_ucq"' "$SRC" | head -n 1)
-if [ -n "$install_confirm" ] && [ -n "$uninstall_call" ]; then
+if [ -n "$install_confirm" ] && [ -n "$reconfigure_call" ] && [ -n "$uninstall_call" ]; then
     t_ok
 else
-    t_bad "install needs the default-yes helper; uninstall must keep [y/N]"
+    t_bad "fresh install needs [Y/n]; reconfiguration and uninstall need default-no confirmation"
 fi
 
 # Behavioral: the default-yes helper.
@@ -366,9 +369,27 @@ if grep -q '^s5_confirm_yes() {' "$SRC" 2>/dev/null; then
     assert_ne "default-yes confirm EOF fails" 0 "$?"
 fi
 
-# Behavioral: password read exactly once. The old flow consumed TWO lines for
-# a custom password; the new flow consumes ONE and leaves the next line
-# unread for a subsequent reader.
+for pair in ':1' 'y:0' 'Y:0' 'yes:0' 'n:1' 'N:1' 'no:1'; do
+    in=${pair%%:*}
+    want=${pair#*:}
+    printf '%s\n' "$in" >"$S5_TEST_ROOT/cin"
+    s5_confirm_no <"$S5_TEST_ROOT/cin" >/dev/null 2>&1
+    got=$?
+    assert_eq "default-no reconfigure confirm [$in] -> $want" "$want" "$got"
+done
+s5_confirm_no </dev/null >/dev/null 2>&1
+assert_eq "default-no confirmation distinguishes EOF" 2 "$?"
+
+# Behavioral: password is visible and read exactly once. The flow consumes ONE
+# line and leaves the next line unread for a subsequent reader.
+S5_LANG=en
+_visible_prompt=$(s5_msg input.password_prompt 32)
+assert_contains "password prompt says custom input is visible" "visible while typed" "$_visible_prompt"
+if grep -qE 's5_read_secret|stty[[:space:]]+-echo' "$SRC"; then
+    t_bad "visible password input must not use the old hidden-input path"
+else
+    t_ok
+fi
 S5_PASSWORD='PW-SENTINEL-OLD'
 S5_SECRET=''
 printf 'GoodPass_123~x\nNEXT-LINE-UNREAD\n' >"$S5_TEST_ROOT/pin"
@@ -725,12 +746,13 @@ S5_LANG=en
 # passed. These exercise the real dispatch paths.
 # ---------------------------------------------------------------------------
 
-# The install function's own body must call the default-yes helper.
-_ins_fn=$(awk '/^s5_cmd_install\(\) \{/{f=1} f{print} f && /^}$/{exit}' "$SRC")
+# The locked install implementation must call the default-yes helper for a
+# fresh install; the public wrapper only owns precheck and locking.
+_ins_fn=$(awk '/^_s5_cmd_install_locked\(\) \{/{f=1} f{print} f && /^}$/{exit}' "$SRC")
 if printf '%s\n' "$_ins_fn" | grep -q 's5_confirm_yes'; then
     t_ok
 else
-    t_bad "s5_cmd_install must call s5_confirm_yes, not the default-no helper"
+    t_bad "the fresh-install path must call s5_confirm_yes"
 fi
 
 # Invalid confirmation input retries and a later valid line continues.

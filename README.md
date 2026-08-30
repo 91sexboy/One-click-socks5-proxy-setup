@@ -79,7 +79,8 @@ bash <(curl -fsSL https://raw.githubusercontent.com/91sexboy/One-click-socks5-pr
 ```
 
 The URL always fetches the current version on `main`. Re-running the same
-command later opens the management menu — the proxy is not reinstalled.
+command later opens the management menu, where you can inspect, restart,
+remove, or update the existing proxy in place.
 
 You are running a remote script as root. To read it before running it instead:
 
@@ -102,25 +103,25 @@ passed all 45 jobs. It is fetchable at
 `https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-setup/v1.0.0/socks5.sh` and its
 bytes have SHA-256 `acbfbfe3e6ba0f37f4e2a24ba8a6d68ec5a36513caae2e22e44a0ed28322e0b1`.
 
-**`v1.0.1` — candidate.** Round 18 removed ten unreferenced catalog keys, corrected three comments
-that contradicted the code they documented, and folded two duplicated checks into one. Operator
-behaviour is unchanged, but the bytes are not, so this revision carries a different SHA-256:
+**`v1.1.0` — candidate.** This revision adds transactional in-place updates for
+an existing installation, visible single-entry custom passwords, strict public-IPv4-only
+connection cards, and additional safety checks. Its exact candidate bytes have this SHA-256:
 
 ```text
-b15a38f729c324b3301be2f1121439dfb6eb607ece9dbde07400633f8d0ef7ec  socks5.sh
+e52f8fc48ef017ecb85f96bb80eaad492f5611cbfbc321bd504967936b934878  socks5.sh
 ```
 
-Download and verify the tagged artifact before running it as root:
+Download and verify the tagged artifact after `v1.1.0` is published:
 
 ```sh
-wget -qO socks5.sh https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-setup/v1.0.1/socks5.sh
-printf '%s  %s\n' 'b15a38f729c324b3301be2f1121439dfb6eb607ece9dbde07400633f8d0ef7ec' socks5.sh | sha256sum -c -
+wget -qO socks5.sh https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-setup/v1.1.0/socks5.sh
+printf '%s  %s\n' 'e52f8fc48ef017ecb85f96bb80eaad492f5611cbfbc321bd504967936b934878' socks5.sh | sha256sum -c -
 sudo sh socks5.sh
 ```
 
-Tag `v1.0.1` is created at this revision only after its own 45/45 run succeeds, and is never moved.
-A tag's existence is therefore the final proof that its implementation run, its evidence-only run,
-and its reachable tagged tree all passed.
+Tag `v1.1.0` will be created only after its own complete CI run succeeds, and is never moved.
+A tag's existence is therefore the final proof that its implementation, verification and reachable
+release tree all passed.
 
 ## The interactive flow
 
@@ -137,13 +138,21 @@ order; the first picks the language the other four are printed in:
    1024–65535. An occupied port is rejected.
 4. **Username** — press Enter for a random one. `A-Z a-z 0-9 _ -`, 3–32 chars.
 5. **Password** — press Enter for a generated 32-character password, or type
-   your own: `A-Z a-z 0-9 . _ ~ -`, 12–128 chars. Typed input is not echoed
-   and is asked for once; there is no type-it-twice confirmation, so check it
-   with `show` if you typed it rather than generated it.
+   your own: `A-Z a-z 0-9 . _ ~ -`, 12–128 chars. Custom input is visible and
+   is read once, so enter it only in a private terminal; the final card lets you
+   verify what was accepted.
 
 Pressing Enter at the language question and at all three value prompts is
 supported: it selects 中文 and accepts the generated values, giving you a
 secure, randomly generated port, username and password.
+
+On an existing healthy installation, the `install` action first shows the
+current non-secret status and asks a default-no `[y/N]` confirmation. If you
+confirm, it asks for a new port, username and password with the same random
+Enter defaults, then updates the configuration in place without rebuilding
+3proxy, recreating the service account, or replacing the service definition.
+The old configuration is restored automatically if activation or verification
+of the new one fails.
 
 Both character sets are RFC 3986 unreserved, so the `socks5://` URI on the
 credential card needs no escaping.
@@ -161,32 +170,34 @@ exactly as those programs print it, untranslated.
 
 ## The credential card
 
-A successful install ends by printing a credential card. Its labels — Host,
-Port, Username, Password — are localized to the selected language; the values
-are the real ones. The connection line stands on its own line, unindented,
-so it copies cleanly:
+A successful install or update ends by printing a credential card **only when
+stdout is a real terminal**. If output is redirected or piped, the operation
+still completes but the password and URI are not written there; re-run the
+script in a terminal and choose `show`. The labels — Host, Port, Username,
+Password — are localized to the selected language; the values are the real
+ones. The connection line stands on its own line, unindented, so it copies
+cleanly:
 
 ```
 socks5://user:password@host:port
 ```
 
-The address on the card is the script's best observation of the address an
-outside client would connect to, chosen in this order:
+The address on the card is either:
 
 1. **A strictly validated public IPv4, observed from outside.** The script
-   makes one short HTTPS request to a fixed endpoint and uses the source
-   address that request came from — but only after strict validation that it
-   is a public IPv4; anything malformed or non-public is discarded. What the
-   endpoint sees is the source IP and the time of that one request, nothing
-   else. The request does not carry the port, the username or the password.
-2. **A validated local address**, if the outside lookup fails, shown with one
-   warning: it may not be reachable from the internet.
-3. **The literal placeholder `SERVER_IPV4`**, if neither yields an address,
-   printed in place of the host with a warning to replace it with your
-   server's public address before using the connection line.
+   makes one short HTTPS request to a fixed endpoint and uses the source IP
+   that request came from — but only after strict validation that it is a
+   is a public IPv4; anything malformed or non-public is discarded. The
+   response is capped at 17 bytes. What the endpoint sees is the source IP and
+   the time of that one request, nothing else. The request does not carry the
+   port, username or password.
+2. **The literal placeholder `SERVER_IPV4`** when the lookup fails, with an
+   adjacent warning to replace it with the server's public IPv4 before using
+   the connection line. Local RFC1918/CGNAT addresses are never substituted
+   into a supposedly public connection URI.
 
-A failed lookup never fails the install: either way the proxy is installed,
-running and verified — only the address printed on the card changes.
+A failed lookup never fails the install or update: the proxy is already running
+and verified; only the address printed on the card changes.
 
 The card closes with the standing reminders, in the selected language: this
 script has no firewall functionality at all, so the port is yours to open in
@@ -201,7 +212,7 @@ saved as a file, the subcommands are:
 
 ```sh
 sudo sh socks5.sh            # install if absent, otherwise a management menu
-sudo sh socks5.sh install
+sudo sh socks5.sh install   # install, or offer an in-place update if present
 sudo sh socks5.sh status     # service, port, version, install origin
 sudo sh socks5.sh show       # re-display the full details, including the password
 sudo sh socks5.sh restart
@@ -211,8 +222,13 @@ sudo sh socks5.sh uninstall
 `show` requires root and prints the password to your terminal only — never to a
 log or the journal.
 
-There is no `reload` (use `restart`) and no `reconfigure`: to change the port,
-username or password, uninstall and install again.
+There is no separate `reload` or `reconfigure` subcommand. To change the port,
+username or password, re-run `install` or choose `update` from the management
+menu. The script shows the current non-secret status, asks for confirmation,
+then performs a recoverable in-place update while reusing the installed binary,
+service account and service definition. Candidate files and backups remain
+root-only; the old configuration is restored and re-verified if the new one
+cannot start or pass authentication checks.
 
 ## What gets installed
 
@@ -225,6 +241,13 @@ username or password, uninstall and install again.
 | systemd unit | `/etc/systemd/system/socks5-manager.service` |
 | OpenRC service | `/etc/init.d/socks5-manager` |
 | Service account | `socks5proxy` — system account, no home, `nologin`, no password |
+
+Mutating operations temporarily use `/run/socks5-manager.lock` and, during an
+in-place update, `/var/lib/socks5-manager/reconfigure-transaction/`. Both are
+removed after success; a failed recovery deliberately keeps the root-only
+transaction directory so the next mutating run can safely retry it. All
+management operations share the same lock so status/show cannot observe a
+half-applied update and concurrent mutations cannot overwrite one another.
 
 A dedicated namespace is used throughout, so an existing system 3proxy is never
 touched. If any of these already exists and the state file cannot confirm this
@@ -351,8 +374,8 @@ Read this section before exposing the proxy.
   endpoint), and multicast/reserved space. This limits the proxy's usefulness for
   pivoting into your private network or stealing instance credentials.
 - The credential never appears in a command line, an environment variable, a
-  log, or shell history. The install-time self-test passes it to `curl` through
-  `--config -` on stdin.
+  script log, journal, or shell history. The install-time self-test passes it to
+  `curl -q --config -` on stdin, so ambient curl configuration is ignored.
 - SELinux and sshd configuration are never modified.
 
 Only use this on infrastructure you own or are explicitly authorised to
@@ -374,17 +397,18 @@ stub and all paths live inside a temporary root. Test overrides are inert unless
 script refuses to run at all.
 
 The suite includes a pseudo-terminal test that sends a real `SIGINT` during
-password entry and asserts the terminal's `ECHO` flag is restored, plus
-regression tests for hostile state files, inherited `umask 0000`/`0022`, and
-`sh -x` credential leakage. Python is used by test tooling only; `socks5.sh`
-itself depends on POSIX `sh`, `git`, `make`, a C compiler and `curl`.
+visible password entry and asserts no state, transaction, lock or build residue
+is left behind, plus regression tests for hostile state files, inherited
+`umask 0000`/`0022`, and `sh -x` credential leakage. Python is used by test
+tooling only; `socks5.sh` itself depends on POSIX `sh`, `git`, `make`, a C
+compiler and `curl`.
 
 The real compilation, the OS/architecture build matrix, the seven protocol
-acceptance cases, the destination-ACL hostname test, `shellcheck`, and the four
-real service-install lifecycles are **CI only** — see
-`.github/workflows/ci.yml`. A green local suite does not imply those passed.
+acceptance cases, the destination-ACL hostname test, `shellcheck`, and the real
+service lifecycles are **CI only** — see `.github/workflows/ci.yml`. A green
+local suite does not imply those passed.
 
-CI is green on GitHub-hosted runners. In run
+The published v1.0.0 baseline is green on GitHub-hosted runners. In run
 [`33174398814`](https://github.com/91sexboy/One-click-socks5-proxy-setup/actions/runs/33174398814)
 at commit `df6885c`, **45 of 45 jobs passed**:
 
@@ -406,18 +430,19 @@ at commit `df6885c`, **45 of 45 jobs passed**:
 > [`33281724740`](https://github.com/91sexboy/One-click-socks5-proxy-setup/actions/runs/33281724740),
 > also 45/45. Closure commit `91fd13a` then passed run
 > [`33282068288`](https://github.com/91sexboy/One-click-socks5-proxy-setup/actions/runs/33282068288),
-> also 45/45, and tag `v1.0.0` was created there. The Round 18 revision above pins all three
-> results; it becomes immutable tag `v1.0.1` only after
-> its own final reachable-main run passes all 45 jobs. Runs `33245460710` / `33246222640` remain
+> also 45/45, and tag `v1.0.0` was created there. The `v1.1.0` candidate must
+> earn its own final reachable-main 45/45 run before release. Runs `33245460710` / `33246222640` remain
 > historical evidence for the previous bilingual state.
 
-Every supported OS family therefore has a real
-install → active/listening → restart → uninstall → cleanliness lifecycle, and
-every OS version/architecture **named in the CI matrix** has real build and protocol evidence.
-Versions newer than the listed matrix are accepted by the documented minimum-version rule, but that
-does not claim CI has verified a future release. This is CI evidence, not a promise that every VPS
-image or network environment is identical: the installer still fails closed when its manager, port
-probe, package repository, DNS or egress cannot be verified.
+The published v1.0.0 evidence covers a real install/restart/uninstall lifecycle
+for every supported OS family. The v1.1.0 candidate extends those same jobs with
+in-place update coverage; that added evidence is pending its first complete CI
+run. Every OS version/architecture **named in the CI matrix** retains real build
+and protocol coverage. Versions newer than the listed matrix are accepted by
+the documented minimum-version rule, but that does not claim CI has verified a
+future release. This is CI evidence, not a promise that every VPS image or
+network environment is identical: the installer still fails closed when its
+manager, port probe, package repository, DNS or egress cannot be verified.
 What each CI job actually proves is deliberately distinct:
 
 | Job | Cells | What it proves |
@@ -427,13 +452,13 @@ What each CI job actually proves is deliberately distinct:
 | `build-matrix` | 16 | the pinned commit compiles on every OS/arch |
 | `protocol` | 16 | the seven protocol cases against a **real engine running the rendered config** — not a service install |
 | `acl-resolution` | 3 | the destination denies hold for **domain** targets, in an isolated container with a fake metadata endpoint |
-| `systemd-integration` | 2 | a **real** install → verify → uninstall lifecycle under systemd, on the runner itself |
+| `systemd-integration` | 2 | a **real** install → update → verify → uninstall lifecycle under systemd, on the runner itself |
 | `openrc-integration` | 2 | the same under **real** OpenRC on Alpine, bootstrapping its own toolchain from a clean image |
 | `distro-systemd-integration` | 3 | the same on Ubuntu 22.04, Debian and CentOS Stream, with systemd booted as PID 1 in a privileged container |
 
-Together the last three give one real service-install lifecycle per supported OS
-family. A compile-only cell and a direct-engine protocol cell do not substitute
-for that: neither installs a service.
+Together the last three give one real install-and-update lifecycle per supported
+OS family. A compile-only cell and a direct-engine protocol cell do not
+substitute for that: neither installs a service.
 
 No job uses `continue-on-error`, so every cell is configured to block the release,
 Alpine included. A SOCKS4-family success, or a bypassed destination deny, fails the job outright.
@@ -445,7 +470,7 @@ CI passwords are generated at runtime and handed to the protocol scripts as the
 never as a command-line argument, so they cannot reach a job log, `ps`, or a
 child process's environment.
 
-See `SPEC.md` for the complete, frozen behavior and verification contract.
+See `SPEC.md` for the complete behavior and verification contract.
 
 ## License
 

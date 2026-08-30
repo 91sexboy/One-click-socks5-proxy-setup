@@ -1,13 +1,11 @@
 #!/bin/sh
-# tests/unit/test_card.sh - Round 16 T11/T12: strict public/local IPv4 resolution
-# and the shared localized credential card.
+# tests/unit/test_card.sh - strict public IPv4 resolution and the shared
+# localized credential card.
 #
-# The old s5_server_ip answered with the first local scope-global IPv4, then any
-# dotted-decimal token from hostname -I, then a bare <server-ip> placeholder --
-# silently, with no validation and no warning. This file owns its replacement:
-# pure canonical/public/usable-local validators, a hardened fixed-endpoint
-# external lookup, a validated fallback chain, one warning per card, and the
-# Host/URI agreement.
+# The card accepts only a validated external IPv4. Lookup failure yields an
+# explicit SERVER_IPV4 placeholder; local interface addresses are never guessed.
+# This file owns the canonical/public validators, hardened response boundary,
+# one warning per card, and Host/URI agreement.
 
 S5T_NAME=test_card
 . "${S5_REPO_ROOT}/tests/lib/assert.sh"
@@ -81,93 +79,37 @@ t_run s5_ipv4_is_canonical ''
 assert_ne 'not canonical: empty' 0 "$T_STATUS"
 
 # ---------------------------------------------------------------------------
-# 2. Classification: s5_ipv4_is_public / s5_ipv4_is_usable_local
-# Both presuppose canonical input.
+# 2. Classification: only strictly public IPv4 addresses are eligible.
 # ---------------------------------------------------------------------------
-both_reject() {
+public_reject() {
     t_run s5_ipv4_is_public "$1"
     assert_eq "public rejects: $1" 1 "$T_STATUS"
-    t_run s5_ipv4_is_usable_local "$1"
-    assert_eq "usable rejects: $1" 1 "$T_STATUS"
 }
-private_for_public_only() {
-    t_run s5_ipv4_is_public "$1"
-    assert_eq "public rejects RFC1918/CGNAT: $1" 1 "$T_STATUS"
-    t_run s5_ipv4_is_usable_local "$1"
-    assert_eq "usable accepts RFC1918/CGNAT: $1" 0 "$T_STATUS"
-}
-both_accept() {
+public_accept() {
     t_run s5_ipv4_is_public "$1"
     assert_eq "public accepts: $1" 0 "$T_STATUS"
-    t_run s5_ipv4_is_usable_local "$1"
-    assert_eq "usable accepts: $1" 0 "$T_STATUS"
 }
 
-both_reject 0.0.0.0
-both_reject 0.255.255.255
-private_for_public_only 10.0.0.0
-private_for_public_only 10.255.255.255
-private_for_public_only 100.64.0.0
-private_for_public_only 100.100.1.1
-private_for_public_only 100.127.255.255
-both_reject 127.0.0.1
-both_reject 127.255.255.255
-both_reject 169.254.0.0
-both_reject 169.254.42.99
-both_reject 169.254.255.255
-private_for_public_only 172.16.0.0
-private_for_public_only 172.20.10.3
-private_for_public_only 172.31.255.255
-both_reject 192.0.0.0
-both_reject 192.0.0.255
-both_reject 192.0.2.0
-both_reject 192.0.2.100
-private_for_public_only 192.168.0.0
-private_for_public_only 192.168.255.255
-both_reject 198.18.0.0
-both_reject 198.19.17.42
-both_reject 198.51.100.0
-both_reject 198.51.100.77
-both_reject 203.0.113.0
-both_reject 203.0.113.200
-both_reject 224.0.0.0
-both_reject 230.1.2.3
-both_reject 239.255.255.255
-both_reject 240.0.0.1
-both_reject 250.0.0.1
-both_reject 255.255.255.254
-both_reject 255.255.255.255
+for _ip in 0.0.0.0 0.255.255.255 10.0.0.0 10.255.255.255 \
+    100.64.0.0 100.100.1.1 100.127.255.255 127.0.0.1 127.255.255.255 \
+    169.254.0.0 169.254.42.99 169.254.255.255 172.16.0.0 172.20.10.3 \
+    172.31.255.255 192.0.0.0 192.0.0.255 192.0.2.0 192.0.2.100 \
+    192.168.0.0 192.168.255.255 198.18.0.0 198.19.17.42 \
+    198.51.100.0 198.51.100.77 203.0.113.0 203.0.113.200 \
+    224.0.0.0 230.1.2.3 239.255.255.255 240.0.0.1 250.0.0.1 \
+    255.255.255.254 255.255.255.255; do
+    public_reject "$_ip"
+done
 
-both_accept 1.0.0.1
-both_accept 9.255.255.255
-both_accept 99.1.2.3
-both_accept 100.63.255.255
-both_accept 100.128.0.0
-both_accept 101.1.2.3
-both_accept 126.255.255.255
-both_accept 128.0.0.0
-both_accept 169.253.255.255
-both_accept 169.255.0.0
-both_accept 170.0.0.1
-both_accept 172.15.255.255
-both_accept 172.32.0.0
-both_accept 191.255.255.255
-both_accept 192.0.1.0
-both_accept 192.0.3.0
-both_accept 192.0.44.5
-both_accept 192.5.5.5
-both_accept 192.167.255.255
-both_accept 192.169.0.0
-both_accept 198.17.255.255
-both_accept 198.20.0.0
-both_accept 198.51.99.255
-both_accept 198.51.101.0
-both_accept 199.0.0.1
-both_accept 203.0.112.255
-both_accept 203.0.114.0
-both_accept 223.255.255.255
-both_accept 45.77.10.22
-both_accept 96.30.11.5
+for _ip in 1.0.0.1 9.255.255.255 99.1.2.3 100.63.255.255 \
+    100.128.0.0 101.1.2.3 126.255.255.255 128.0.0.0 \
+    169.253.255.255 169.255.0.0 170.0.0.1 172.15.255.255 \
+    172.32.0.0 191.255.255.255 192.0.1.0 192.0.3.0 192.0.44.5 \
+    192.5.5.5 192.167.255.255 192.169.0.0 198.17.255.255 \
+    198.20.0.0 198.51.99.255 198.51.101.0 199.0.0.1 \
+    203.0.112.255 203.0.114.0 223.255.255.255 45.77.10.22 96.30.11.5; do
+    public_accept "$_ip"
+done
 
 # ---------------------------------------------------------------------------
 # 3. Resolver behavior through the curl stub (no real network).
@@ -204,32 +146,18 @@ assert_eq "no candidates resolves to the placeholder" "SERVER_IPV4" "$S5_CARD_AD
 assert_eq "with the placeholder kind" "placeholder" "$S5_CARD_KIND"
 unset -f ip hostname
 
-# With a usable local candidate (ip shadow returning one line), the resolver
-# picks it up in order, kind local.
+# Local interface addresses are deliberately ignored: a private address is not
+# a safe guess for the host an Internet client should copy.
 ip() {
     printf '2: eth0    inet 192.168.1.10/24 brd 192.168.1.255 scope global eth0\n'
     return 0
 }
-hostname() { return 1; }
+hostname() { printf '10.0.0.5\n'; }
 S5_CARD_ADDR=''
 S5_CARD_KIND=''
 s5_resolve_card_address
-assert_eq "the raw ip -o token is stripped and adopted" "192.168.1.10" "$S5_CARD_ADDR"
-assert_eq "with the local kind" "local" "$S5_CARD_KIND"
-unset -f ip hostname
-
-# hostname -I is the second source; loopback tokens are skipped, first
-# usable wins.
-ip() { return 1; }
-hostname() {
-    printf '127.0.0.1 fe80::1 10.0.0.5\n'
-    return 0
-}
-S5_CARD_ADDR=''
-S5_CARD_KIND=''
-s5_resolve_card_address
-assert_eq "loopback and IPv6 tokens skipped, first usable wins" "10.0.0.5" "$S5_CARD_ADDR"
-assert_eq "with the local kind from hostname" "local" "$S5_CARD_KIND"
+assert_eq "local addresses do not replace the public host" "SERVER_IPV4" "$S5_CARD_ADDR"
+assert_eq "failed public lookup uses the placeholder kind" "placeholder" "$S5_CARD_KIND"
 unset -f ip hostname
 
 # ---------------------------------------------------------------------------
@@ -313,6 +241,7 @@ t_assert_called "lookup is IPv4-only" '-4'
 t_assert_called "lookup refuses redirects implicitly via proto" "--proto =https"
 t_assert_called "lookup fails on HTTP errors" '--fail'
 t_assert_called "lookup ignores curlrc" '-q'
+t_assert_called "lookup caps the downloaded body" '--max-filesize 17'
 
 # exactly one lookup per resolution
 _lookups=$(t_transcript | grep -c 'https://icanhazip.com' || true)
@@ -344,9 +273,11 @@ S5_SECRET=''
 unset -f ip hostname
 
 # ---------------------------------------------------------------------------
-# 7. T12 card contract: one resolution, Host=URI, one warning, exact URI.
+# 7. Card contract: one resolution, Host=URI, one warning, exact URI.
 # ---------------------------------------------------------------------------
-ip() { return 1; }
+# A failed public lookup uses the explicit placeholder even when local address
+# commands would return a private address.
+ip() { printf '2: eth0    inet 10.20.30.40/24 scope global eth0\n'; }
 hostname() { printf '%s\n' '10.20.30.40'; }
 S5_LANG=en
 S5_USERNAME=carduser
@@ -356,18 +287,18 @@ S5_PORT=41080
 S5_SELF=''
 
 _card=$(s5_render_card 2>/dev/null)
-assert_contains "local card shows the resolved host" "10.20.30.40" "$_card"
-assert_contains "local card shows the exact URI"     "socks5://carduser:CardPass_123~x@10.20.30.40:41080" "$_card"
-_warns=$(printf '%s' "$_card" | grep -c 'WARNING: the public egress' || true)
-assert_eq "exactly one local-fallback warning" 1 "$_warns"
+assert_contains "fallback card shows the explicit placeholder" "SERVER_IPV4" "$_card"
+assert_contains "fallback card shows the exact URI" \
+    "socks5://carduser:CardPass_123~x@SERVER_IPV4:41080" "$_card"
+_warns=$(printf '%s' "$_card" | grep -c 'Replace SERVER_IPV4' || true)
+assert_eq "exactly one placeholder warning" 1 "$_warns"
 
-# placeholder path: one actionable warning, URI uses the placeholder.
-ip() { return 1; }
-hostname() { return 1; }
+# Repeated placeholder rendering stays singular and actionable.
 _card=$(s5_render_card 2>/dev/null)
-assert_contains "placeholder card uses SERVER_IPV4 in the URI"     "socks5://carduser:CardPass_123~x@SERVER_IPV4:41080" "$_card"
+assert_contains "placeholder card uses SERVER_IPV4 in the URI" \
+    "socks5://carduser:CardPass_123~x@SERVER_IPV4:41080" "$_card"
 _pw=$(printf '%s' "$_card" | grep -c 'Replace SERVER_IPV4' || true)
-assert_eq "exactly one placeholder warning" 1 "$_pw"
+assert_eq "exactly one placeholder warning on each card" 1 "$_pw"
 
 # external path: no fallback warning at all.
 printf '45.77.10.22\n' >"$S5_TEST_ROOT/stub_ip_body"
@@ -477,10 +408,10 @@ assert_eq "the URI is unindented (exactly one line starts at column 0)" 1 "$_uri
 _uri_indented=$(printf '%s\n' "$_card" | grep -c '^[[:space:]]+socks5://' || true)
 assert_eq "no indented copy of the URI exists" 0 "$_uri_indented"
 
-# Host/URI agreement: same address in both places.
-assert_contains "the host field carries the resolved address" "10.20.30.40" "$_card"
+# Host/URI agreement: both use the same explicit placeholder on lookup failure.
+assert_contains "the host field carries the placeholder" "SERVER_IPV4" "$_card"
 _uri_line=$(printf '%s\n' "$_card" | grep '^socks5://' | head -n 1)
-assert_contains "the URI carries the same address" "@10.20.30.40:41080" "$_uri_line"
+assert_contains "the URI carries the same placeholder" "@SERVER_IPV4:41080" "$_uri_line"
 
 # The zh cloud-provider warning must name the port (the zh catalog arm dropped it).
 S5_LANG=zh
@@ -492,7 +423,7 @@ S5_LANG=en
 # Structural: install AND show both go through the shared renderer. s5_cmd_show
 # currently duplicates the card body; this structural pin makes the duplicate
 # visible.
-_show_body=$(sed -n '/^s5_cmd_show() {/,/^}/p' "$SRC")
+_show_body=$(sed -n '/^_s5_cmd_show_locked() {/,/^}/p' "$SRC")
 if printf '%s\n' "$_show_body" | grep -q 's5_render_card'; then
     t_ok
 else

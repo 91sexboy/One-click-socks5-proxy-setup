@@ -67,11 +67,15 @@ assert_contains "README names the pinned commit" "da99424eac4092e3722f1a5b1844cf
 # (dash and busybox sh cannot parse `<(...)`), and it must not be a pipe --
 # `wget -qO- URL | sh` would feed the script itself to the prompts' stdin and
 # break the interactive flow.
-assert_contains "README shows the one-click wget one-liner" \
-    "bash <(wget -qO- https://raw.githubusercontent.com/" "$readme"
-assert_contains "README shows the one-click curl one-liner" \
-    "bash <(curl -fsSL https://raw.githubusercontent.com/" "$readme"
+expected_wget='bash <(wget -qO- https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-setup/main/socks5.sh)'
+expected_curl='bash <(curl -fsSL https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-setup/main/socks5.sh)'
+assert_eq "README pins the exact one-click wget command once" \
+    1 "$(grep -Fxc -- "$expected_wget" "$R/README.md")"
+assert_eq "README pins the exact one-click curl command once" \
+    1 "$(grep -Fxc -- "$expected_curl" "$R/README.md")"
 assert_contains "README warns that Alpine lacks bash" "apk add bash" "$readme"
+assert_contains "README pins all supported minimum versions" \
+    "Ubuntu 22.04+, Debian 12+, Alpine Linux 3.20+, CentOS Stream 9+" "$readme"
 expected_alpine="apk add --no-cache bash wget && bash -c 'bash <(wget -qO- https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-setup/main/socks5.sh)'"
 assert_eq "README pins the exact stock-Alpine bootstrap once" \
     1 "$(grep -Fxc -- "$expected_alpine" "$R/README.md")"
@@ -83,8 +87,8 @@ assert_contains "README publishes the exact release sha256" "$release_hash" "$re
 assert_eq "README prints the release sha256 exactly twice" 2 \
     "$(grep -oF "$release_hash" "$R/README.md" | wc -l)"
 assert_contains "README verifies the release with sha256sum" "sha256sum -c -" "$readme"
-assert_contains "README gates tag creation on closure CI" \
-    "only after its own 45/45 run succeeds" "$readme"
+assert_contains "README gates the v1.1.0 tag on complete CI" \
+    'Tag `v1.1.0` will be created only after its own complete CI run succeeds' "$readme"
 assert_contains "README shows only the socks5 scheme" "socks5://" "$readme"
 assert_not_contains "README never shows a socks4 URI" "socks4://" "$readme"
 
@@ -98,11 +102,14 @@ for contract in \
     'first question on every run' \
     'single `[Y/n]` question' \
     'asks five questions in' \
-    'asked for once; there is no type-it-twice confirmation' \
+    'Custom input is visible' \
     'prints the password to your terminal only' \
-    'source IP and the time of that one request' \
-    'does not carry the port, the username or the password' \
-    'may not be reachable from the internet' \
+    'stdout is a real terminal' \
+    'source IP' \
+    'port, username or password' \
+    'SERVER_IPV4' \
+    'default-no `[y/N]` confirmation' \
+    'updates the configuration in place' \
     'has no firewall functionality at all'; do
     assert_contains "README keeps operator contract: $contract" "$contract" "$readme"
 done
@@ -311,8 +318,8 @@ assert_contains "README links the Round 17 evidence run" \
     "actions/runs/33281724740" "$readme"
 assert_contains "README records the Round 17 evidence commit" \
     "a8ed825" "$readme"
-assert_contains "README gates the immutable tag on closure CI" \
-    "own final reachable-main run passes all 45 jobs" "$readme"
+assert_contains "README gates the v1.1.0 candidate on fresh CI" \
+    "earn its own final reachable-main 45/45 run" "$readme"
 assert_not_contains "README removes the pre-green systemd claim" \
     "No real systemd install lifecycle has completed yet" "$readme"
 assert_not_contains "README no longer claims CI has not been run" \
@@ -341,10 +348,10 @@ assert_contains "SPEC records the full Round 17 implementation commit" \
 assert_contains "SPEC names the Round 17 evidence run" "33281724740" "$spec"
 assert_contains "SPEC records the full Round 17 evidence commit" \
     "a8ed8255fba6c9bf9b8247582d6b77ebf65d8374" "$spec"
-assert_contains "SPEC marks implementation and evidence green" \
-    "FROZEN RELEASE CONTRACT / IMPLEMENTATION AND EVIDENCE CI GREEN" "$spec"
-assert_contains "SPEC gates the tag on the closure run" \
-    "reachable-main run must pass 45/45 before tag" "$spec"
+assert_contains "SPEC preserves the released v1.0.0 baseline" \
+    "v1.0.0 RELEASED / v1.1.0 CANDIDATE" "$spec"
+assert_contains "SPEC gates the v1.1.0 candidate on a fresh run" \
+    "must pass its own complete reachable-main CI run" "$spec"
 
 # Whatever the golden script does, the SPEC must agree. A SPEC line that
 # explicitly NEGATES a directive ("`need net` is deliberately not used") is

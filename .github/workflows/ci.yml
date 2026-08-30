@@ -75,7 +75,6 @@ jobs:
         run: |
           python3 -m py_compile tests/protocol/socks_probe.py
           python3 -m py_compile tests/pty/interrupt.py
-          python3 -m py_compile tests/pty/stty_capture.py
           python3 -m py_compile tests/pty/show_xtrace.py
       - name: Documentation must never advertise SOCKS4
         run: |
@@ -377,22 +376,33 @@ jobs:
           sudo sh socks5.sh install <"$SECRETS/answers" >"$SECRETS/install.log" 2>&1 || {
             sed -f "$SECRETS/redact.sed" "$SECRETS/install.log" >&2; exit 1; }
 
-          # One real host repeats install in place. The second invocation must
-          # take the installed/no-op path: no new account or service, no second
-          # credential, and no credential rotation. This is a second invocation
-          # inside an existing 45-job cell, not a new matrix cell.
-          if [ "${{ matrix.locale_stream }}" = zh-default ]; then
-            sudo sha256sum /etc/socks5-manager/users.cfg >"$SECRETS/users.before"
-            chmod 0600 "$SECRETS/users.before"
-            printf '2\n' | sudo sh socks5.sh install >"$SECRETS/install-again.log" 2>&1
-            sudo sha256sum /etc/socks5-manager/users.cfg >"$SECRETS/users.after"
-            chmod 0600 "$SECRETS/users.after" "$SECRETS/install-again.log"
-            cmp "$SECRETS/users.before" "$SECRETS/users.after"
-            test "$(sudo awk 'END { print NR }' /etc/socks5-manager/users.cfg)" -eq 1
-            test "$(getent passwd socks5proxy | wc -l)" -eq 1
-            test "$(getent group socks5proxy | wc -l)" -eq 1
-            test "$(systemctl list-unit-files --no-legend socks5-manager.service | wc -l)" -eq 1
-          fi
+          # Both native architectures perform an in-place update. The binary,
+          # account and unit must be reused while the port and credentials rotate.
+          NEW_PORT=41081
+          NEW_USER=ciuser2
+          tr -dc 'A-Za-z0-9._~-' </dev/urandom | head -c 32 >"$SECRETS/pass2"
+          chmod 0600 "$SECRETS/pass2"
+          sudo sha256sum /usr/local/libexec/socks5-manager/3proxy >"$SECRETS/bin.before"
+          sudo sha256sum /etc/systemd/system/socks5-manager.service >"$SECRETS/unit.before"
+          printf '2\ny\n%s\n%s\n' "$NEW_PORT" "$NEW_USER" >"$SECRETS/update.answers"
+          cat "$SECRETS/pass2" >>"$SECRETS/update.answers"
+          printf '\n' >>"$SECRETS/update.answers"
+          chmod 0600 "$SECRETS/update.answers"
+          sudo sh socks5.sh install <"$SECRETS/update.answers" >"$SECRETS/update.log" 2>&1 || {
+            sed -f "$SECRETS/redact.sed" "$SECRETS/update.log" >&2; exit 1; }
+          sudo sha256sum --check "$SECRETS/bin.before"
+          sudo sha256sum --check "$SECRETS/unit.before"
+          test "$(sudo awk 'END { print NR }' /etc/socks5-manager/users.cfg)" -eq 1
+          test "$(sudo awk -F '\t' '$1 == "port" { print $2 }' /var/lib/socks5-manager/state)" = "$NEW_PORT"
+          test "$(sudo awk -F '\t' '$1 == "username" { print $2 }' /var/lib/socks5-manager/state)" = "$NEW_USER"
+          test "$(getent passwd socks5proxy | wc -l)" -eq 1
+          test "$(getent group socks5proxy | wc -l)" -eq 1
+          test "$(systemctl list-unit-files --no-legend socks5-manager.service | wc -l)" -eq 1
+          test ! -e /var/lib/socks5-manager/reconfigure-transaction
+          test ! -e /run/socks5-manager.lock
+          PORT=$NEW_PORT
+          PROXY_USER=$NEW_USER
+          PASSFILE="$SECRETS/pass2"
 
           # Checks that unit stubs cannot prove: real owner/group/mode metadata,
           # account attributes, and absence of the installed password from the
@@ -404,8 +414,11 @@ jobs:
           printf '2\n1\n' | sudo sh socks5.sh
           sudo systemctl is-active socks5-manager.service
           ss -ltn | grep ":$PORT "
+          if ss -ltn | grep -q ':41080 '; then
+            echo "old SOCKS5 port is still listening after update" >&2; exit 1
+          fi
 
-          PORT=$PORT PROXY_USER=ciuser PASSFILE="$SECRETS/pass" \
+          PORT=$PORT PROXY_USER=$PROXY_USER PASSFILE="$PASSFILE" \
             sh tests/protocol/run_protocol.sh
 
           printf '2\n' | sudo sh socks5.sh restart
@@ -415,7 +428,12 @@ jobs:
           # a real terminal. Give it a pty and keep its output in a 0600 file
           # that is never printed; only the grep verdict reaches the log.
           script -qec 'printf "2\n" | sudo sh socks5.sh show' /dev/null >"$SECRETS/show.out" 2>&1
-          grep -q 'socks5://ciuser:' "$SECRETS/show.out"
+          tr -d '\r' <"$SECRETS/show.out" >"$SECRETS/show.clean"
+          grep '^socks5://' "$SECRETS/show.clean" >"$SECRETS/uri.line"
+          test "$(wc -l <"$SECRETS/uri.line")" -eq 1
+          { printf 'socks5://%s:' "$PROXY_USER"; cat "$PASSFILE"; printf '@'; } >"$SECRETS/uri.prefix"
+          grep -F -q -f "$SECRETS/uri.prefix" "$SECRETS/uri.line"
+          grep -q ":$PORT$" "$SECRETS/uri.line"
 
           # This script never touches the firewall, so no rule may exist for the port.
           if sudo iptables -S 2>/dev/null | grep -q "socks5-manager"; then
@@ -536,6 +554,28 @@ jobs:
               rc-service socks5-manager status >&2
               echo "retried status exit: $?" >&2
               exit 1; }
+
+            NEW_PORT=41081
+            NEW_USER=ciuser2
+            tr -dc "A-Za-z0-9._~-" </dev/urandom | head -c 32 > "$SECRETS/pass2"
+            chmod 0600 "$SECRETS/pass2"
+            sha256sum /usr/local/libexec/socks5-manager/3proxy > "$SECRETS/bin.before"
+            sha256sum /etc/init.d/socks5-manager > "$SECRETS/unit.before"
+            printf "2\ny\n%s\n%s\n" "$NEW_PORT" "$NEW_USER" > "$SECRETS/update.answers"
+            cat "$SECRETS/pass2" >> "$SECRETS/update.answers"
+            printf "\n" >> "$SECRETS/update.answers"
+            chmod 0600 "$SECRETS/update.answers"
+            sh socks5.sh install < "$SECRETS/update.answers" > "$SECRETS/update.log" 2>&1
+            sha256sum -c "$SECRETS/bin.before"
+            sha256sum -c "$SECRETS/unit.before"
+            test "$(grep "^port" /var/lib/socks5-manager/state | cut -f2)" = "$NEW_PORT"
+            test "$(grep "^username" /var/lib/socks5-manager/state | cut -f2)" = "$NEW_USER"
+            test ! -e /var/lib/socks5-manager/reconfigure-transaction
+            test ! -e /run/socks5-manager.lock
+            PORT=$NEW_PORT
+            PROXY_USER=$NEW_USER
+            PASSFILE="$SECRETS/pass2"
+
             sh tests/protocol/post_install_audit.sh openrc "$SECRETS" /root
             printf "2\n" | sh socks5.sh status
             rc-service socks5-manager status
@@ -543,14 +583,23 @@ jobs:
             printf "2\n" | sh socks5.sh restart
             rc-service socks5-manager status
             if command -v ss >/dev/null 2>&1; then
-              ss -ltn | grep ":41080 "
+              ss -ltn | grep ":$PORT "
             elif command -v netstat >/dev/null 2>&1; then
-              netstat -ltn | grep ":41080 "
+              netstat -ltn | grep ":$PORT "
             else
               echo "neither ss nor netstat is available after installation" >&2
               exit 1
             fi
-            PORT=41080 PROXY_USER=ciuser PASSFILE="$SECRETS/pass" \
+            if command -v ss >/dev/null 2>&1; then
+              if ss -ltn | grep -q ":41080 "; then
+                echo "old SOCKS5 port is still listening after update" >&2
+                exit 1
+              fi
+            elif netstat -ltn | grep -q ":41080 "; then
+              echo "old SOCKS5 port is still listening after update" >&2
+              exit 1
+            fi
+            PORT=$PORT PROXY_USER=$PROXY_USER PASSFILE="$PASSFILE" \
               sh tests/protocol/run_protocol.sh
             printf "2\ny\n" | sh socks5.sh uninstall
             test ! -e /etc/socks5-manager
@@ -679,6 +728,32 @@ jobs:
 
           AUDIT_DIR=$(docker exec "$CID" mktemp -d)
           docker exec "$CID" chmod 0700 "$AUDIT_DIR"
+          # Every supported systemd family performs a real in-place update.
+          docker exec "$CID" sh -c '
+            set -eu
+            umask 077
+            tr -dc "A-Za-z0-9._~-" </dev/urandom | head -c 32 >/tmp/pass2
+            sha256sum /usr/local/libexec/socks5-manager/3proxy >/tmp/bin.before
+            sha256sum /etc/systemd/system/socks5-manager.service >/tmp/unit.before
+            printf "2\ny\n41081\nciuser2\n" >/tmp/update.answers
+            cat /tmp/pass2 >>/tmp/update.answers
+            printf "\n" >>/tmp/update.answers
+            sh /src/socks5.sh install </tmp/update.answers >/tmp/update.log 2>&1
+            sha256sum -c /tmp/bin.before
+            sha256sum -c /tmp/unit.before
+            grep -q "41081" /var/lib/socks5-manager/state
+            grep -q "ciuser2" /var/lib/socks5-manager/state
+            test ! -e /var/lib/socks5-manager/reconfigure-transaction
+            test ! -e /run/socks5-manager.lock
+            systemctl is-active socks5-manager.service
+            ss -ltn | grep ":41081 "
+            if ss -ltn | grep -q ":41080 "; then
+              echo "old SOCKS5 port is still listening after update" >&2
+              exit 1
+            fi
+          '
+          PORT=41081
+
           docker exec "$CID" sh /src/tests/protocol/post_install_audit.sh \
             systemd "$AUDIT_DIR" /root
           docker exec "$CID" rm -rf "$AUDIT_DIR"

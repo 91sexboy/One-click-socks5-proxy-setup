@@ -1,14 +1,14 @@
 # Spec: socks5.sh — one-click SOCKS5 proxy installer
 
-> **Status: FROZEN RELEASE CONTRACT / IMPLEMENTATION AND EVIDENCE CI GREEN.** Round 17
-> implementation commit `3b58e194887bf91a06b789353c06033b70c49c59` passed run `33281392984`
-> with 45/45 jobs. Evidence-only commit `a8ed8255fba6c9bf9b8247582d6b77ebf65d8374` passed run
-> `33281724740`, also 45/45. Closure commit `91fd13a` passed run `33282068288`, also 45/45, and
-> immutable tag `v1.0.0` was created there. Round 18 is the `v1.0.1` candidate: it removes dead
-> catalog keys, corrects comments that contradicted the code, and folds duplicated checks, leaving
-> operator behaviour unchanged. Its own reachable-main run must pass 45/45 before tag `v1.0.1`.
-> Tag existence is therefore the final release proof. The protocol/auth/ACL/firewall boundaries
-> remain frozen.
+> **Status: v1.0.0 RELEASED / v1.1.0 CANDIDATE.** Round 17 implementation
+> commit `3b58e194887bf91a06b789353c06033b70c49c59` passed run `33281392984` with
+> 45/45 jobs. Evidence-only commit `a8ed8255fba6c9bf9b8247582d6b77ebf65d8374`
+> passed run `33281724740`; closure commit `91fd13a` passed run `33282068288`,
+> and immutable tag `v1.0.0` was created there. The v1.1.0 candidate adds
+> recoverable in-place credential/port updates and the revised interaction
+> contract below. It must pass its own complete reachable-main CI run before a
+> tag is created. Protocol, authentication, ACL and firewall boundaries remain
+> unchanged.
 
 ## 1. Objective
 A single-file POSIX shell script (`socks5.sh`) that interactively installs, verifies, and manages a
@@ -20,7 +20,8 @@ invocation first selects `1 中文 / 2 English` (Enter defaults to Chinese; inva
 then an install shows one default-yes confirmation and asks for port, username and password, each
 of which accepts Enter for a securely generated value. Direct lifecycle commands and the
 no-argument management menu select language again; locale is process-only and never persisted.
-There is no non-interactive mode in v1.
+An installed `install` action offers a default-no in-place port/credential update and reuses the
+binary, account and service definition. There is no non-interactive mode in v1.1.
 
 ### 1.1 Protocol support scope
 Supported: **SOCKS5 only**, with **RFC 1929 username/password authentication**, and **CONNECT as the
@@ -134,10 +135,12 @@ installed when neither `ss` nor `netstat` is present. No secret is collected bef
    character and a fixed length of 12: generation stays inside the safest subset of what validation
    accepts, avoiding case-collision and quoting surprises, while a user may still supply any valid
    name.
-3. **Password** — Enter → generated, **exactly 32 characters**. Typed input is not echoed
-   (`stty -echo`) and is read **once**; it is not asked a second time for confirmation. Charset for
-   generated and user-supplied passwords alike is **`[A-Za-z0-9._~-]`**, length **12–128**.
-   Rejection names the failing rule and never echoes the input.
+3. **Password** — Enter → generated, **exactly 32 characters**. Typed input is visible and is read
+   **once**; it is not asked a second time for confirmation. The prompt explicitly says it is visible,
+   and the documentation warns against entering it where another person, terminal recorder or serial
+   console logger can observe it. Charset for generated and user-supplied passwords alike is
+   **`[A-Za-z0-9._~-]`**, length **12–128**. Rejection names the failing rule and never repeats the
+   input.
 
 Both charsets are RFC 3986 unreserved, so the `socks5://user:password@host:port` URI needs no
 escaping. The password never enters `argv`, environment, logs, or history — only `users.cfg`.
@@ -321,16 +324,18 @@ remain English.
 socks5.sh            # not installed -> interactive install; installed -> menu
 socks5.sh install | status | show | restart | uninstall
 ```
-- No `reload` in v1 — use `restart`. No `reconfigure` — to change port, user, or password,
-  uninstall then reinstall.
+- No `reload` or public `reconfigure` subcommand — use `restart` for a plain restart. Re-running
+  `install`, or choosing `update` from the no-argument menu, shows the current non-secret status and
+  asks a default-no confirmation before collecting a new port, username and visible password. Empty
+  value input generates a fresh random value. The update reuses the binary, account and service
+  definition, then atomically replaces the fixed config/state files under a recoverable transaction.
 - `show` reprints full connection details **including the password** for root, to the terminal only.
   It must never write the password to a log, file, journal, redirect, argv, environment or xtrace.
-- Install and `show` use one localized credential-card renderer. It prefers one strictly validated
-  IPv4 observed from the fixed HTTPS endpoint `https://icanhazip.com`; this is presentation-only,
-  nonfatal and reports outbound egress, not guaranteed inbound reachability. On lookup failure, one
-  validated local IPv4 is shown with exactly one localized warning; if none exists, `SERVER_IPV4`
-  is shown with an actionable replacement warning. The address is resolved once per card and is
-  never persisted.
+- Install, update and `show` use one localized credential-card renderer. It prefers one strictly
+  validated IPv4 observed from the fixed HTTPS endpoint `https://icanhazip.com`; this is
+  presentation-only, nonfatal and reports outbound egress, not guaranteed inbound reachability. The
+  response is capped at 17 bytes before parsing. On lookup failure, `SERVER_IPV4` is shown with an
+  actionable replacement warning; a private/local address is never substituted into the public URI.
 - The card displays localized Host/Port/Username/Password labels, followed by exactly one
   unindented, language-independent line:
 
@@ -366,31 +371,41 @@ starting the process; this spec makes no such claim. Sequence:
    resources and the state file are **kept** and the operator is told to retry — deleting files out
    from under a possibly-live proxy is worse than an incomplete rollback.
 
-Credential checks use `curl --config -`, feeding `socks5-hostname`, `proxy-user`, and `url` on
-**stdin** via `printf`, so the password never appears in `argv`. This needs server egress; when the
-service is up and the port listening but the request fails, the report must distinguish: proxy auth
-failure; no outbound network; DNS failure; external test service unavailable.
+Credential checks use `curl -q --config -`, feeding `socks5-hostname`, `proxy-user`, and `url` on
+**stdin** so ambient curlrc files cannot alter the request and the password never appears in `argv`.
+The rejection probe uses the configured username with a guaranteed-different valid password, not an
+unknown user. This needs server egress; when the service is up and the port listening but the request
+fails, the report must distinguish: proxy auth failure; no outbound network; DNS failure; external
+test service unavailable.
 
-## 12. Uninstall and idempotency
+## 12. Uninstall, updates and concurrency
 Uninstall removes only state-recorded resources: service unit or init script, the `socks5proxy`
 account and group, `/etc/socks5-manager/`, `/var/lib/socks5-manager/`, and the installed binary.
 **No firewall rule is ever removed, because none is ever created (§7.1).** It never touches a
 pre-existing system 3proxy, the operator's own proxy users, any firewall rule, package repositories,
-pre-existing config, or any system package. Re-running `install` on an existing project install is a
-no-op plus a status report.
+pre-existing config, or any system package.
+
+Re-running `install` on a complete, healthy project install offers a default-no in-place update.
+Candidate files and byte-for-byte backups are prepared before stopping the old proxy. The script
+then proves the service stopped, atomically replaces `users.cfg`, `3proxy.cfg` and state, restarts,
+and runs the complete authentication/listener verification. Any failure restores and verifies the
+old files; interrupted transactions are recovered before the next mutating command. A fixed
+`mkdir`-based lock serializes all management operations so status/show cannot observe a mixed
+snapshot and concurrent mutations cannot overwrite one another. The lock uses PID, Linux boot ID
+and process start time to distinguish a live owner from a stale lock without a time-based lease.
 
 ## 13. Testing
 `tests/` — shell-based, no framework dependency.
 - **Unit:** port/username/password validators, os-release parsing (including the RHEL/Rocky/Alma
-  refusal path), arch mapping, config renderer, prerequisite selection and ordering, and the
-  absence of firewall functionality.
+  refusal path), arch mapping, config renderer, prerequisite selection and ordering, absence of
+  firewall functionality, and the fixed-file reconfiguration transaction/lock/recovery paths.
 - **Bilingual UI contract:** catalog key uniqueness, zh/en parity,
   declared arity, literal call-site keys, argument/format safety, no new untranslated script-owned
   literals, selector blank/1/2/invalid/EOF behavior, per-invocation locale, `[Y/n]`, password-once,
   exact zh/en card/URI, localized lifecycle/error output, and fixed bilingual pre-language guard.
 - **IPv4/card contract:** canonical/public/local range validation,
   hardened fixed-endpoint curl boundary, malformed/private/multiline/oversized response rejection,
-  nonfatal local/placeholder fallback, one lookup and warning per card, exact Host/URI consistency,
+  nonfatal explicit-placeholder fallback, one lookup and warning per card, exact Host/URI consistency,
   and no credentials in lookup argv/stdin/env/logs.
 - **Golden:** rendered `3proxy.cfg` and `users.cfg` match fixtures; §6 denylist asserted; asserted
   that `users.cfg` contains no `users` directive.
@@ -399,15 +414,18 @@ no-op plus a status report.
   SOCKS4 CONNECT → **fail**; SOCKS4a CONNECT → **fail**; SOCKS5 BIND → **fail**; SOCKS5 UDP ASSOCIATE
   → **fail**. The SOCKS4/4a cases are **rejection** tests: a pass requires refusal, never a working
   proxy.
-- **Real service-install lifecycle — one per promised OS family, all four blocking:**
+- **Real service lifecycle — one per promised OS family, all four blocking:**
   Ubuntu (systemd on the runner), Debian (systemd as PID 1 in a privileged container), Alpine
-  (OpenRC), CentOS Stream (systemd as PID 1 in a privileged container). Each runs
-  install → status → active → listening → restart → uninstall → cleanliness. A compile-only cell and
-  a direct-engine protocol cell do **not** satisfy this: neither installs a service. The Debian and
-  CentOS images deliberately ship without `git`, a compiler, `curl` or an `ss` provider, so these
-  jobs also prove the installer bootstraps its own prerequisites on a clean host.
+  (OpenRC), CentOS Stream (systemd as PID 1 in a privileged container). Each v1.1.0 candidate job is
+  configured to run install → update → status → active → listening → restart → uninstall →
+  cleanliness; that added update evidence is not considered passed until the candidate CI completes.
+  A compile-only cell and a direct-engine protocol cell do **not** satisfy this: neither installs a
+  service. The Debian and CentOS images deliberately ship without `git`, a compiler, `curl` or an
+  `ss` provider, so these jobs also prove the installer bootstraps its own prerequisites on a clean
+  host.
 - **Build matrix:** the pinned commit must compile on 8 OS versions × 2 architectures.
-- **Idempotency:** install twice, assert a single service, account, and credential entry.
+- **Update safety:** a confirmed update reuses one service/account/binary, rotates one credential,
+  verifies the new proxy, and restores the old verified proxy on failure.
 - **Cleanliness:** after uninstall no project file or account remains, no system package was removed,
   and no firewall rule was ever created.
 
@@ -432,8 +450,8 @@ state; verify the pinned commit; show the pre-install warning; install prerequis
 prompt. The state file also records provenance and completion — `origin` (always `source-build` in
 v1) and `status` — alongside the created-resource records, because `status` must be able to report
 what was installed without re-deriving it.
-**Ask first (one confirmation):** installing the §8 packages and proceeding with the install.
-Writing anything outside the project namespace is never done at all.
+**Ask first:** one default-yes confirmation before a fresh install, and one default-no confirmation before
+an in-place update. Writing anything outside the project namespace is never done at all.
 **Never:** password in argv/env/logs/history; **any firewall functionality at all** — no detect, query, add, delete,
 flush, enable, disable, reset or reload; touch SELinux enforcing mode or sshd config; run
 `make install` or upstream post-install/service scripts; remove a system package; delete a resource
@@ -449,7 +467,8 @@ example any SOCKS4-family protocol.
    service cannot be proved stopped, retains them with an actionable retry message.
 5. Uninstall leaves no project artifact; no pre-existing resource, firewall rule, or system package
    is removed.
-6. A second `install` run creates no duplicate service, account, or credential entry.
+6. A confirmed second `install` updates one credential entry in place without duplicating or
+   replacing the binary, account, or service definition; default-no leaves all files unchanged.
 7. The rendered config contains no directive from the §6 denylist.
 8. Grepping the journal, `/var/log`, and shell history for the generated password finds nothing.
 9. `ID=rhel`/`rocky`/`almalinux` exits non-zero with "likely compatible, not supported"; any other
@@ -457,29 +476,33 @@ example any SOCKS4-family protocol.
 10. Every §13 protocol-acceptance case passes on every matrix cell, including the SOCKS4 and SOCKS4a
     rejection cases, BIND, and UDP ASSOCIATE. Any SOCKS4-family success blocks release outright.
 11. No user-facing string, example, or emitted URI mentions SOCKS4, SOCKS4a, or SOCKS4.5.
-12. A real install → verify → uninstall lifecycle passes on Ubuntu, Debian, Alpine and CentOS Stream.
-    The listed matrix versions carry that evidence. Newer releases admitted by the §3 version floors
-    use the same code path but are explicitly **accepted without a claim that CI has verified that
-    exact release**; no document may blur that distinction.
+12. A real install → verify → in-place update → verify → uninstall lifecycle passes on Ubuntu,
+    Debian, Alpine and CentOS Stream. The listed matrix versions carry that evidence only after the
+    v1.1.0 candidate CI succeeds. Newer releases admitted by the §3 version floors use the same code
+    path but are explicitly **accepted without a claim that CI has verified that exact release**;
+    no document may blur that distinction.
 13. The documented install commands are runnable as written, including the separate stock-Alpine
     bootstrap whose inner string is parsed by Bash rather than ash.
 14. Every invocation selects Chinese/English before dispatch; blank defaults Chinese, invalid input
     retries, and every later script-owned message follows the selection. Locale is never persisted.
-15. Install asks exactly one default-yes confirmation; a custom password is hidden and read once;
-    Enter-generated port/username/password continue using the existing secure generators.
-16. Install and `show` render one exact URI using one resolved IPv4. Public lookup failure is
-    nonfatal and yields exactly one localized local/placeholder warning; lookup receives no secret.
+15. Fresh install asks exactly one default-yes confirmation; an existing install asks a separate
+    default-no update confirmation; a custom password is visible and read once; Enter-generated
+    port/username/password continue using the existing secure generators.
+16. Install, update and `show` render one exact URI using one resolved IPv4. Public lookup failure is
+    nonfatal and yields exactly one localized `SERVER_IPV4` replacement warning; lookup receives no
+    secret and accepts at most 17 response bytes.
 17. Round 17 implementation commit `3b58e194887bf91a06b789353c06033b70c49c59` passed run
-    `33281392984` with 45/45 jobs. Evidence-only commit
-    `a8ed8255fba6c9bf9b8247582d6b77ebf65d8374` passed run `33281724740`, also 45/45. This closure
-    commit pins both IDs; its reachable-main run must pass 45/45 before tag `v1.0.0` is created.
+    `33281392984`; evidence-only commit `a8ed8255fba6c9bf9b8247582d6b77ebf65d8374` passed run
+    `33281724740`; closure commit `91fd13a` passed run `33282068288`; immutable tag `v1.0.0`
+    exists there. The v1.1.0 candidate must produce its own complete evidence before release.
 
-## 16. Non-goals (v1)
-Non-interactive install; `reload`; `reconfigure`; BIND; UDP ASSOCIATE; SOCKS4/4a/4.5 (permanently out
-of scope, not "deferred"); multiple users; source CIDR allowlist; custom outbound address / multi-NIC
-(`-e`); HTTP proxy; admin interface; TLS transport; Web UI; Docker; multi-node management; distro
-packaging; automatic upgrades; 3proxy 1.x; `CR:`/BLAKE2b credentials; SELinux port relabeling;
-IPv6-only listeners; log rotation; RHEL/Rocky/Alma.
+## 16. Non-goals (v1.1)
+Non-interactive install; a separate public `reload` or `reconfigure` subcommand; BIND; UDP ASSOCIATE;
+SOCKS4/4a/4.5 (permanently out of scope, not "deferred"); multiple users; source CIDR allowlist;
+custom outbound address / multi-NIC (`-e`); HTTP proxy; admin interface; TLS transport; Web UI;
+Docker; multi-node management; distro packaging; automatic upgrades; 3proxy 1.x;
+`CR:`/BLAKE2b credentials; SELinux port relabeling; IPv6-only listeners; log rotation;
+RHEL/Rocky/Alma.
 
 ## 17. README requirements
 - Use the name **SOCKS5** exclusively, and show only `socks5://user:password@host:port`. Never
@@ -494,12 +517,12 @@ IPv6-only listeners; log rotation; RHEL/Rocky/Alma.
   exact SHA-256 of its `socks5.sh`. The README must call it a candidate until two fresh 45/45 runs
   pass and the tag exists; the tag is created only after the evidence-only run and is never moved.
 - Document the exact `1 中文 / 2 English` selector, Enter=Chinese, invalid retry, per-invocation
-  locale, one `[Y/n]` install confirmation, dependencies before values, and one hidden custom
-  password read. State that status/show/restart/uninstall/menu and all script-owned output follow
-  the selected language.
+  locale, the default-yes fresh-install confirmation, the default-no installed-update confirmation,
+  dependencies before initial values, and one visible custom password read. State that
+  status/show/restart/uninstall/menu and all script-owned output follow the selected language.
 - Document the TTY-only credential card, standalone exact URI, fixed public-egress IPv4 lookup,
-  privacy boundary, strict validation, nonfatal local/`SERVER_IPV4` fallback and one warning. Never
-  claim the observed egress address proves inbound reachability.
+  privacy boundary, strict 17-byte response limit, nonfatal `SERVER_IPV4` fallback and one warning.
+  Never claim the observed egress address proves inbound reachability.
 - State that the script has no firewall functionality — it neither detects nor modifies any
   firewall — and that the operator must allow the chosen TCP port themselves, locally and in the
   cloud security group. The README may document example commands per backend as operator

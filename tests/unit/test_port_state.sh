@@ -100,7 +100,8 @@ rm -f "$S5_TEST_ROOT/svc_active"
 # ==========================================================================
 steps=$(sed -n '/^s5_install_steps() {/,/^}/p' "${S5_SRC}")
 wait_fn=$(sed -n '/^s5_wait_listening() {/,/^}/p' "${S5_SRC}")
-status_fn=$(sed -n '/^s5_cmd_status() {/,/^}/p' "${S5_SRC}")
+verify_fn=$(sed -n '/^s5_verify_running_config() {/,/^}/p' "${S5_SRC}")
+status_fn=$(sed -n '/^_s5_cmd_status_locked() {/,/^}/p' "${S5_SRC}")
 # Comments are excluded: the fix documents the old bug by quoting it.
 code_only() { grep -v '^[[:space:]]*#'; }
 
@@ -116,8 +117,10 @@ if printf '%s\n' "$status_fn" | code_only | grep -qE 'if s5_port_listening;? *th
 else
     t_ok
 fi
-assert_contains "the install step still verifies the listener" \
-    "s5_wait_listening" "$steps"
+assert_contains "the install step uses shared running-config verification" \
+    "s5_verify_running_config" "$steps"
+assert_contains "shared verification checks the listener" \
+    "s5_wait_listening" "$verify_fn"
 assert_contains "the wait observes the port through the tri-state probe" \
     "s5_port_listening" "$wait_fn"
 assert_contains "and refuses when the listen state cannot be observed" \

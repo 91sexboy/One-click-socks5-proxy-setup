@@ -50,14 +50,15 @@ for fn in s5_require_commands s5_detect_platform s5_map_arch s5_is_root s5_pkgmg
         t_bad "s5_precheck does not call $fn"
     fi
 done
-# ...and s5_precheck itself is called before anything else in the install flow.
+# ...and s5_precheck itself is called before acquiring the mutation lock. The
+# locked implementation owns all prompts and writes.
 install_body=$(sed -n '/^s5_cmd_install() {/,/^}/p' "${S5_SRC}")
 pcline=$(printf '%s\n' "$install_body" | grep -n 's5_precheck' | head -n 1 | cut -d: -f1)
-firstprompt=$(printf '%s\n' "$install_body" | grep -nE 's5_prompt_|s5_preinstall_warning|s5_state_begin' | head -n 1 | cut -d: -f1)
-if [ -n "$pcline" ] && [ -n "$firstprompt" ] && [ "$pcline" -lt "$firstprompt" ]; then
+lockline=$(printf '%s\n' "$install_body" | grep -n 's5_with_mutation_lock' | head -n 1 | cut -d: -f1)
+if [ -n "$pcline" ] && [ -n "$lockline" ] && [ "$pcline" -lt "$lockline" ]; then
     t_ok
 else
-    t_bad "s5_precheck must run before the first prompt/warning/state write"
+    t_bad "s5_precheck must run before acquiring the install mutation lock"
 fi
 
 # The base-command list must not include the toolchain we install later.
@@ -82,18 +83,19 @@ done
 #   uname  read by s5_precheck itself, immediately after this gate
 #   tail   build diagnostics and the destination-deny ordering check
 #   rmdir  uninstall refuses to continue when it cannot remove a directory
-for base in chown uname tail rmdir; do
+#   cp     creates byte-for-byte transaction backups
+#   wc     enforces the public-IP response size before parsing
+for base in chown uname tail rmdir cp wc; do
     if printf '%s' "$S5_BASE_COMMANDS" | grep -qw "$base"; then
         t_ok
     else
         t_bad "$base is used at a hard-failure site and must be a required base command"
     fi
 done
-# stty is deliberately NOT required: every call site tolerates its absence
-# (`stty -g 2>/dev/null || printf ''`), so demanding it would abort installs
-# that would otherwise succeed.
-if printf '%s' "$S5_BASE_COMMANDS" | grep -qw stty; then
-    t_bad "stty must not be required: its call sites already degrade gracefully"
+# Visible password input never calls stty, so it is neither a runtime dependency
+# nor a permitted terminal-state mutation.
+if printf '%s' "$S5_BASE_COMMANDS" | grep -qw stty || grep -q 'stty' "$S5_SRC"; then
+    t_bad "visible password input must not require or invoke stty"
 else
     t_ok
 fi

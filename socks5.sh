@@ -311,6 +311,15 @@ S5_USERSCFG="$S5_SYSCONFDIR/users.cfg"
 S5_STATE="$S5_STATEDIR/state"
 S5_UNIT="$S5_UNITDIR/$S5_PROJECT.service"
 S5_INITSCRIPT="$S5_INITDIR/$S5_PROJECT"
+S5_LOCKDIR="$S5_ROOTDIR/run/$S5_PROJECT.lock"
+S5_LOCK_OWNER="$S5_LOCKDIR/owner"
+S5_TXNDIR="$S5_STATEDIR/reconfigure-transaction"
+S5_TXN_PHASE="$S5_TXNDIR/phase"
+S5_TXN_NEW_USERS="$S5_TXNDIR/new.users.cfg"
+S5_TXN_NEW_CFG="$S5_TXNDIR/new.3proxy.cfg"
+S5_TXN_OLD_USERS="$S5_TXNDIR/old.users.cfg"
+S5_TXN_OLD_CFG="$S5_TXNDIR/old.3proxy.cfg"
+S5_TXN_OLD_STATE="$S5_TXNDIR/old.state"
 
 # ---------------------------------------------------------------------------
 # Logging.  Every message passes through redaction so a live credential can
@@ -320,7 +329,9 @@ S5_INITSCRIPT="$S5_INITDIR/$S5_PROJECT"
 # POSIX assignment preserves an inherited export attribute. Clear every variable
 # that can hold a plaintext credential before assigning to it, so an invoking
 # environment cannot cause later child processes to inherit a live password.
-unset S5_SECRET S5_PASSWORD S5_READ_VALUE _vp _pw1 _pw2 _lcline _lcp _stp
+unset S5_SECRET S5_PASSWORD _vp _pw1 _lcline _lcp _stp _isu _scline _scpass \
+    _rc_old_password _rc_bad_password _tx_old_password _tx_new_password \
+    _tx_users_body _tx_cfg_body
 S5_SECRET=''
 
 # Literal, non-regex substring replacement. The secret is passed on stdin
@@ -658,8 +669,8 @@ s5_msg() {
     input.password_prompt)
         [ "$#" -eq 1 ] || { s5_msg_contract_error input.password_prompt 1 "$#"; return 1; }
         case "$S5_LANG" in
-        zh) printf 'SOCKS5 密码 [回车 = 生成 %s 位随机字符]：' "${1}" ;;
-        en) printf 'SOCKS5 password [Enter = generate %s random chars]: ' "${1}" ;;
+        zh) printf 'SOCKS5 密码（输入时可见）[回车 = 生成 %s 位随机字符]：' "${1}" ;;
+        en) printf 'SOCKS5 password (visible while typed) [Enter = generate %s random chars]: ' "${1}" ;;
         *) s5_msg_locale_error; return 1 ;;
         esac
         ;;
@@ -744,15 +755,404 @@ s5_msg() {
         *) s5_msg_locale_error; return 1 ;;
         esac
         ;;
-    # @s5-msg cmd.already_installed 1
-    cmd.already_installed)
-        [ "$#" -eq 1 ] || { s5_msg_contract_error cmd.already_installed 1 "$#"; return 1; }
+    # @s5-msg lock.parent_missing 1
+    lock.parent_missing)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error lock.parent_missing 1 "$#"; return 1; }
         case "$S5_LANG" in
-        zh) printf '%s 已安装；无需重复操作' "${1}" ;;
-        en) printf '%s is already installed; nothing to do' "${1}" ;;
+        zh) printf '锁目录的父目录不存在：%s' "${1}" ;;
+        en) printf 'the lock parent directory does not exist: %s' "${1}" ;;
         *) s5_msg_locale_error; return 1 ;;
         esac
         ;;
+    # @s5-msg lock.parent_invalid 1
+    lock.parent_invalid)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error lock.parent_invalid 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '锁目录的父路径不安全：%s' "${1}" ;;
+        en) printf 'the lock parent path is unsafe: %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg lock.create_failed 1
+    lock.create_failed)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error lock.create_failed 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法安全创建操作锁：%s' "${1}" ;;
+        en) printf 'could not create the operation lock safely: %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg lock.identity_failed 0
+    lock.identity_failed)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error lock.identity_failed 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法确定当前进程身份；拒绝获取操作锁' ;;
+        en) printf 'could not determine the current process identity; refusing the operation lock' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg lock.owner_failed 1
+    lock.owner_failed)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error lock.owner_failed 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法写入操作锁所有者：%s' "${1}" ;;
+        en) printf 'could not write the operation lock owner: %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg lock.invalid 1
+    lock.invalid)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error lock.invalid 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '操作锁无效；请人工检查：%s' "${1}" ;;
+        en) printf 'the operation lock is invalid; inspect it manually: %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg lock.busy 1
+    lock.busy)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error lock.busy 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '另一个管理操作正在运行（PID %s）' "${1}" ;;
+        en) printf 'another management operation is running (PID %s)' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg lock.stale_remove_failed 1
+    lock.stale_remove_failed)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error lock.stale_remove_failed 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法清理失效的操作锁：%s' "${1}" ;;
+        en) printf 'could not remove the stale operation lock: %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg lock.release_refused 1
+    lock.release_refused)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error lock.release_refused 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '操作锁所有权已改变；拒绝删除：%s' "${1}" ;;
+        en) printf 'the operation lock ownership changed; refusing to remove it: %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg lock.release_failed 1
+    lock.release_failed)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error lock.release_failed 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法释放操作锁：%s' "${1}" ;;
+        en) printf 'could not release the operation lock: %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+
+    # @s5-msg reconfigure.summary 0
+    reconfigure.summary)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error reconfigure.summary 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '将更新 SOCKS5 端口、用户名和密码。' ;;
+        en) printf 'The SOCKS5 port, username and password will be updated.' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg reconfigure.reuses_install 0
+    reconfigure.reuses_install)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error reconfigure.reuses_install 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '现有二进制、服务账户和服务定义将继续复用。' ;;
+        en) printf 'The existing binary, service account and service definition will be reused.' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg reconfigure.no_firewall 0
+    reconfigure.no_firewall)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error reconfigure.no_firewall 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '本脚本不会修改防火墙；若端口改变，请自行更新本机规则和云安全组。' ;;
+        en) printf 'The script will not modify the firewall; update host and cloud rules yourself if the port changes.' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg reconfigure.confirm 0
+    reconfigure.confirm)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error reconfigure.confirm 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '确认原地更新端口和凭据？' ;;
+        en) printf 'Update the port and credentials in place?' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg reconfigure.confirm_invalid 0
+    reconfigure.confirm_invalid)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error reconfigure.confirm_invalid 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '请输入 y 或 n' ;;
+        en) printf 'enter y or n' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg reconfigure.confirm_failed 0
+    reconfigure.confirm_failed)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error reconfigure.confirm_failed 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法确认是否更新；未做任何修改' ;;
+        en) printf 'could not confirm reconfiguration; nothing was changed' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg reconfigure.cancelled 0
+    reconfigure.cancelled)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error reconfigure.cancelled 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '已取消更新；现有代理保持不变' ;;
+        en) printf 'reconfiguration cancelled; the existing proxy is unchanged' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg reconfigure.state_invalid 0
+    reconfigure.state_invalid)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error reconfigure.state_invalid 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '现有安装状态不足以安全更新' ;;
+        en) printf 'the existing install state is not sufficient for a safe reconfiguration' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg reconfigure.files_invalid 0
+    reconfigure.files_invalid)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error reconfigure.files_invalid 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '现有二进制、配置或凭据文件未通过安全检查' ;;
+        en) printf 'the existing binary, configuration or credentials failed validation' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg reconfigure.current_not_healthy 0
+    reconfigure.current_not_healthy)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error reconfigure.current_not_healthy 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '现有代理未处于已验证的运行和监听状态；请先排查或卸载' ;;
+        en) printf 'the existing proxy is not verifiably active and listening; diagnose or uninstall it first' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg reconfigure.transaction_exists 1
+    reconfigure.transaction_exists)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error reconfigure.transaction_exists 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '重配事务已存在：%s' "${1}" ;;
+        en) printf 'a reconfiguration transaction already exists: %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg reconfigure.transaction_create_failed 1
+    reconfigure.transaction_create_failed)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error reconfigure.transaction_create_failed 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法创建重配事务目录：%s' "${1}" ;;
+        en) printf 'could not create the reconfiguration transaction directory: %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg reconfigure.transaction_invalid 1
+    reconfigure.transaction_invalid)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error reconfigure.transaction_invalid 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '重配事务无效；请人工检查：%s' "${1}" ;;
+        en) printf 'the reconfiguration transaction is invalid; inspect it manually: %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg reconfigure.transaction_cleanup_failed 1
+    reconfigure.transaction_cleanup_failed)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error reconfigure.transaction_cleanup_failed 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法清理重配事务目录：%s' "${1}" ;;
+        en) printf 'could not clean the reconfiguration transaction directory: %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg reconfigure.stage_failed 0
+    reconfigure.stage_failed)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error reconfigure.stage_failed 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法准备重配候选文件；现有代理未改变' ;;
+        en) printf 'could not stage the reconfiguration; the existing proxy is unchanged' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg reconfigure.stop_unverified 0
+    reconfigure.stop_unverified)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error reconfigure.stop_unverified 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法确认代理服务已停止；拒绝替换配置' ;;
+        en) printf 'could not verify that the proxy stopped; refusing to replace its configuration' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg reconfigure.still_active 0
+    reconfigure.still_active)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error reconfigure.still_active 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '代理服务仍在运行；拒绝替换配置' ;;
+        en) printf 'the proxy is still running; refusing to replace its configuration' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg reconfigure.port_not_free 1
+    reconfigure.port_not_free)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error reconfigure.port_not_free 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '停止旧代理后端口 %s 仍不可用' "${1}" ;;
+        en) printf 'port %s is still unavailable after stopping the old proxy' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg reconfigure.apply_failed 0
+    reconfigure.apply_failed)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error reconfigure.apply_failed 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '新配置未能启用；正在恢复旧配置' ;;
+        en) printf 'the new configuration could not be activated; restoring the previous configuration' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg reconfigure.pending_cleanup 0
+    reconfigure.pending_cleanup)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error reconfigure.pending_cleanup 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '发现尚未提交的重配准备目录；正在安全清理' ;;
+        en) printf 'found an uncommitted reconfiguration staging directory; cleaning it safely' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg reconfigure.pending_recovery 0
+    reconfigure.pending_recovery)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error reconfigure.pending_recovery 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '发现未完成的重配事务；正在恢复旧配置' ;;
+        en) printf 'found an incomplete reconfiguration transaction; restoring the previous configuration' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg reconfigure.restore_missing 1
+    reconfigure.restore_missing)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error reconfigure.restore_missing 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '恢复文件不完整；已保留事务目录：%s' "${1}" ;;
+        en) printf 'recovery files are incomplete; the transaction directory was kept: %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg reconfigure.restore_invalid 0
+    reconfigure.restore_invalid)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error reconfigure.restore_invalid 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '恢复后的旧配置或状态无效' ;;
+        en) printf 'the restored previous configuration or state is invalid' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg reconfigure.restore_stop_failed 0
+    reconfigure.restore_stop_failed)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error reconfigure.restore_stop_failed 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法安全停止服务以恢复旧配置' ;;
+        en) printf 'could not stop the service safely to restore the previous configuration' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg reconfigure.restore_files_failed 1
+    reconfigure.restore_files_failed)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error reconfigure.restore_files_failed 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '无法恢复全部旧文件；已保留事务目录：%s' "${1}" ;;
+        en) printf 'could not restore all previous files; the transaction directory was kept: %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg reconfigure.restoring 0
+    reconfigure.restoring)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error reconfigure.restoring 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '正在重新启动并验证旧配置' ;;
+        en) printf 'restarting and verifying the previous configuration' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg reconfigure.restore_service_failed 1
+    reconfigure.restore_service_failed)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error reconfigure.restore_service_failed 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '旧配置未能恢复运行；恢复资料保留在 %s' "${1}" ;;
+        en) printf 'the previous configuration could not be restored to service; recovery data remains at %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg reconfigure.restored_for_uninstall 0
+    reconfigure.restored_for_uninstall)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error reconfigure.restored_for_uninstall 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '旧配置文件已恢复；继续卸载' ;;
+        en) printf 'the previous configuration files were restored; continuing uninstall' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg reconfigure.restored 0
+    reconfigure.restored)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error reconfigure.restored 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '旧配置已恢复并通过验证' ;;
+        en) printf 'the previous configuration was restored and verified' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg reconfigure.recovery_failed 1
+    reconfigure.recovery_failed)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error reconfigure.recovery_failed 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '自动恢复失败；请保留并检查 %s' "${1}" ;;
+        en) printf 'automatic recovery failed; preserve and inspect %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg reconfigure.commit_cleanup_failed 1
+    reconfigure.commit_cleanup_failed)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error reconfigure.commit_cleanup_failed 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '新配置已启用，但无法清理事务目录：%s' "${1}" ;;
+        en) printf 'the new configuration is active, but the transaction directory could not be cleaned: %s' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg reconfigure.complete 0
+    reconfigure.complete)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error reconfigure.complete 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '端口和凭据已更新并通过验证' ;;
+        en) printf 'the port and credentials were updated and verified' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg reconfigure.completed_no_display 0
+    reconfigure.completed_no_display)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error reconfigure.completed_no_display 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '更新已完成；由于 stdout 不是终端，凭据未显示。' ;;
+        en) printf 'Reconfiguration completed; credentials were not displayed because stdout is not a terminal.' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg reconfigure.read_blocked 0
+    reconfigure.read_blocked)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error reconfigure.read_blocked 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '存在未完成的重配事务；请先运行 install、restart 或 uninstall 触发恢复' ;;
+        en) printf 'an incomplete reconfiguration exists; run install, restart or uninstall to recover it first' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+
     # @s5-msg cmd.uninstall.nothing 1
     cmd.uninstall.nothing)
         [ "$#" -eq 1 ] || { s5_msg_contract_error cmd.uninstall.nothing 1 "$#"; return 1; }
@@ -784,8 +1184,8 @@ s5_msg() {
     menu.choice_prompt)
         [ "$#" -eq 0 ] || { s5_msg_contract_error menu.choice_prompt 0 "$#"; return 1; }
         case "$S5_LANG" in
-        zh) printf '请选择 [1-5]：' ;;
-        en) printf 'Choice [1-5]: ' ;;
+        zh) printf '请选择 [1-6]：' ;;
+        en) printf 'Choice [1-6]: ' ;;
         *) s5_msg_locale_error; return 1 ;;
         esac
         ;;
@@ -856,8 +1256,8 @@ s5_msg() {
     usage.cmd_install)
         [ "$#" -eq 0 ] || { s5_msg_contract_error usage.cmd_install 0 "$#"; return 1; }
         case "$S5_LANG" in
-        zh) printf '  install      交互式安装 SOCKS5 代理' ;;
-        en) printf '  install      Interactively install the SOCKS5 proxy' ;;
+        zh) printf '  install      安装或原地更新 SOCKS5 代理' ;;
+        en) printf '  install      Install or update the SOCKS5 proxy in place' ;;
         *) s5_msg_locale_error; return 1 ;;
         esac
         ;;
@@ -994,15 +1394,6 @@ s5_msg() {
         case "$S5_LANG" in
         zh) printf '  账户     ：%s' "${1}" ;;
         en) printf '  account   : %s' "${1}" ;;
-        *) s5_msg_locale_error; return 1 ;;
-        esac
-        ;;
-    # @s5-msg card.warn_local 0
-    card.warn_local)
-        [ "$#" -eq 0 ] || { s5_msg_contract_error card.warn_local 0 "$#"; return 1; }
-        case "$S5_LANG" in
-        zh) printf '  警告：未能确认公网出口地址；显示的是本机地址，可能无法从公网访问。' ;;
-        en) printf '  WARNING: the public egress address could not be confirmed; the local address shown may not be reachable from the internet.' ;;
         *) s5_msg_locale_error; return 1 ;;
         esac
         ;;
@@ -1779,6 +2170,15 @@ s5_msg() {
         case "$S5_LANG" in
         zh) printf '  5) quit       退出' ;;
         en) printf '  5) quit' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg menu.option_reconfigure 0
+    menu.option_reconfigure)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error menu.option_reconfigure 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '  6) update     更新端口、用户名和密码' ;;
+        en) printf '  6) update     update the port, username and password' ;;
         *) s5_msg_locale_error; return 1 ;;
         esac
         ;;
@@ -3173,24 +3573,6 @@ s5_msg() {
         *) s5_msg_locale_error; return 1 ;;
         esac
         ;;
-    # @s5-msg input.term_save_failed 0
-    input.term_save_failed)
-        [ "$#" -eq 0 ] || { s5_msg_contract_error input.term_save_failed 0 "$#"; return 1; }
-        case "$S5_LANG" in
-        zh) printf '无法保存终端状态；拒绝读取密码' ;;
-        en) printf 'cannot save terminal state; refusing to read a password' ;;
-        *) s5_msg_locale_error; return 1 ;;
-        esac
-        ;;
-    # @s5-msg input.term_echo_failed 0
-    input.term_echo_failed)
-        [ "$#" -eq 0 ] || { s5_msg_contract_error input.term_echo_failed 0 "$#"; return 1; }
-        case "$S5_LANG" in
-        zh) printf '无法关闭终端回显；拒绝读取密码' ;;
-        en) printf 'cannot disable terminal echo; refusing to read a password' ;;
-        *) s5_msg_locale_error; return 1 ;;
-        esac
-        ;;
     # @s5-msg selftest.interrupted 1
     selftest.interrupted)
         [ "$#" -eq 1 ] || { s5_msg_contract_error selftest.interrupted 1 "$#"; return 1; }
@@ -3330,54 +3712,25 @@ s5_modelog() {
 }
 
 # ---------------------------------------------------------------------------
-# Terminal state, signal traps, and cleanup.
-#
-# The full termios state is captured with `stty -g` before echo is disabled and
-# restored verbatim, so an interrupt at the password prompt can never leave the
-# operator's terminal with echo off.
+# Signal traps and cleanup.
 # ---------------------------------------------------------------------------
 
-S5_TERM_STATE=''
-S5_TERM_MODIFIED=0
 S5_ROLLBACK_ARMED=0
+S5_RECONFIG_ARMED=0
 S5_INSTALL_COMPLETE=0
 S5_WORKDIR=''
 S5_IN_CLEANUP=0
+S5_LOCK_HELD=0
+S5_LOCK_TOKEN=''
 
-s5_term_save() {
-    if [ -t 0 ]; then
-        # Checked directly, not via $?: the assignment's status IS stty's.
-        # The -z test is load-bearing on its own -- stty can succeed yet
-        # print nothing, and restoring an empty state would be worse than
-        # not restoring at all.
-        if ! S5_TERM_STATE=$(stty -g 2>/dev/null) || [ -z "$S5_TERM_STATE" ]; then
-            S5_TERM_STATE=''
-            S5_TERM_MODIFIED=0
-            return 1
-        fi
-        S5_TERM_MODIFIED=1
-    fi
-    return 0
-}
-
-s5_term_restore() {
-    if [ "$S5_TERM_MODIFIED" = "1" ] && [ -n "$S5_TERM_STATE" ]; then
-        stty "$S5_TERM_STATE" 2>/dev/null || true
-        S5_TERM_MODIFIED=0
-    fi
-    return 0
-}
-
-# s5_cleanup : idempotent. Always restores the terminal and removes a build
-# tree; rolls back only when an install is armed and did not complete.
+# s5_cleanup : idempotent. Removes a build tree, restores an interrupted
+# reconfiguration, rolls back an incomplete install, then releases the lock.
 s5_cleanup() {
     if [ "$S5_IN_CLEANUP" = "1" ]; then
         return 0
     fi
     S5_IN_CLEANUP=1
     _clbad=0
-
-    s5_term_restore
 
     if [ -n "$S5_WORKDIR" ]; then
         if s5_rm_workdir "$S5_WORKDIR"; then
@@ -3387,9 +3740,18 @@ s5_cleanup() {
         fi
     fi
 
+    if [ "$S5_RECONFIG_ARMED" = "1" ]; then
+        S5_RECONFIG_ARMED=0
+        s5_reconfigure_recover_pending || _clbad=1
+    fi
+
     if [ "$S5_ROLLBACK_ARMED" = "1" ] && [ "$S5_INSTALL_COMPLETE" != "1" ]; then
         S5_ROLLBACK_ARMED=0
         s5_rollback || true
+    fi
+
+    if [ "$S5_LOCK_HELD" = "1" ]; then
+        s5_lock_release || _clbad=1
     fi
 
     S5_IN_CLEANUP=0
@@ -3594,10 +3956,8 @@ s5_runtime_deps() {
 # missing utility is named by this gate instead of surfacing as an obscure error
 # mid-install (chown while applying credential-file ownership, uname on the very
 # next line of s5_precheck, tail in the destination-deny ordering check, rmdir
-# during uninstall). stty is deliberately absent: every stty call site already
-# tolerates its absence, so requiring it would abort installs that would
-# otherwise succeed.
-S5_BASE_COMMANDS='sed awk grep tr head tail cut id chown chmod mkdir rmdir rm mv cat printf stat mktemp dirname uname'
+# during uninstall, cp for transactional backups, and wc for response bounds).
+S5_BASE_COMMANDS='sed awk grep tr head tail cut id chown chmod mkdir rmdir rm mv cp cat printf stat mktemp dirname uname wc'
 
 s5_require_commands() {
     _miss=''
@@ -3670,7 +4030,6 @@ S5_USER_FIRST_CHARSET='abcdefghijklmnopqrstuvwxyz'
 S5_PORT=''
 S5_USERNAME=''
 S5_PASSWORD=''
-S5_READ_VALUE=''
 
 s5_valid_port() {
     case "${1:-}" in
@@ -3902,35 +4261,8 @@ s5_random_port() {
     return 1
 }
 
-# s5_read_secret : read one line into S5_READ_VALUE with echo suppressed.
-# The full termios state is saved first and restored via the same path the
-# signal traps use, so an interrupt cannot leave echo disabled.
-s5_read_secret() {
-    S5_READ_VALUE=''
-    _rsok=0
-    if [ -t 0 ]; then
-        if ! s5_term_save; then
-            s5_err_msg input.term_save_failed
-            return 1
-        fi
-        stty -echo 2>/dev/null || {
-            s5_term_restore
-            s5_err_msg input.term_echo_failed
-            return 1
-        }
-        if read -r S5_READ_VALUE; then _rsok=1; fi
-        s5_term_restore
-        printf '\n' >&2
-    else
-        if read -r S5_READ_VALUE; then _rsok=1; fi
-    fi
-    if [ "$_rsok" = "1" ]; then
-        return 0
-    fi
-    return 1
-}
-
 s5_prompt_port() {
+    _ppcurrent=${1:-}
     # Nothing here can be answered without a probe: a random port cannot be
     # picked, and an operator's own port would be reported as "already in use"
     # when the truth is that no listen state was ever seen. Say so before
@@ -3956,6 +4288,10 @@ s5_prompt_port() {
         fi
         if ! s5_valid_port "$_ppin"; then
             continue
+        fi
+        if [ -n "$_ppcurrent" ] && [ "$_ppin" = "$_ppcurrent" ]; then
+            S5_PORT=$_ppin
+            return 0
         fi
         # Three-valued like every other observation: a probe failure (status
         # 2) is not evidence that the port is busy, and blaming the operator's
@@ -4014,12 +4350,11 @@ s5_prompt_password() {
     while [ "$_pwa" -lt 5 ]; do
         _pwa=$((_pwa + 1))
         s5_prompt_msg input.password_prompt "$S5_PASS_GEN_LEN"
-        if ! s5_read_secret; then
+        _pw1=''
+        if ! read -r _pw1; then
             s5_err_msg input.password_eof
             return 1
         fi
-        _pw1=$S5_READ_VALUE
-        S5_READ_VALUE=''
         if [ -z "$_pw1" ]; then
             # The announcement below states a length, so it must not be printed
             # unless a string of exactly that length was really produced.
@@ -4528,6 +4863,36 @@ $1	$2"
     return 0
 }
 
+# Replace the mutable identity fields together and flush state once. All other
+# provenance and ownership flags remain byte-for-byte equivalent in meaning.
+s5_state_replace_identity() {
+    if [ "$S5_STATE_LOADED" != "1" ] ||
+        ! s5_state_value_ok port "$1" ||
+        ! s5_state_value_ok username "$2"; then
+        return 1
+    fi
+    _sriold=$S5_STATE_BUF
+    if ! _srinew=$(printf '%s\n' "$S5_STATE_BUF" | awk -F'\t' -v p="$1" -v u="$2" '
+        BEGIN { OFS="\t"; pc=0; uc=0 }
+        $1=="port" { $2=p; pc++ }
+        $1=="username" { $2=u; uc++ }
+        { print }
+        END { if (pc != 1 || uc != 1) exit 1 }
+    '); then
+        _sriold=''
+        return 1
+    fi
+    S5_STATE_BUF=$_srinew
+    _srinew=''
+    if ! s5_state_flush; then
+        S5_STATE_BUF=$_sriold
+        _sriold=''
+        return 1
+    fi
+    _sriold=''
+    return 0
+}
+
 # s5_state_mark <flag-key> : record that this run created a fixed resource.
 s5_state_mark() {
     s5_state_add "$1" 1
@@ -4552,6 +4917,251 @@ s5_is_installed() {
         return 1
     fi
     [ "$(s5_state_get status)" = "complete" ]
+}
+
+# ---------------------------------------------------------------------------
+# Mutation lock. mkdir is the portable atomic primitive available on every
+# supported host; PID + boot ID + process start time distinguish a live owner
+# from a stale directory without a time-based lease.
+# ---------------------------------------------------------------------------
+
+s5_process_start_id() {
+    _pspid=$1
+    if [ ! -r "/proc/$_pspid/stat" ]; then
+        return 1
+    fi
+    _psline=$(cat "/proc/$_pspid/stat" 2>/dev/null) || return 1
+    _psrest=$(printf '%s\n' "$_psline" | sed 's/^.*) //') || return 1
+    _psstart=$(printf '%s\n' "$_psrest" | awk '{ if (NF >= 20) print $20 }')
+    case "$_psstart" in
+    '' | *[!0-9]*) return 1 ;;
+    esac
+    printf '%s' "$_psstart"
+}
+
+s5_process_state() {
+    _pspid=$1
+    if [ ! -r "/proc/$_pspid/stat" ]; then
+        return 1
+    fi
+    _psline=$(cat "/proc/$_pspid/stat" 2>/dev/null) || return 1
+    _psrest=$(printf '%s\n' "$_psline" | sed 's/^.*) //') || return 1
+    _psstate=${_psrest%% *}
+    case "$_psstate" in
+    [A-Za-z]) printf '%s' "$_psstate" ;;
+    *) return 1 ;;
+    esac
+}
+
+s5_boot_id() {
+    if [ ! -r /proc/sys/kernel/random/boot_id ]; then
+        return 1
+    fi
+    IFS= read -r _sbid </proc/sys/kernel/random/boot_id || return 1
+    case "$_sbid" in
+    '' | *[!A-Fa-f0-9-]*) return 1 ;;
+    esac
+    printf '%s' "$_sbid"
+}
+
+s5_lock_acquire() {
+    if [ "$S5_LOCK_HELD" = "1" ]; then
+        return 0
+    fi
+    _lap=${S5_LOCKDIR%/*}
+    if [ ! -d "$_lap" ]; then
+        if [ "${S5_TEST_MODE:-0}" = "1" ]; then
+            mkdir -p "$_lap" || return 1
+        else
+            s5_err_msg lock.parent_missing "$_lap"
+            return 1
+        fi
+    fi
+    if [ -L "$_lap" ] || [ ! -d "$_lap" ]; then
+        s5_err_msg lock.parent_invalid "$_lap"
+        return 1
+    fi
+    _latry=0
+    while [ "$_latry" -lt 2 ]; do
+        _latry=$((_latry + 1))
+        if mkdir "$S5_LOCKDIR" 2>/dev/null; then
+            chmod 0700 "$S5_LOCKDIR" || {
+                rmdir "$S5_LOCKDIR" 2>/dev/null || true
+                s5_err_msg lock.create_failed "$S5_LOCKDIR"
+                return 1
+            }
+            _laboot=$(s5_boot_id) || {
+                rmdir "$S5_LOCKDIR" 2>/dev/null || true
+                s5_err_msg lock.identity_failed
+                return 1
+            }
+            _lastart=$(s5_process_start_id "$$") || {
+                rmdir "$S5_LOCKDIR" 2>/dev/null || true
+                s5_err_msg lock.identity_failed
+                return 1
+            }
+            S5_LOCK_TOKEN="$$
+$_laboot
+$_lastart"
+            if ! printf '%s\n' "$S5_LOCK_TOKEN" >"$S5_LOCK_OWNER" ||
+                ! chmod 0600 "$S5_LOCK_OWNER"; then
+                rm -f "$S5_LOCK_OWNER" 2>/dev/null || true
+                rmdir "$S5_LOCKDIR" 2>/dev/null || true
+                S5_LOCK_TOKEN=''
+                s5_err_msg lock.owner_failed "$S5_LOCK_OWNER"
+                return 1
+            fi
+            S5_LOCK_HELD=1
+            return 0
+        fi
+
+        if [ -L "$S5_LOCKDIR" ] || [ ! -d "$S5_LOCKDIR" ]; then
+            s5_err_msg lock.invalid "$S5_LOCKDIR"
+            return 1
+        fi
+        if [ ! -e "$S5_LOCK_OWNER" ] && [ ! -L "$S5_LOCK_OWNER" ]; then
+            if rmdir "$S5_LOCKDIR" 2>/dev/null; then
+                continue
+            fi
+            s5_err_msg lock.invalid "$S5_LOCKDIR"
+            return 1
+        fi
+        if [ -L "$S5_LOCK_OWNER" ] || [ ! -f "$S5_LOCK_OWNER" ]; then
+            s5_err_msg lock.invalid "$S5_LOCKDIR"
+            return 1
+        fi
+        _lapid=$(sed -n '1p' "$S5_LOCK_OWNER" 2>/dev/null)
+        _laboot=$(sed -n '2p' "$S5_LOCK_OWNER" 2>/dev/null)
+        _lastart=$(sed -n '3p' "$S5_LOCK_OWNER" 2>/dev/null)
+        _lalines=$(wc -l <"$S5_LOCK_OWNER" 2>/dev/null | tr -d '[:space:]')
+        case "$_lapid:$_lastart:$_lalines" in
+        *[!0-9:]* | *::* | :* | *:)
+            if rm -f "$S5_LOCK_OWNER" 2>/dev/null && rmdir "$S5_LOCKDIR" 2>/dev/null; then
+                continue
+            fi
+            s5_err_msg lock.invalid "$S5_LOCKDIR"
+            return 1
+            ;;
+        esac
+        if [ "$_lalines" -ne 3 ]; then
+            if rm -f "$S5_LOCK_OWNER" 2>/dev/null && rmdir "$S5_LOCKDIR" 2>/dev/null; then
+                continue
+            fi
+            s5_err_msg lock.invalid "$S5_LOCKDIR"
+            return 1
+        fi
+        case "$_laboot" in
+        '' | *[!A-Fa-f0-9-]*) s5_err_msg lock.invalid "$S5_LOCKDIR"; return 1 ;;
+        esac
+        _lacurrentboot=$(s5_boot_id) || {
+            s5_err_msg lock.identity_failed
+            return 1
+        }
+        if [ "$_laboot" = "$_lacurrentboot" ] && [ -d "/proc/$_lapid" ]; then
+            if ! _laprocessstate=$(s5_process_state "$_lapid"); then
+                if [ ! -d "/proc/$_lapid" ]; then
+                    if rm -f "$S5_LOCK_OWNER" 2>/dev/null &&
+                        rmdir "$S5_LOCKDIR" 2>/dev/null; then
+                        continue
+                    fi
+                fi
+                s5_err_msg lock.invalid "$S5_LOCKDIR"
+                return 1
+            fi
+            case "$_laprocessstate" in
+            Z | X | x) ;;
+            *)
+                if ! _lacurrentstart=$(s5_process_start_id "$_lapid"); then
+                    if [ ! -d "/proc/$_lapid" ]; then
+                        if rm -f "$S5_LOCK_OWNER" 2>/dev/null &&
+                            rmdir "$S5_LOCKDIR" 2>/dev/null; then
+                            continue
+                        fi
+                    fi
+                    s5_err_msg lock.invalid "$S5_LOCKDIR"
+                    return 1
+                fi
+                if [ "$_lastart" = "$_lacurrentstart" ]; then
+                    s5_err_msg lock.busy "$_lapid"
+                    return 1
+                fi
+                ;;
+            esac
+        fi
+        if ! rm -f "$S5_LOCK_OWNER" || ! rmdir "$S5_LOCKDIR"; then
+            s5_err_msg lock.stale_remove_failed "$S5_LOCKDIR"
+            return 1
+        fi
+    done
+    s5_err_msg lock.busy unknown
+    return 1
+}
+
+s5_lock_release() {
+    if [ "$S5_LOCK_HELD" != "1" ]; then
+        return 0
+    fi
+    if [ -L "$S5_LOCKDIR" ] || [ ! -d "$S5_LOCKDIR" ] ||
+        [ -L "$S5_LOCK_OWNER" ] || [ ! -f "$S5_LOCK_OWNER" ] ||
+        [ "$(cat "$S5_LOCK_OWNER" 2>/dev/null)" != "$S5_LOCK_TOKEN" ]; then
+        s5_err_msg lock.release_refused "$S5_LOCKDIR"
+        return 1
+    fi
+    if ! rm -f "$S5_LOCK_OWNER" || ! rmdir "$S5_LOCKDIR"; then
+        s5_err_msg lock.release_failed "$S5_LOCKDIR"
+        return 1
+    fi
+    S5_LOCK_HELD=0
+    S5_LOCK_TOKEN=''
+    return 0
+}
+
+s5_with_mutation_lock() {
+    if ! s5_lock_acquire; then
+        return "$EX_FAIL"
+    fi
+    if ! s5_reconfigure_recover_pending; then
+        s5_lock_release || true
+        return "$EX_FAIL"
+    fi
+    "$@"
+    _wmlrc=$?
+    if ! s5_lock_release; then
+        return "$EX_FAIL"
+    fi
+    return "$_wmlrc"
+}
+
+s5_with_uninstall_lock() {
+    if ! s5_lock_acquire; then
+        return "$EX_FAIL"
+    fi
+    if ! s5_reconfigure_recover_pending uninstall; then
+        s5_lock_release || true
+        return "$EX_FAIL"
+    fi
+    "$@"
+    _wulrc=$?
+    if ! s5_lock_release; then
+        return "$EX_FAIL"
+    fi
+    return "$_wulrc"
+}
+
+s5_with_read_lock() {
+    if [ "$S5_LOCK_HELD" = "1" ]; then
+        "$@"
+        return $?
+    fi
+    if ! s5_lock_acquire; then
+        return "$EX_FAIL"
+    fi
+    "$@"
+    _wrlrc=$?
+    if ! s5_lock_release; then
+        return "$EX_FAIL"
+    fi
+    return "$_wrlrc"
 }
 
 # ---------------------------------------------------------------------------
@@ -5127,8 +5737,10 @@ s5_account_remove() {
 
 S5_FORBIDDEN_DIRECTIVES='proxy admin ftppr smtpp pop3p imapp tlspr tcppm udppm dnspr writable system plugin parent authcache chroot setuid setgid'
 
+# s5_static_check_cfg <config-path> [credentials-path]
 s5_static_check_cfg() {
     _scf=$1
+    _scu=${2:-$S5_USERSCFG}
     if [ ! -f "$_scf" ]; then
         s5_err_msg static.not_found "$_scf"
         return 1
@@ -5259,12 +5871,12 @@ s5_static_check_cfg() {
         _scbad=1
     fi
 
-    if [ ! -f "$S5_USERSCFG" ] || [ -L "$S5_USERSCFG" ]; then
+    if [ ! -f "$_scu" ] || [ -L "$_scu" ]; then
         s5_err_msg static.cred_not_regular
         _scbad=1
     else
-        _scm=$(stat -c '%a' "$S5_USERSCFG" 2>/dev/null || printf '')
-        _sco=$(stat -c '%U:%G' "$S5_USERSCFG" 2>/dev/null || printf '')
+        _scm=$(stat -c '%a' "$_scu" 2>/dev/null || printf '')
+        _sco=$(stat -c '%U:%G' "$_scu" 2>/dev/null || printf '')
         case "$_scm" in
         600 | 640) ;;
         *)
@@ -5276,7 +5888,7 @@ s5_static_check_cfg() {
             s5_err_msg static.cred_owner "$S5_SERVICE_GROUP" "${_sco:-unknown}"
             _scbad=1
         fi
-        _screccount=$(grep -c '' "$S5_USERSCFG" 2>/dev/null)
+        _screccount=$(grep -c '' "$_scu" 2>/dev/null)
         _scread=$?
         if [ "$_scread" -gt 1 ]; then
             s5_err_msg static.cred_unreadable
@@ -5285,7 +5897,7 @@ s5_static_check_cfg() {
             s5_err_msg static.cred_one_line
             _scbad=1
         else
-            _scline=$(cat "$S5_USERSCFG" 2>/dev/null)
+            _scline=$(cat "$_scu" 2>/dev/null)
             _scread=$?
             if [ "$_scread" -ne 0 ]; then
                 s5_err_msg static.cred_unreadable
@@ -5311,6 +5923,7 @@ s5_static_check_cfg() {
         fi
     fi
 
+    _scline=''; _scuser=''; _scpass=''
     if [ "$_scbad" -ne 0 ]; then
         return 1
     fi
@@ -5318,7 +5931,7 @@ s5_static_check_cfg() {
 }
 
 # ---------------------------------------------------------------------------
-# Self-test.  Credentials reach curl through `--config -` on stdin only.
+# Self-test. Credentials reach curl through `-q --config -` on stdin only.
 # ---------------------------------------------------------------------------
 
 s5_curl_config() {
@@ -5333,36 +5946,37 @@ s5_curl_config() {
 }
 
 s5_selftest_good() {
-    s5_curl_config "$1" "$2" | curl --config -
+    s5_curl_config "$1" "$2" | curl -q --config -
 }
 
-# Wrong credentials must be refused BY THE PROXY. Only curl's CURLE_PROXY (97)
-# proves that; any other status means the attempt failed for an unrelated
-# reason and the security property is unproven, which is not a pass.
+# The configured username paired with a guaranteed-different password must be
+# refused BY THE PROXY. Only curl's CURLE_PROXY (97) proves that; any other
+# status leaves the authentication property unverified.
 s5_selftest_bad() {
-    # An unusable generator makes this probe unusable too: an empty username or
-    # password is refused by the proxy for a reason that has nothing to do with
-    # the credential being wrong, and this function's whole job is to prove the
-    # rejection happened for the right reason.
-    _strnd=$(s5_random_string 6 "$S5_USER_CHARSET") || return 1
-    _stu="s5probe$_strnd"
-    _stp=$(s5_random_password) || return 1
-    s5_curl_config "$_stu" "$_stp" | curl --config - >/dev/null 2>&1
+    _stu=$1
+    case "$2" in
+    A*) _stp="B${2#?}" ;;
+    *) _stp="A${2#?}" ;;
+    esac
+    s5_curl_config "$_stu" "$_stp" | curl -q --config - >/dev/null 2>&1
     _strc=$?
     if [ "$_strc" -eq 0 ]; then
+        _stu=''; _stp=''
         s5_err_msg selftest.security_accepted
         return 1
     fi
     if [ "$_strc" -ne "$S5_CURL_PROXY_ERR" ]; then
+        _stu=''; _stp=''
         s5_err_msg selftest.inconclusive "$_strc" "$S5_CURL_PROXY_ERR"
         s5_err_msg selftest.rejection_unproven
         return 1
     fi
+    _stu=''; _stp=''
     return 0
 }
 
 s5_direct_egress_ok() {
-    curl -fsS -o /dev/null --max-time 15 "$S5_SELFTEST_URL" >/dev/null 2>&1
+    curl -q -fsS -o /dev/null --max-time 15 "$S5_SELFTEST_URL" >/dev/null 2>&1
 }
 
 s5_dns_ok() {
@@ -5654,6 +6268,414 @@ s5_wait_listening() {
     return 1
 }
 
+# Shared post-start verification for initial installation, reconfiguration and
+# recovery. Every property must be observed; an indeterminate result fails.
+s5_verify_running_config() {
+    s5_service_active
+    _vrc=$?
+    case "$_vrc" in
+    0) ;;
+    1)
+        s5_err_msg install.not_active_after_start
+        return 1
+        ;;
+    *)
+        s5_err_msg install.active_unverified
+        return 1
+        ;;
+    esac
+    if ! s5_wait_listening "$S5_PORT"; then
+        return 1
+    fi
+    s5_log_msg install.verifying_bad
+    if ! s5_selftest_bad "$S5_USERNAME" "$S5_PASSWORD"; then
+        return 1
+    fi
+    s5_log_msg install.verifying_good
+    if ! s5_selftest_good "$S5_USERNAME" "$S5_PASSWORD"; then
+        _vrd=$(s5_diagnose_failure)
+        s5_err_msg install.selftest_failed "$_vrd"
+        s5_explain_failure "$_vrd"
+        _vrd=''
+        return 1
+    fi
+    return 0
+}
+
+# Stop the managed proxy and prove it is no longer active before replacing any
+# file it may have open.
+s5_stop_and_confirm() {
+    s5_service_active
+    _sacr=$?
+    case "$_sacr" in
+    0) s5_service_stop >/dev/null 2>&1 || true ;;
+    1) return 0 ;;
+    *)
+        s5_err_msg reconfigure.stop_unverified
+        return 1
+        ;;
+    esac
+    s5_service_active
+    _sacr=$?
+    case "$_sacr" in
+    1) return 0 ;;
+    0) s5_err_msg reconfigure.still_active ;;
+    *) s5_err_msg reconfigure.stop_unverified ;;
+    esac
+    return 1
+}
+
+# ---------------------------------------------------------------------------
+# Reconfiguration transaction. The interface is intentionally one function:
+# validated candidate values enter through S5_PORT/S5_USERNAME/S5_PASSWORD;
+# success means the new proxy is verified, while failure restores and verifies
+# the prior proxy or leaves a root-only recovery bundle for the next run.
+# ---------------------------------------------------------------------------
+
+_s5_copy_file_secure() {
+    _cfsrc=$1
+    _cfdst=$2
+    _cfowner=$3
+    _cfmode=$4
+    if [ ! -f "$_cfsrc" ] || [ -L "$_cfsrc" ] || [ -L "$_cfdst" ]; then
+        return 1
+    fi
+    _cfdir=${_cfdst%/*}
+    _cftmp=$(mktemp "$_cfdir/.s5copy.XXXXXX") || return 1
+    if ! s5_secure_tmp "$_cftmp" || ! cp "$_cfsrc" "$_cftmp" ||
+        ! s5_apply_owner_mode "$_cftmp" "$_cfowner" "$_cfmode" ||
+        ! mv "$_cftmp" "$_cfdst"; then
+        rm -f "$_cftmp" 2>/dev/null || true
+        _cftmp=''
+        return 1
+    fi
+    _cftmp=''
+    return 0
+}
+
+_s5_txn_write_phase() {
+    printf '%s\n' "$1" | s5_atomic_write "$S5_TXN_PHASE" "root:root" 0600
+}
+
+_s5_txn_read_phase() {
+    if [ ! -f "$S5_TXN_PHASE" ] || [ -L "$S5_TXN_PHASE" ]; then
+        return 1
+    fi
+    _trp=$(cat "$S5_TXN_PHASE" 2>/dev/null) || return 1
+    case "$_trp" in
+    staging | armed | committed) printf '%s' "$_trp" ;;
+    *) return 1 ;;
+    esac
+}
+
+_s5_txn_cleanup() {
+    if [ ! -e "$S5_TXNDIR" ] && [ ! -L "$S5_TXNDIR" ]; then
+        return 0
+    fi
+    if [ -L "$S5_TXNDIR" ] || [ ! -d "$S5_TXNDIR" ]; then
+        s5_err_msg reconfigure.transaction_invalid "$S5_TXNDIR"
+        return 1
+    fi
+    for _tcf in "$S5_TXNDIR"/.s5tmp.* "$S5_TXNDIR"/.s5copy.*; do
+        if [ -e "$_tcf" ] || [ -L "$_tcf" ]; then
+            rm -f "$_tcf" || return 1
+        fi
+    done
+    _tcextra=$(s5_dir_extras "$S5_TXNDIR" phase new.users.cfg new.3proxy.cfg \
+        old.users.cfg old.3proxy.cfg old.state)
+    if [ -n "$_tcextra" ]; then
+        s5_err_msg reconfigure.transaction_cleanup_failed "$S5_TXNDIR"
+        return 1
+    fi
+    _tcphase=$(_s5_txn_read_phase 2>/dev/null || printf '')
+    for _tcf in "$S5_TXN_NEW_USERS" "$S5_TXN_NEW_CFG" \
+        "$S5_TXN_OLD_USERS" "$S5_TXN_OLD_CFG" "$S5_TXN_OLD_STATE"; do
+        rm -f "$_tcf" || return 1
+    done
+    rm -f "$S5_TXN_PHASE" || return 1
+    if ! rmdir "$S5_TXNDIR"; then
+        if [ -d "$S5_TXNDIR" ] && [ -n "$_tcphase" ]; then
+            _s5_txn_write_phase "$_tcphase" >/dev/null 2>&1 || true
+        fi
+        s5_err_msg reconfigure.transaction_cleanup_failed "$S5_TXNDIR"
+        return 1
+    fi
+    return 0
+}
+
+_s5_reconfigure_precheck() {
+    if ! s5_state_load || [ "$(s5_state_get status)" != complete ]; then
+        s5_err_msg reconfigure.state_invalid
+        return 1
+    fi
+    for _rpf in created_bin created_cfg created_users; do
+        if ! s5_state_flagged "$_rpf"; then
+            s5_err_msg reconfigure.state_invalid
+            return 1
+        fi
+    done
+    S5_INIT=$(s5_state_get init)
+    S5_OS_FAMILY=$(s5_state_get family)
+    S5_LISTEN=$(s5_state_get listen)
+    S5_PORT=$(s5_state_get port)
+    case "$S5_INIT" in
+    systemd)
+        s5_state_flagged created_unit || { s5_err_msg reconfigure.state_invalid; return 1; }
+        _rpservice=$S5_UNIT
+        ;;
+    openrc)
+        s5_state_flagged created_initscript || { s5_err_msg reconfigure.state_invalid; return 1; }
+        _rpservice=$S5_INITSCRIPT
+        ;;
+    *) s5_err_msg reconfigure.state_invalid; return 1 ;;
+    esac
+    if [ ! -x "$S5_BIN" ] || [ -L "$S5_BIN" ] ||
+        [ ! -f "$S5_CFG" ] || [ -L "$S5_CFG" ] ||
+        [ ! -f "$S5_USERSCFG" ] || [ -L "$S5_USERSCFG" ] ||
+        [ ! -f "$S5_STATE" ] || [ -L "$S5_STATE" ] ||
+        [ ! -f "$_rpservice" ] || [ -L "$_rpservice" ]; then
+        s5_err_msg reconfigure.files_invalid
+        return 1
+    fi
+    if [ "$(stat -c '%a' "$S5_CFG" 2>/dev/null)" != 640 ] ||
+        [ "$(stat -c '%a' "$S5_USERSCFG" 2>/dev/null)" != 640 ] ||
+        [ "$(stat -c '%a' "$S5_STATE" 2>/dev/null)" != 600 ]; then
+        s5_err_msg reconfigure.files_invalid
+        return 1
+    fi
+    if [ "${S5_TEST_MODE:-0}" != 1 ]; then
+        if [ "$(stat -c '%U:%G' "$S5_CFG" 2>/dev/null)" != "root:$S5_SERVICE_GROUP" ] ||
+            [ "$(stat -c '%U:%G' "$S5_USERSCFG" 2>/dev/null)" != "root:$S5_SERVICE_GROUP" ] ||
+            [ "$(stat -c '%U:%G' "$S5_STATE" 2>/dev/null)" != root:root ]; then
+            s5_err_msg reconfigure.files_invalid
+            return 1
+        fi
+    fi
+    if ! s5_load_credentials ||
+        [ "$S5_USERNAME" != "$(s5_state_get username)" ] ||
+        ! s5_static_check_cfg "$S5_CFG" "$S5_USERSCFG"; then
+        s5_err_msg reconfigure.files_invalid
+        return 1
+    fi
+    s5_service_active
+    _rpa=$?
+    if [ "$_rpa" -ne 0 ]; then
+        s5_err_msg reconfigure.current_not_healthy
+        return 1
+    fi
+    s5_port_listening
+    _rpl=$?
+    if [ "$_rpl" -ne 0 ]; then
+        s5_err_msg reconfigure.current_not_healthy
+        return 1
+    fi
+    return 0
+}
+
+_s5_reconfigure_stage() {
+    if [ -e "$S5_TXNDIR" ] || [ -L "$S5_TXNDIR" ]; then
+        s5_err_msg reconfigure.transaction_exists "$S5_TXNDIR"
+        return 1
+    fi
+    if ! mkdir "$S5_TXNDIR"; then
+        s5_err_msg reconfigure.transaction_create_failed "$S5_TXNDIR"
+        return 1
+    fi
+    if ! s5_apply_owner_mode "$S5_TXNDIR" "root:root" 0700; then
+        rmdir "$S5_TXNDIR" 2>/dev/null || true
+        s5_err_msg reconfigure.transaction_create_failed "$S5_TXNDIR"
+        return 1
+    fi
+    if ! _s5_txn_write_phase staging ||
+        ! _s5_copy_file_secure "$S5_USERSCFG" "$S5_TXN_OLD_USERS" "root:root" 0600 ||
+        ! _s5_copy_file_secure "$S5_CFG" "$S5_TXN_OLD_CFG" "root:root" 0600 ||
+        ! _s5_copy_file_secure "$S5_STATE" "$S5_TXN_OLD_STATE" "root:root" 0600; then
+        s5_err_msg reconfigure.stage_failed
+        _s5_txn_cleanup || true
+        return 1
+    fi
+
+    _tx_users_body=$(s5_render_users) || {
+        _tx_users_body=''
+        _s5_txn_cleanup || true
+        return 1
+    }
+    if ! printf '%s\n' "$_tx_users_body" |
+        s5_atomic_write "$S5_TXN_NEW_USERS" "root:$S5_SERVICE_GROUP" 0640; then
+        _tx_users_body=''
+        s5_err_msg reconfigure.stage_failed
+        _s5_txn_cleanup || true
+        return 1
+    fi
+    _tx_users_body=''
+    _tx_cfg_body=$(s5_render_cfg) || {
+        _tx_cfg_body=''
+        _s5_txn_cleanup || true
+        return 1
+    }
+    if ! printf '%s\n' "$_tx_cfg_body" |
+        s5_atomic_write "$S5_TXN_NEW_CFG" "root:root" 0600; then
+        _tx_cfg_body=''
+        s5_err_msg reconfigure.stage_failed
+        _s5_txn_cleanup || true
+        return 1
+    fi
+    _tx_cfg_body=''
+    if ! s5_static_check_cfg "$S5_TXN_NEW_CFG" "$S5_TXN_NEW_USERS" ||
+        ! _s5_txn_write_phase armed; then
+        s5_err_msg reconfigure.stage_failed
+        _s5_txn_cleanup || true
+        return 1
+    fi
+    S5_RECONFIG_ARMED=1
+    return 0
+}
+
+_s5_reconfigure_restore() {
+    _rrmode=${1:-verify}
+    case "$_rrmode" in
+    verify | uninstall) ;;
+    *) return 1 ;;
+    esac
+    for _rrf in "$S5_TXN_OLD_USERS" "$S5_TXN_OLD_CFG" "$S5_TXN_OLD_STATE"; do
+        if [ ! -f "$_rrf" ] || [ -L "$_rrf" ]; then
+            s5_err_msg reconfigure.restore_missing "$S5_TXNDIR"
+            return 1
+        fi
+    done
+    _rrinit=$(awk -F'\t' '$1=="init" { print $2 }' "$S5_TXN_OLD_STATE")
+    case "$_rrinit" in
+    systemd | openrc) S5_INIT=$_rrinit ;;
+    *) s5_err_msg reconfigure.restore_invalid; return 1 ;;
+    esac
+    if ! s5_stop_and_confirm; then
+        s5_err_msg reconfigure.restore_stop_failed
+        return 1
+    fi
+    if ! _s5_copy_file_secure "$S5_TXN_OLD_USERS" "$S5_USERSCFG" "root:$S5_SERVICE_GROUP" 0640 ||
+        ! _s5_copy_file_secure "$S5_TXN_OLD_CFG" "$S5_CFG" "root:$S5_SERVICE_GROUP" 0640 ||
+        ! _s5_copy_file_secure "$S5_TXN_OLD_STATE" "$S5_STATE" "root:root" 0600; then
+        s5_err_msg reconfigure.restore_files_failed "$S5_TXNDIR"
+        return 1
+    fi
+    if ! s5_state_load; then
+        s5_err_msg reconfigure.restore_invalid
+        return 1
+    fi
+    S5_INIT=$(s5_state_get init)
+    S5_OS_FAMILY=$(s5_state_get family)
+    S5_LISTEN=$(s5_state_get listen)
+    S5_PORT=$(s5_state_get port)
+    if ! s5_load_credentials || ! s5_static_check_cfg "$S5_CFG" "$S5_USERSCFG"; then
+        s5_err_msg reconfigure.restore_invalid
+        return 1
+    fi
+    S5_SECRET=$S5_PASSWORD
+    if [ "$_rrmode" = uninstall ]; then
+        if ! _s5_txn_write_phase committed || ! _s5_txn_cleanup; then
+            return 1
+        fi
+        s5_log_msg reconfigure.restored_for_uninstall
+        return 0
+    fi
+    s5_log_msg reconfigure.restoring
+    if ! s5_service_start || ! s5_verify_running_config; then
+        s5_err_msg reconfigure.restore_service_failed "$S5_TXNDIR"
+        return 1
+    fi
+    if ! _s5_txn_write_phase committed; then
+        s5_err_msg reconfigure.restore_files_failed "$S5_TXNDIR"
+        return 1
+    fi
+    if ! _s5_txn_cleanup; then
+        return 1
+    fi
+    s5_log_msg reconfigure.restored
+    return 0
+}
+
+s5_reconfigure_recover_pending() {
+    _rrmode=${1:-verify}
+    if [ ! -e "$S5_TXNDIR" ] && [ ! -L "$S5_TXNDIR" ]; then
+        return 0
+    fi
+    if [ -L "$S5_TXNDIR" ] || [ ! -d "$S5_TXNDIR" ]; then
+        s5_err_msg reconfigure.transaction_invalid "$S5_TXNDIR"
+        return 1
+    fi
+    if [ ! -e "$S5_TXN_PHASE" ] && [ ! -L "$S5_TXN_PHASE" ]; then
+        s5_warn_msg reconfigure.pending_cleanup
+        _s5_txn_cleanup
+        return $?
+    fi
+    _rrphase=$(_s5_txn_read_phase) || {
+        s5_err_msg reconfigure.transaction_invalid "$S5_TXNDIR"
+        return 1
+    }
+    case "$_rrphase" in
+    staging | committed)
+        _s5_txn_cleanup
+        ;;
+    armed)
+        s5_warn_msg reconfigure.pending_recovery
+        if _s5_reconfigure_restore "$_rrmode"; then
+            S5_PASSWORD=''; S5_SECRET=''
+            return 0
+        fi
+        S5_PASSWORD=''; S5_SECRET=''
+        return 1
+        ;;
+    esac
+}
+
+_s5_reconfigure_fail() {
+    s5_err_msg reconfigure.apply_failed
+    if ! _s5_reconfigure_restore; then
+        s5_err_msg reconfigure.recovery_failed "$S5_TXNDIR"
+    fi
+    S5_RECONFIG_ARMED=0
+    return 1
+}
+
+s5_reconfigure_apply() {
+    if ! _s5_reconfigure_stage; then
+        return 1
+    fi
+    if ! s5_stop_and_confirm; then
+        _s5_reconfigure_fail
+        return 1
+    fi
+    s5_port_free "$S5_PORT"
+    _rapf=$?
+    if [ "$_rapf" -ne 0 ]; then
+        s5_err_msg reconfigure.port_not_free "$S5_PORT"
+        _s5_reconfigure_fail
+        return 1
+    fi
+    if ! _s5_copy_file_secure "$S5_TXN_NEW_USERS" "$S5_USERSCFG" "root:$S5_SERVICE_GROUP" 0640 ||
+        ! _s5_copy_file_secure "$S5_TXN_NEW_CFG" "$S5_CFG" "root:$S5_SERVICE_GROUP" 0640 ||
+        ! s5_state_replace_identity "$S5_PORT" "$S5_USERNAME"; then
+        _s5_reconfigure_fail
+        return 1
+    fi
+    s5_log_msg install.starting_service "$S5_PROJECT"
+    if ! s5_service_start || ! s5_verify_running_config; then
+        _s5_reconfigure_fail
+        return 1
+    fi
+    if ! _s5_txn_write_phase committed; then
+        _s5_reconfigure_fail
+        return 1
+    fi
+    S5_RECONFIG_ARMED=0
+    if ! _s5_txn_cleanup; then
+        s5_err_msg reconfigure.commit_cleanup_failed "$S5_TXNDIR"
+        return 1
+    fi
+    s5_log_msg reconfigure.complete
+    return 0
+}
+
 # ---------------------------------------------------------------------------
 # Collision detection, warnings, dependencies, rollback, uninstall
 # ---------------------------------------------------------------------------
@@ -5716,6 +6738,26 @@ s5_confirm() {
     y | Y | yes | YES | Yes) return 0 ;;
     *) return 1 ;;
     esac
+}
+
+# Bounded default-no confirmation for reconfiguration. Return 0 for yes, 1 for
+# an explicit/default no, and 2 when input ends or never becomes valid.
+s5_confirm_no() {
+    _cfn=0
+    while [ "$_cfn" -lt 5 ]; do
+        _cfn=$((_cfn + 1))
+        printf '%s [y/N]: ' "${1:-}" >&2
+        _cfa=''
+        if ! read -r _cfa; then
+            return 2
+        fi
+        case "$_cfa" in
+        y | Y | yes | YES | Yes) return 0 ;;
+        '' | n | N | no | NO | No) return 1 ;;
+        *) s5_err_msg reconfigure.confirm_invalid ;;
+        esac
+    done
+    return 2
 }
 
 # s5_confirm_yes <question>: the INSTALL confirmation only. Enter means
@@ -6049,15 +7091,14 @@ s5_rollback() {
 # ---------------------------------------------------------------------------
 # IPv4 address resolution for the credential card (Round 16 T11).
 #
-# Three pure predicates, one hardened external lookup, one fallback chain.
+# Two pure predicates, one hardened external lookup, one explicit fallback.
 # The external result is an OBSERVED EGRESS address: it proves nothing about
 # inbound NAT, port forwarding, firewalls or security groups. All failures are
-# nonfatal -- the card renders with a validated local address or a placeholder
-# plus exactly one warning; installation and show never fail here.
+# nonfatal -- the card renders with an explicit SERVER_IPV4 placeholder and an
+# actionable warning; installation and show never fail here.
 #
-# CAP bounds the external response: the longest legal body is a 15-byte
-# address plus CRLF, so 17 bytes. Longer bodies are rejected without storing
-# or logging anything past the cap.
+# The longest legal body is a 15-byte address plus CRLF, so curl and a second
+# on-disk size check both enforce a 17-byte response limit before parsing.
 # ---------------------------------------------------------------------------
 
 s5_ipv4_is_canonical() {
@@ -6137,32 +7178,6 @@ s5_ipv4_is_public() {
     return 0
 }
 
-s5_ipv4_is_usable_local() {
-    # Usable as a card fallback: canonical, and either public or private
-    # (RFC1918 / CGNAT). Loopback, link-local, documentation, benchmarking,
-    # multicast and reserved space never reach the card.
-    if s5_ipv4_is_public "$1"; then
-        return 0
-    fi
-    s5_ipv4_is_canonical "$1" || return 1
-    _iuo1=${1%%.*}
-    _iuore=${1#*.}
-    _iuo2=${_iuore%%.*}
-    if [ "$_iuo1" -eq 10 ]; then
-        return 0
-    fi
-    if [ "$_iuo1" -eq 100 ] && [ "$_iuo2" -ge 64 ] && [ "$_iuo2" -le 127 ]; then
-        return 0
-    fi
-    if [ "$_iuo1" -eq 172 ] && [ "$_iuo2" -ge 16 ] && [ "$_iuo2" -le 31 ]; then
-        return 0
-    fi
-    if [ "$_iuo1" -eq 192 ] && [ "$_iuo2" -eq 168 ]; then
-        return 0
-    fi
-    return 1
-}
-
 s5_lookup_public_ipv4() {
     # One hardened request to the fixed endpoint. -q first so no user or
     # system curlrc can alter it; --noproxy '*' so an ambient proxy variable
@@ -6179,12 +7194,22 @@ s5_lookup_public_ipv4() {
     fi
     _lpf=$(mktemp "${TMPDIR:-/tmp}/s5ip.XXXXXX") || return 1
     if ! curl -q -4 --noproxy '*' --proto '=https' --fail --silent \
-        --connect-timeout 3 --max-time 5 \
+        --connect-timeout 3 --max-time 5 --max-filesize 17 \
         --output "$_lpf" "https://icanhazip.com" </dev/null 2>/dev/null; then
         rm -f "$_lpf"
         _lpf=''
         return 1
     fi
+    _lpsz=$(wc -c <"$_lpf" 2>/dev/null | tr -d '[:space:]')
+    case "$_lpsz" in
+    '' | *[!0-9]*) _lpsz=18 ;;
+    esac
+    if [ "$_lpsz" -gt 17 ]; then
+        rm -f "$_lpf"
+        _lpf=''; _lpsz=''
+        return 1
+    fi
+    _lpsz=''
     # Validate the file's line structure with read, not pattern matching: a
     # trailing-newline byte cannot be built in a shell variable (command
     # substitution strips it, so every \n-bearing pattern was silently an
@@ -6239,10 +7264,9 @@ s5_lookup_public_ipv4() {
 }
 
 s5_resolve_card_address() {
-    # Resolves once per card into S5_CARD_ADDR / S5_CARD_KIND. Kinds:
-    # external (validated public egress), local (validated usable local,
-    # one warning owed), placeholder (SERVER_IPV4, actionable warning owed).
-    # Nonfatal in every path.
+    # Resolves once per card. A strictly validated public IPv4 is used when the
+    # fixed endpoint answers; otherwise the card uses an explicit placeholder
+    # rather than presenting a private address as an Internet-reachable host.
     S5_CARD_ADDR=''
     S5_CARD_KIND=''
     if _rca=$(s5_lookup_public_ipv4); then
@@ -6252,27 +7276,6 @@ s5_resolve_card_address() {
         return 0
     fi
     _rca=''
-    if command -v ip >/dev/null 2>&1; then
-        for _rcat in $(ip -4 -o addr show scope global 2>/dev/null |
-            awk '{print $4}' | cut -d/ -f1); do
-            if s5_ipv4_is_usable_local "$_rcat"; then
-                S5_CARD_ADDR=$_rcat
-                S5_CARD_KIND=local
-                _rcat=''
-                return 0
-            fi
-        done
-    fi
-    if command -v hostname >/dev/null 2>&1; then
-        for _rcat in $(hostname -I 2>/dev/null); do
-            if s5_ipv4_is_usable_local "$_rcat"; then
-                S5_CARD_ADDR=$_rcat
-                S5_CARD_KIND=local
-                _rcat=''
-                return 0
-            fi
-        done
-    fi
     S5_CARD_ADDR=SERVER_IPV4
     S5_CARD_KIND=placeholder
     return 0
@@ -6311,7 +7314,6 @@ s5_render_card() {
     _cvc=$(s5_msg card.cloud_provider "$S5_PORT"); s5_say "$_cvc"
     s5_say ""
     case "$S5_CARD_KIND" in
-    local) s5_say_msg card.warn_local ;;
     placeholder) s5_say_msg card.warn_placeholder ;;
     esac
     s5_say_msg card.warning_encrypted
@@ -6325,7 +7327,11 @@ s5_render_card() {
 
 s5_print_summary() {
     if ! s5_require_secret_terminal; then
-        s5_say_msg card.completed_no_display
+        if [ "${1:-install}" = reconfigure ]; then
+            s5_say_msg reconfigure.completed_no_display
+        else
+            s5_say_msg card.completed_no_display
+        fi
         return 0
     fi
     s5_render_card
@@ -6412,6 +7418,7 @@ s5_install_steps() {
     _isu=$(s5_render_users) || return 1
     if ! s5_state_mark created_users; then return 1; fi
     if ! printf '%s\n' "$_isu" | s5_atomic_write "$S5_USERSCFG" "root:$S5_SERVICE_GROUP" 0640; then
+        _isu=''
         return 1
     fi
     _isu=''
@@ -6436,61 +7443,62 @@ s5_install_steps() {
         s5_err_msg install.start_failed
         return 1
     fi
-    # Three-valued, like every other service-state observation: a failed manager
-    # query is not an observed inactive service. Both cases fail closed, but the
-    # operator is told which one actually happened.
-    s5_service_active
-    _isact=$?
-    case "$_isact" in
-    0) ;;
-    1)
-        s5_err_msg install.not_active_after_start
-        return 1
-        ;;
-    *)
-        s5_err_msg install.active_unverified
-        return 1
-        ;;
-    esac
-    # The listen check is a bounded wait, not a single probe: a manager may
-    # report the service active before its socket is bound (Type=simple;
-    # OpenRC under supervise-daemon), and the one-shot probe that used to be
-    # here failed the install on every host slower than the manager's fork.
-    # s5_wait_listening is two-valued -- every outcome of the three-valued
-    # s5_port_listening it polls gets its own diagnostic -- so negating it
-    # cannot read "cannot observe" as a passed verification.
-    if ! s5_wait_listening "$S5_PORT"; then
-        return 1
-    fi
-
-    s5_log_msg install.verifying_bad
-    if ! s5_selftest_bad; then
-        return 1
-    fi
-    s5_log_msg install.verifying_good
-    if ! s5_selftest_good "$S5_USERNAME" "$S5_PASSWORD"; then
-        _isd=$(s5_diagnose_failure)
-        s5_err_msg install.selftest_failed "$_isd"
-        s5_explain_failure "$_isd"
+    if ! s5_verify_running_config; then
         return 1
     fi
 
     return 0
 }
 
-s5_cmd_install() {
-    # Every gate first: base commands, OS, arch, root, package manager.
-    # The status is captured before any negation: `if ! cmd; then return $?`
-    # would return 0, because $? is the status of the *negation*.
-    s5_precheck
-    _cipc=$?
-    if [ "$_cipc" -ne 0 ]; then
-        return "$_cipc"
+s5_cmd_reconfigure_locked() {
+    if ! _s5_reconfigure_precheck; then
+        return "$EX_FAIL"
     fi
+    _rc_old_port=$S5_PORT
+    S5_SECRET=$S5_PASSWORD
+    if ! s5_cmd_status; then
+        S5_PASSWORD=''; S5_SECRET=''
+        return "$EX_FAIL"
+    fi
+    s5_say_msg reconfigure.summary
+    s5_say_msg reconfigure.reuses_install
+    s5_say_msg reconfigure.no_firewall
+    _rcq=$(s5_msg reconfigure.confirm)
+    s5_confirm_no "$_rcq"
+    _rcc=$?
+    _rcq=''
+    case "$_rcc" in
+    0) ;;
+    1)
+        s5_log_msg reconfigure.cancelled
+        S5_PASSWORD=''; S5_SECRET=''
+        return "$EX_OK"
+        ;;
+    *)
+        s5_err_msg reconfigure.confirm_failed
+        S5_PASSWORD=''; S5_SECRET=''
+        return "$EX_FAIL"
+        ;;
+    esac
+    if ! s5_prompt_port "$_rc_old_port" ||
+        ! s5_prompt_username ||
+        ! s5_prompt_password; then
+        S5_PASSWORD=''; S5_SECRET=''
+        return "$EX_FAIL"
+    fi
+    if ! s5_reconfigure_apply; then
+        S5_PASSWORD=''; S5_SECRET=''
+        return "$EX_FAIL"
+    fi
+    s5_print_summary reconfigure
+    S5_PASSWORD=''; S5_SECRET=''
+    return "$EX_OK"
+}
+
+_s5_cmd_install_locked() {
     if s5_is_installed; then
-        s5_log_msg cmd.already_installed "$S5_PROJECT"
-        s5_cmd_status
-        return 0
+        s5_cmd_reconfigure_locked
+        return $?
     fi
     if ! s5_collision_check; then
         return "$EX_FAIL"
@@ -6541,6 +7549,16 @@ s5_cmd_install() {
     return "$EX_OK"
 }
 
+s5_cmd_install() {
+    # Every gate first: base commands, OS, arch, root, package manager.
+    s5_precheck
+    _cipc=$?
+    if [ "$_cipc" -ne 0 ]; then
+        return "$_cipc"
+    fi
+    s5_with_mutation_lock _s5_cmd_install_locked
+}
+
 # s5_load_credentials : read the single "user:CL:password" line back from disk
 # and re-validate it, so a hand-edited or corrupted users.cfg is rejected
 # instead of being echoed into a malformed URI.
@@ -6572,6 +7590,7 @@ s5_load_credentials() {
     fi
     S5_USERNAME=$_lcu
     S5_PASSWORD=$_lcp
+    _lcline=''; _lcu=''; _lcp=''
     return 0
 }
 
@@ -6597,7 +7616,11 @@ s5_usage() {
     _uu=''
 }
 
-s5_cmd_status() {
+_s5_cmd_status_locked() {
+    if [ -e "$S5_TXNDIR" ] || [ -L "$S5_TXNDIR" ]; then
+        s5_err_msg reconfigure.read_blocked
+        return "$EX_FAIL"
+    fi
     if ! s5_is_installed; then
         _ni=$(s5_msg cmd.not_installed "$S5_PROJECT")
         s5_say "$_ni"
@@ -6639,7 +7662,15 @@ s5_cmd_status() {
     return "$EX_OK"
 }
 
-s5_cmd_show() {
+s5_cmd_status() {
+    s5_with_read_lock _s5_cmd_status_locked
+}
+
+_s5_cmd_show_locked() {
+    if [ -e "$S5_TXNDIR" ] || [ -L "$S5_TXNDIR" ]; then
+        s5_err_msg reconfigure.read_blocked
+        return "$EX_FAIL"
+    fi
     if ! s5_is_installed; then
         _ni=$(s5_msg cmd.not_installed "$S5_PROJECT")
         s5_say "$_ni"
@@ -6666,7 +7697,11 @@ s5_cmd_show() {
     return "$EX_OK"
 }
 
-s5_cmd_restart() {
+s5_cmd_show() {
+    s5_with_read_lock _s5_cmd_show_locked
+}
+
+_s5_cmd_restart_locked() {
     if ! s5_is_installed; then
         _ni=$(s5_msg cmd.not_installed "$S5_PROJECT")
         s5_say "$_ni"
@@ -6701,9 +7736,17 @@ s5_cmd_restart() {
     return "$EX_OK"
 }
 
+s5_cmd_restart() {
+    if ! s5_is_root; then
+        s5_err_msg restart.requires_root
+        return "$EX_FAIL"
+    fi
+    s5_with_mutation_lock _s5_cmd_restart_locked
+}
+
 # Removes only the fixed project resources whose creation this run recorded.
 # No system package is ever removed. Nothing is deleted recursively.
-s5_cmd_uninstall() {
+_s5_cmd_uninstall_locked() {
     if [ ! -e "$S5_STATE" ] && [ ! -L "$S5_STATE" ]; then
         _un=$(s5_msg cmd.uninstall.nothing "$S5_PROJECT")
         s5_say "$_un"
@@ -6782,6 +7825,19 @@ s5_cmd_uninstall() {
     return "$EX_FAIL"
 }
 
+s5_cmd_uninstall() {
+    if [ ! -e "$S5_STATE" ] && [ ! -L "$S5_STATE" ] &&
+        [ ! -e "$S5_TXNDIR" ] && [ ! -L "$S5_TXNDIR" ]; then
+        _s5_cmd_uninstall_locked
+        return $?
+    fi
+    if ! s5_is_root; then
+        s5_err_msg uninstall.requires_root
+        return "$EX_FAIL"
+    fi
+    s5_with_uninstall_lock _s5_cmd_uninstall_locked
+}
+
 s5_cmd_auto() {
     if ! s5_is_installed; then
         s5_cmd_install
@@ -6796,6 +7852,7 @@ s5_cmd_auto() {
     s5_say_msg menu.option_restart
     s5_say_msg menu.option_uninstall
     s5_say_msg menu.option_quit
+    s5_say_msg menu.option_reconfigure
     _mcp=$(s5_msg menu.choice_prompt)
     printf '%s' "$_mcp" >&2
     _mcp=''
@@ -6813,6 +7870,7 @@ s5_cmd_auto() {
         s5_say_msg menu.nothing_to_do
         return "$EX_OK"
         ;;
+    6) s5_cmd_install ;;
     *)
         s5_err_msg menu.invalid_choice "$_cha"
         return "$EX_USAGE"

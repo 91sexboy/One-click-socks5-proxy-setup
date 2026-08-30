@@ -139,20 +139,16 @@ assert_not_contains "OpenRC does not use need net" "need net" "$orc"
 assert_not_contains "OpenRC creates no ordinary log file" "output_log=" "$orc"
 assert_not_contains "OpenRC creates no ordinary error log file" "error_log=" "$orc"
 
-# Server address output is for the IPv4-only deployed listener. A hostname -I
-# result beginning with IPv6 must not be emitted as an unusable address in the
-# connection details. Round 16 replaced the loose first-dotted-token logic
-# with the validated resolver: IPv6 tokens are skipped (as before), but a
-# TEST-NET address like 192.0.2.25 is now REJECTED as unusable. This file
-# does not source env.sh, so curl is the REAL binary: shadow it to fail, or
-# the resolver would perform a live network request from a unit test.
+# Server address output is for the IPv4-only deployed listener. If the fixed
+# external lookup fails, neither IPv6 nor private local addresses are guessed;
+# the operator receives the explicit replacement placeholder.
 mkdir -p "$S5_TEST_ROOT/iptest"
 ip() { return 1; }
 curl() { return 7; }
 hostname() { printf '%s\n' '2001:db8::10 10.20.30.40'; }
 s5_resolve_card_address
-assert_eq "hostname fallback selects the usable IPv4" 10.20.30.40 "$S5_CARD_ADDR"
-assert_eq "and reports the local kind" local "$S5_CARD_KIND"
+assert_eq "failed public lookup uses the placeholder" SERVER_IPV4 "$S5_CARD_ADDR"
+assert_eq "and reports the placeholder kind" placeholder "$S5_CARD_KIND"
 
 # The old behavior silently accepted documentation space; it must not return.
 hostname() { printf '%s\n' '2001:db8::10 192.0.2.25'; }

@@ -508,9 +508,10 @@ else
 fi
 
 # =========================================================================
-# Round 17: real-host post-install audit and idempotency are present in every
-# applicable lifecycle. The helper owns the security-sensitive details once;
-# each job must invoke it explicitly so one job cannot borrow another's proof.
+# Round 17/19: real-host post-install audit and in-place reconfiguration are
+# present in applicable lifecycles. The helper owns the security-sensitive
+# details once; each job must invoke it explicitly so one job cannot borrow
+# another's proof.
 # =========================================================================
 post_audit="$R/tests/protocol/post_install_audit.sh"
 assert_file_exists "post-install audit helper exists" "$post_audit"
@@ -553,10 +554,16 @@ done
 systemd_block=$(ci_job_block systemd-integration)
 _second_installs=$(printf '%s\n' "$systemd_block" | grep -c 'socks5.sh install' || true)
 assert_eq "systemd integration invokes install twice in one existing cell" 2 "$_second_installs"
-for required in 'sha256sum' 'cmp "$SECRETS/users.before" "$SECRETS/users.after"' \
-    'awk '\''END { print NR }'\''' 'getent passwd socks5proxy' \
+for required in 'sha256sum --check "$SECRETS/bin.before"' \
+    'sha256sum --check "$SECRETS/unit.before"' \
+    'reconfigure-transaction' 'getent passwd socks5proxy' \
     'getent group socks5proxy' 'systemctl list-unit-files --no-legend'; do
-    assert_contains "systemd idempotency carries $required" "$required" "$systemd_block"
+    assert_contains "systemd reconfiguration carries $required" "$required" "$systemd_block"
+done
+for _job in openrc-integration distro-systemd-integration; do
+    _blk=$(ci_job_block "$_job")
+    assert_contains "$_job performs a real in-place update" 'update.answers' "$_blk"
+    assert_contains "$_job checks transaction cleanup" 'reconfigure-transaction' "$_blk"
 done
 
 # =========================================================================
@@ -589,8 +596,8 @@ else
     t_bad "each lifecycle job must APPLY sed -f redact.sed to its install log"
 fi
 
-# All four Python tools are explicitly compiled.
-_comp4=$(grep -c 'py_compile' "$CI")
-assert_eq "the lint job compiles all 4 Python tools" 4 "$_comp4"
+# All three Python tools are explicitly compiled.
+_comp3=$(grep -c 'py_compile' "$CI")
+assert_eq "the lint job compiles all 3 Python tools" 3 "$_comp3"
 
 t_summary

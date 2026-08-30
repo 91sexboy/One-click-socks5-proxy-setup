@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """PTY interrupt test. TEST-ONLY TOOLING (not a runtime dependency).
 
-Runs the real socks5.sh under a pseudo-terminal, drives it to the password
-prompt, verifies that terminal echo is genuinely OFF at that moment, sends
-SIGINT, and then verifies the terminal's termios has been restored with ECHO
-back ON and that no state file was left behind.
+Runs the real socks5.sh under a pseudo-terminal, drives it to the visible
+password prompt, verifies that terminal echo remains ON, sends SIGINT, and then
+verifies that no state, transaction, lock, or build directory was left behind.
 
 Exit 0 = all checks passed. Any other exit prints the reason.
 """
@@ -156,10 +155,10 @@ def main():
     _, ok = read_until(master, r"(SOCKS5 password|SOCKS5 密码)")
     check(ok, "reached the password prompt")
 
-    # Give the shell a moment to apply stty -echo, then confirm echo really is off.
-    time.sleep(0.4)
-    check(echo_enabled(slave) is False,
-          "terminal echo is DISABLED while the password is being read")
+    # Password input is intentionally visible, so ECHO must remain enabled.
+    time.sleep(0.2)
+    check(echo_enabled(slave) is True,
+          "terminal echo remains ENABLED while the password is being read")
 
     # Interrupt exactly here.
     os.kill(pid, signal.SIGINT)
@@ -167,7 +166,7 @@ def main():
 
     time.sleep(0.3)
     check(echo_enabled(slave) is True,
-          "terminal echo is RESTORED after SIGINT at the password prompt")
+          "terminal echo remains ENABLED after SIGINT at the password prompt")
 
     if os.WIFEXITED(status):
         code = os.WEXITSTATUS(status)
@@ -180,6 +179,10 @@ def main():
     statefile = os.path.join(root, "var/lib/socks5-manager/state")
     check(not os.path.exists(statefile),
           "no state file was left behind (interrupt happened before any was created)")
+    transaction = os.path.join(root, "var/lib/socks5-manager/reconfigure-transaction")
+    check(not os.path.exists(transaction), "no transaction directory was left behind")
+    lockdir = os.path.join(root, "run/socks5-manager.lock")
+    check(not os.path.exists(lockdir), "the operation lock was released")
 
     builds = os.path.join(root, "build")
     leftover = []

@@ -1,6 +1,6 @@
 #!/bin/sh
-# tests/unit/test_interrupt.sh - B3 regression, PTY half: a real SIGINT during
-# password entry must restore the terminal and leave nothing behind.
+# tests/unit/test_interrupt.sh - a real SIGINT during visible password input
+# must leave the installation, transaction state, and mutation lock clean.
 #
 # Delegates to tests/pty/interrupt.py because POSIX sh cannot allocate a pty.
 # Python is a TEST-only dependency; socks5.sh never uses it.
@@ -28,25 +28,12 @@ printf '%s\n' "$T_OUT" | while IFS= read -r _l; do
     esac
 done
 
-assert_contains "echo was disabled during password entry" \
-    "terminal echo is DISABLED" "$T_OUT"
-assert_contains "echo was restored after SIGINT" \
-    "terminal echo is RESTORED" "$T_OUT"
+assert_contains "echo remains enabled during password entry" \
+    "terminal echo remains ENABLED while" "$T_OUT"
+assert_contains "echo remains enabled after SIGINT" \
+    "terminal echo remains ENABLED after" "$T_OUT"
+assert_contains "SIGINT releases the mutation lock" \
+    "operation lock was released" "$T_OUT"
 assert_not_contains "no pty check failed" "not ok" "$T_OUT"
-
-# If `stty -g` cannot capture the original state, the script must refuse before
-# running `stty -echo`; otherwise a password prompt can leave the terminal in an
-# un-restorable state.
-t_run python3 "${S5_ROOT_TEST_ROOT:-${S5_REPO_ROOT}}/tests/pty/stty_capture.py" "$S5_TEST_ROOT" "$S5_TEST_ROOT/bin"
-assert_eq "English stty-failure scenario passes" 0 "$T_STATUS"
-# BF-07: the Chinese-default selection on a real pty. Blank input selects
-# Chinese; the driver still verifies the same termios invariants.
-t_run python3 "${S5_REPO_ROOT}/tests/pty/stty_capture.py" "$S5_TEST_ROOT" "$S5_TEST_ROOT/bin" ""
-assert_eq "Chinese-default stty-failure scenario passes" 0 "$T_STATUS"
-assert_eq "the stty capture failure scenario passes" 0 "$T_STATUS"
-assert_contains "the capture failure keeps echo enabled" \
-    "echo remains enabled" "$T_OUT"
-assert_not_contains "the capture failure scenario has no failed check" \
-    "not ok" "$T_OUT"
 
 t_summary
