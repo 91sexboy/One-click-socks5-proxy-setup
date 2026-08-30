@@ -10,36 +10,45 @@ case "$UNIT" in s5-[a-z0-9-]*) ;; *) printf 'unsafe unit name: %s\n' "$UNIT" >&2
 case "$INPUT:$OUTPUT" in /tmp/*:/tmp/*) ;; *) printf 'input/output must be under /tmp\n' >&2; exit 2;; esac
 
 RUNNER="/tmp/$UNIT-runner"
+STATUS_FILE="/tmp/$UNIT-status"
+DONE_FILE="/tmp/$UNIT-done"
+RELEASE_FILE="/tmp/$UNIT-release"
+rm -f "$STATUS_FILE" "$DONE_FILE" "$RELEASE_FILE"
 cat >"$RUNNER" <<EOF
 #!/bin/sh
-set -eu
+set +e
 umask 077
-exec "\$@" <"$INPUT" >"$OUTPUT" 2>&1
+"\$@" <"$INPUT" >"$OUTPUT" 2>&1
+rc=\$?
+printf '%s\n' "\$rc" >"$STATUS_FILE"
+: >"$DONE_FILE"
+while [ ! -e "$RELEASE_FILE" ]; do sleep 1; done
+exit "\$rc"
 EOF
 chmod 0700 "$RUNNER"
 cleanup() {
+    : >"$RELEASE_FILE"
     systemctl stop "$UNIT.service" >/dev/null 2>&1 || true
     systemctl reset-failed "$UNIT.service" >/dev/null 2>&1 || true
-    rm -f "$RUNNER"
+    rm -f "$RUNNER" "$STATUS_FILE" "$DONE_FILE" "$RELEASE_FILE"
 }
 trap cleanup EXIT HUP INT TERM
 
 systemd-run --quiet --unit="$UNIT" \
-    --property=Type=oneshot \
-    --property=RemainAfterExit=yes \
     --property=MemoryMax=134217728 \
     --property=MemorySwapMax=0 \
     "$RUNNER" "$@"
 
 i=0
 while [ "$i" -lt 120 ]; do
+    [ -e "$DONE_FILE" ] && break
     state=$(systemctl show "$UNIT.service" -p ActiveState --value)
-    case "$state" in active | failed) break;; esac
+    case "$state" in failed | inactive) break;; esac
     i=$((i + 1))
     sleep 1
 done
-[ "$i" -lt 120 ] || { printf '%s did not finish\n' "$UNIT" >&2; exit 1; }
-status=$(systemctl show "$UNIT.service" -p ExecMainStatus --value)
+[ -e "$DONE_FILE" ] || { printf '%s did not finish\n' "$UNIT" >&2; exit 1; }
+status=$(cat "$STATUS_FILE")
 cgroup=$(systemctl show "$UNIT.service" -p ControlGroup --value)
 case "$cgroup" in /*) ;; *) printf '%s has invalid cgroup: %s\n' "$UNIT" "$cgroup" >&2; exit 1;; esac
 peak_file="/sys/fs/cgroup${cgroup}/memory.peak"
