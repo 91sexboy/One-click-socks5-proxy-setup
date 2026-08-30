@@ -560,7 +560,7 @@ jobs:
           CMD ["/sbin/init"]
           DOCKERFILE
 
-          CID=$(docker run -d --privileged \
+          CID=$(docker run -d --privileged --cgroupns=host \
             -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
             -v "$PWD:/src" -w /src s5-systemd-target)
 

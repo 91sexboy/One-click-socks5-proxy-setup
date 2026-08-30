@@ -207,6 +207,8 @@ _distro=$(ci_job_block distro-systemd-integration)
 assert_contains "Debian has a real systemd lifecycle" "debian:12" "$_distro"
 assert_contains "CentOS Stream has a real systemd lifecycle" "centos:stream9" "$_distro"
 assert_contains "the distro lifecycle boots a real init as PID 1" "/sbin/init" "$_distro"
+assert_contains "the distro lifecycle exposes the host cgroup hierarchy to systemd" \
+    '--cgroupns=host' "$_distro"
 assert_contains "and waits for the manager before installing" \
     "is-system-running" "$_distro"
 
