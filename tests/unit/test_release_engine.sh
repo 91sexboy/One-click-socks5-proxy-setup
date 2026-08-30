@@ -57,6 +57,8 @@ assert_contains "workflow attests the exact release binaries" \
     'actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661' "$workflow"
 assert_contains "workflow refuses to replace an existing release" \
     'gh release view "$ENGINE_TAG"' "$workflow"
+assert_contains "release commands select the repository explicitly" \
+    '--repo "$GITHUB_REPOSITORY"' "$workflow"
 assert_contains "workflow refuses to move an existing tag" \
     'gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$ENGINE_TAG"' "$workflow"
 assert_contains "workflow publishes a prerelease" '--prerelease' "$workflow"

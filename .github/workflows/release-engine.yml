@@ -98,12 +98,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
-          if gh release view "$ENGINE_TAG" >/dev/null 2>&1 ||
+          if gh release view "$ENGINE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
              gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$ENGINE_TAG" >/dev/null 2>&1; then
             echo "refusing to replace existing release or tag: $ENGINE_TAG" >&2
             exit 1
           fi
           gh release create "$ENGINE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
             dist/3proxy-0.9.9.0-da99424-linux-* \
             dist/SHA256SUMS dist/BUILD-INFO.txt \
             --target "$GITHUB_SHA" \
