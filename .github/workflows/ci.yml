@@ -210,6 +210,7 @@ jobs:
             command -v git >/dev/null 2>&1 && { echo "git was installed in compatibility cell" >&2; exit 1; }
             command -v make >/dev/null 2>&1 && { echo "make was installed in compatibility cell" >&2; exit 1; }
             command -v gcc >/dev/null 2>&1 && { echo "gcc was installed in compatibility cell" >&2; exit 1; }
+            :
           '
 
   # -------------------------------- protocol acceptance + SOCKS4 release gate
@@ -247,11 +248,11 @@ jobs:
             set -eu
             if command -v apt-get >/dev/null 2>&1; then
               export DEBIAN_FRONTEND=noninteractive
-              apt-get update -qq && apt-get install -y -qq --no-install-recommends curl python3 ca-certificates >/dev/null
+              apt-get update -qq && apt-get install -y -qq --no-install-recommends curl python3 ca-certificates iproute2 >/dev/null
             elif command -v apk >/dev/null 2>&1; then
-              apk add --no-cache curl python3 ca-certificates >/dev/null
+              apk add --no-cache curl python3 ca-certificates iproute2 >/dev/null
             else
-              (dnf install -y -q --setopt=install_weak_deps=False python3 ca-certificates || yum install -y -q --setopt=install_weak_deps=False python3 ca-certificates) >/dev/null
+              (dnf install -y -q --setopt=install_weak_deps=False python3 ca-certificates iproute || yum install -y -q --setopt=install_weak_deps=False python3 ca-certificates iproute) >/dev/null
             fi
             # curl is deliberately absent from the dnf/yum list above: the
             # CentOS Stream images ship curl-minimal, which already provides
@@ -300,11 +301,11 @@ jobs:
             set -eu
             if command -v apt-get >/dev/null 2>&1; then
               export DEBIAN_FRONTEND=noninteractive
-              apt-get update -qq && apt-get install -y -qq --no-install-recommends curl python3 ca-certificates >/dev/null
+              apt-get update -qq && apt-get install -y -qq --no-install-recommends curl python3 ca-certificates iproute2 >/dev/null
             elif command -v apk >/dev/null 2>&1; then
-              apk add --no-cache curl python3 ca-certificates >/dev/null
+              apk add --no-cache curl python3 ca-certificates iproute2 >/dev/null
             else
-              (dnf install -y -q --setopt=install_weak_deps=False python3 ca-certificates || yum install -y -q --setopt=install_weak_deps=False python3 ca-certificates) >/dev/null
+              (dnf install -y -q --setopt=install_weak_deps=False python3 ca-certificates iproute || yum install -y -q --setopt=install_weak_deps=False python3 ca-certificates iproute) >/dev/null
             fi
             # curl is deliberately absent from the dnf/yum list above: the
             # CentOS Stream images ship curl-minimal, which already provides
@@ -478,60 +479,17 @@ jobs:
           FROM ${{ matrix.image }}
           RUN apk add --no-cache openrc python3
           DOCKERFILE
-          CID=$(docker run -d --privileged --memory=128m --memory-swap=128m \
-            -v "$PWD:/src" -w /src s5-openrc-target sleep 600)
-          cleanup() { docker rm -f "$CID" >/dev/null 2>&1 || true; }
-          trap cleanup EXIT HUP INT TERM
-          docker exec "$CID" sh -c '
-            set -eu
-            mkdir -p /run/openrc && touch /run/openrc/softlevel
-            rc-status -a >/dev/null 2>&1  # initialize OpenRC runtime before install
-            command -v logger >/dev/null
-            if [ ! -S /dev/log ] && command -v syslogd >/dev/null 2>&1; then syslogd; fi
-            logger -t socks5-manager-ci -p daemon.info "openrc logger probe"
-            umask 077
-            SECRETS=$(mktemp -d); chmod 0700 "$SECRETS"
-            tr -dc "A-Za-z0-9._~-" </dev/urandom | head -c 32 > "$SECRETS/pass"
-            chmod 0600 "$SECRETS/pass"
-            if [ "${{ matrix.locale_stream }}" = invalid-then-zh ]; then
-              printf "9\n\ny\n41080\nciuser\n" >"$SECRETS/answers"
-            else
-              printf "9\n2\ny\n41080\nciuser\n" >"$SECRETS/answers"
-            fi
-            cat "$SECRETS/pass" >>"$SECRETS/answers"; printf "\n" >>"$SECRETS/answers"
-            { printf '"'"'s|'"'"'; cat "$SECRETS/pass"; printf '"'"'|***REDACTED***|g\n'"'"'; } >"$SECRETS/redact.sed"
-            sh socks5.sh install <"$SECRETS/answers" >"$SECRETS/install.log" 2>&1 || {
-              sed -f "$SECRETS/redact.sed" "$SECRETS/install.log" >&2
-              exit 1
-            }
-            NEW_PORT=41081; NEW_USER=ciuser2
-            tr -dc "A-Za-z0-9._~-" </dev/urandom | head -c 32 >"$SECRETS/pass2"
-            printf "2\ny\n%s\n%s\n" "$NEW_PORT" "$NEW_USER" >"$SECRETS/update.answers"
-            cat "$SECRETS/pass2" >>"$SECRETS/update.answers"; printf "\n" >>"$SECRETS/update.answers"
-            sh socks5.sh install <"$SECRETS/update.answers" >"$SECRETS/update.log" 2>&1
-            sh tests/protocol/post_install_audit.sh openrc "$SECRETS" /root
-            rc-service socks5-manager status
-            printf "2\n" | sh socks5.sh restart
-            PORT=$NEW_PORT PROXY_USER=$NEW_USER PASSFILE="$SECRETS/pass2" sh tests/protocol/run_protocol.sh
-            printf "2\ny\n" | sh socks5.sh uninstall
-            test ! -e /etc/socks5-manager
-            test ! -e /var/lib/socks5-manager
-            test ! -e /usr/local/libexec/socks5-manager
-            test ! -e /etc/init.d/socks5-manager
-            if id socks5proxy >/dev/null 2>&1; then exit 1; fi
-            if getent group socks5proxy >/dev/null 2>&1; then exit 1; fi
-            test ! -e /var/lib/socks5-manager/reconfigure-transaction
-            command -v git >/dev/null 2>&1 && exit 1
-            command -v make >/dev/null 2>&1 && exit 1
-            command -v gcc >/dev/null 2>&1 && exit 1
-          '
-          CGROUP_PATH=$(docker inspect --format '{{.State.Pid}}' "$CID" | xargs -I{} awk -F: '$1 == "0" { print $3 }' /proc/{}/cgroup)
-          case "$CGROUP_PATH" in /*) ;; *) echo "invalid container cgroup path: $CGROUP_PATH" >&2; exit 1;; esac
-          PEAK=$(cat "/sys/fs/cgroup${CGROUP_PATH}/memory.peak")
-          case "$PEAK" in ''|*[!0-9]*) echo "invalid memory peak: $PEAK" >&2; exit 1;; esac
-          test "$PEAK" -le 134217728
-          echo "target memory peak bytes: $PEAK"
-          test "$(docker inspect --format '{{.State.OOMKilled}}' "$CID")" = false
+          set +e
+          OUTPUT=$(docker run --rm --privileged --memory=128m --memory-swap=128m \
+            -v "$PWD:/src" -w /src s5-openrc-target \
+            sh .github/scripts/run-openrc-memory-gate.sh "${{ matrix.locale_stream }}" 2>&1)
+          RC=$?
+          set -e
+          printf '%s\n' "$OUTPUT" | grep '^S5_MEMORY_PEAK=' || true
+          if [ "$RC" -ne 0 ]; then
+            printf '%s\n' "$OUTPUT" >&2
+            exit "$RC"
+          fi
 
   # ----------------- real systemd integration on Ubuntu, Debian, CentOS Stream
   # The Ubuntu job above covers systemd 24.04 on the runner itself; this job
@@ -603,7 +561,6 @@ jobs:
           DOCKERFILE
 
           CID=$(docker run -d --privileged \
-            --memory=128m --memory-swap=128m \
             -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
             -v "$PWD:/src" -w /src s5-systemd-target)
 
@@ -644,8 +601,9 @@ jobs:
           # exits 0, /tmp/answers invisible to the next exec).
           docker exec -i "$CID" sh -c 'umask 077 && cat > /tmp/answers' <"$SECRETS/answers"
           docker exec "$CID" chmod 0600 /tmp/answers
-          docker exec "$CID" sh -c 'umask 077; sh /src/socks5.sh install </tmp/answers >/tmp/install.log 2>&1; rc=$?; chmod 0600 /tmp/install.log; exit "$rc"' \
-            || { docker exec "$CID" cat /tmp/install.log >"$SECRETS/install.log" 2>&1 || true
+          docker exec "$CID" /src/.github/scripts/run-systemd-memory-gate.sh \
+            s5-install /tmp/answers /tmp/install.log sh /src/socks5.sh install \
+            >"$SECRETS/install.peak" || { docker exec "$CID" cat /tmp/install.log >"$SECRETS/install.log" 2>&1 || true
                  sed -f "$SECRETS/redact.sed" "$SECRETS/install.log" >&2
                  exit 1; }
           docker exec "$CID" rm -f /tmp/answers
@@ -662,7 +620,12 @@ jobs:
             printf "2\ny\n41081\nciuser2\n" >/tmp/update.answers
             cat /tmp/pass2 >>/tmp/update.answers
             printf "\n" >>/tmp/update.answers
-            sh /src/socks5.sh install </tmp/update.answers >/tmp/update.log 2>&1
+          '
+          docker exec "$CID" /src/.github/scripts/run-systemd-memory-gate.sh \
+            s5-update /tmp/update.answers /tmp/update.log sh /src/socks5.sh install \
+            >"$SECRETS/update.peak"
+          docker exec "$CID" sh -c '
+            set -eu
             sha256sum -c /tmp/bin.before
             sha256sum -c /tmp/unit.before
             grep -q "41081" /var/lib/socks5-manager/state
@@ -685,7 +648,10 @@ jobs:
 
           # The installer's own self-test already proved that correct credentials
           # work and that wrong credentials are refused; a restart must survive.
-          docker exec "$CID" sh -c 'printf "2\n" | sh /src/socks5.sh restart'
+          docker exec "$CID" sh -c 'printf "2\n" >/tmp/lang; printf "2\ny\n" >/tmp/uninstall.answers'
+          docker exec "$CID" /src/.github/scripts/run-systemd-memory-gate.sh \
+            s5-restart /tmp/lang /tmp/restart.log sh /src/socks5.sh restart \
+            >"$SECRETS/restart.peak"
           docker exec "$CID" systemctl is-active socks5-manager.service
 
           # No firewall rule may exist for the port: v1 never creates one.
@@ -695,7 +661,9 @@ jobs:
             echo "install created a firewall rule; v1 must not" >&2; exit 1
           fi
 
-          docker exec "$CID" sh -c 'printf "2\ny\n" | sh /src/socks5.sh uninstall'
+          docker exec "$CID" /src/.github/scripts/run-systemd-memory-gate.sh \
+            s5-uninstall /tmp/uninstall.answers /tmp/uninstall.log sh /src/socks5.sh uninstall \
+            >"$SECRETS/uninstall.peak"
           docker exec "$CID" sh -c 'test ! -e /etc/socks5-manager && test ! -L /etc/socks5-manager'
           docker exec "$CID" sh -c 'test ! -e /var/lib/socks5-manager && test ! -L /var/lib/socks5-manager'
           docker exec "$CID" sh -c 'test ! -e /usr/local/libexec/socks5-manager && test ! -L /usr/local/libexec/socks5-manager'
@@ -711,10 +679,10 @@ jobs:
             command -v gcc >/dev/null 2>&1 && exit 1
             command -v cc >/dev/null 2>&1 && exit 1
           '
-          CGROUP_PATH=$(docker inspect --format '{{.State.Pid}}' "$CID" | xargs -I{} awk -F: '$1 == "0" { print $3 }' /proc/{}/cgroup)
-          case "$CGROUP_PATH" in /*) ;; *) echo "invalid container cgroup path: $CGROUP_PATH" >&2; exit 1;; esac
-          PEAK=$(cat "/sys/fs/cgroup${CGROUP_PATH}/memory.peak")
-          case "$PEAK" in ''|*[!0-9]*) echo "invalid memory peak: $PEAK" >&2; exit 1;; esac
-          test "$PEAK" -le 134217728
-          echo "target memory peak bytes: $PEAK"
-          test "$(docker inspect --format '{{.State.OOMKilled}}' "$CID")" = false
+          for peak_file in "$SECRETS/install.peak" "$SECRETS/update.peak" \
+            "$SECRETS/restart.peak" "$SECRETS/uninstall.peak"; do
+            PEAK=$(cat "$peak_file")
+            case "$PEAK" in ''|*[!0-9]*) echo "invalid scoped memory peak: $PEAK" >&2; exit 1;; esac
+            test "$PEAK" -le 134217728
+            echo "scoped target memory peak bytes: $PEAK"
+          done

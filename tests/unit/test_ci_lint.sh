@@ -146,6 +146,10 @@ ci_job_block() { # <job-name> -> that job's code lines only
 # output and redact it, because the success summary contains the password.
 for _job in systemd-integration openrc-integration distro-systemd-integration; do
     _blk=$(ci_job_block "$_job")
+    if [ "$_job" = openrc-integration ]; then
+        _blk="$_blk
+$(cat "$R/.github/scripts/run-openrc-memory-gate.sh")"
+    fi
     assert_ne "$_job: the job block was located" "" "$_blk"
     assert_contains "$_job captures the installer output to a file" \
         'install.log' "$_blk"
@@ -177,27 +181,19 @@ assert_contains "Ubuntu has a real systemd lifecycle" \
 assert_contains "Alpine has a real OpenRC lifecycle" \
     "alpine:3." "$(ci_job_block openrc-integration)"
 
-# The OpenRC job now uses one outer script plus a `docker exec sh -c` body. The
-# raw quote-line count is pinned so an unescaped apostrophe cannot silently
-# rearrange which commands run on the host versus in the container.
+# The OpenRC workflow delegates the inner lifecycle to one POSIX helper, so the
+# workflow itself has no fragile single-quoted command body to audit.
 _openrc_raw_block=$(awk '
     $0 == "  openrc-integration:" { in_job = 1; next }
     in_job && /^  [a-z][a-z0-9-]*:$/ { exit }
     in_job { print }
 ' "$CI")
-_openrc_quote_lines=$(printf '%s\n' "$_openrc_raw_block" | grep -c "'")
-assert_eq "OpenRC job has exactly its six reviewed quote-bearing lines" \
-    6 "$_openrc_quote_lines"
-
-# A normal Alpine boot invokes OpenRC and initializes every runtime state
-# directory (`starting`, `started`, `exclusive`, ...). The lifecycle container
-# has no PID-1 OpenRC and a bare `touch softlevel` is not equivalent: OpenRC
-# 0.54's svc_lock then cannot open /run/openrc/exclusive and misleadingly says
-# "already starting" forever. rc-status -a drives rc_deptree_update_needed(),
-# which creates the full directory set; it must happen BEFORE the installer.
-_openrc_init_line=$(printf '%s\n' "$_openrc_raw_block" |
-    grep -n 'rc-status -a.*initial' | head -n 1 | cut -d: -f1)
-_openrc_install_line=$(printf '%s\n' "$_openrc_raw_block" |
+assert_contains "OpenRC workflow invokes the reviewed helper" \
+    'run-openrc-memory-gate.sh' "$_openrc_raw_block"
+_openrc_helper=$(cat "$R/.github/scripts/run-openrc-memory-gate.sh")
+_openrc_init_line=$(printf '%s\n' "$_openrc_helper" |
+    grep -n 'rc-status -a' | head -n 1 | cut -d: -f1)
+_openrc_install_line=$(printf '%s\n' "$_openrc_helper" |
     grep -n 'socks5\.sh install' | head -n 1 | cut -d: -f1)
 assert_ne "OpenRC runtime initialization is present" "" "$_openrc_init_line"
 if [ -n "$_openrc_init_line" ] && [ -n "$_openrc_install_line" ] &&
@@ -451,6 +447,10 @@ assert_eq "no job declares continue-on-error" 0 "$coe"
 # compliance.
 for _job in systemd-integration openrc-integration distro-systemd-integration; do
     _blk=$(ci_job_block "$_job")
+    if [ "$_job" = openrc-integration ]; then
+        _blk="$_blk
+$(cat "$R/.github/scripts/run-openrc-memory-gate.sh")"
+    fi
     # The ANSWERS builder must read the password exactly once. Scope to the lines
     # that WRITE the answers file, so the redaction builder (which legitimately
     # reads the password) and the PASSFILE handoff cannot mask a doubled entry.
@@ -487,7 +487,7 @@ fi
 # Direct lifecycle commands all feed a language answer: no naked invocation
 # reaches the selector's stdin without one.
 if grep -nE '(sudo )?sh (socks5|/src/socks5)\.sh (status|restart|uninstall)( |$)' "$CI" |
-    grep -v 'printf'; then
+    grep -vE 'printf|run-systemd-memory-gate|s5-(restart|uninstall)'; then
     t_bad "a direct lifecycle command reaches stdin without a language answer"
 else
     t_ok
@@ -535,10 +535,15 @@ assert_not_contains "post-install audit never prints matching secret lines" \
 
 for _job in systemd-integration openrc-integration distro-systemd-integration; do
     _blk=$(ci_job_block "$_job")
+    if [ "$_job" = openrc-integration ]; then
+        _blk="$_blk
+$(cat "$R/.github/scripts/run-openrc-memory-gate.sh")"
+    fi
     assert_contains "$_job runs the real post-install audit" \
         'tests/protocol/post_install_audit.sh' "$_blk"
 done
-openrc_block=$(ci_job_block openrc-integration)
+openrc_block="$(ci_job_block openrc-integration)
+$(cat "$R/.github/scripts/run-openrc-memory-gate.sh")"
 for required in 'command -v logger' 'command -v syslogd' 'openrc logger probe'; do
     assert_contains "OpenRC verifies its logger path with $required" "$required" "$openrc_block"
 done
@@ -551,14 +556,25 @@ for required in 'sha256sum --check "$SECRETS/bin.before"' \
     'getent group socks5proxy' 'systemctl list-unit-files --no-legend'; do
     assert_contains "systemd reconfiguration carries $required" "$required" "$systemd_block"
 done
-for _job in openrc-integration distro-systemd-integration; do
-    _blk=$(ci_job_block "$_job")
-    assert_contains "$_job enforces the 128 MiB target limit" '--memory=128m --memory-swap=128m' "$_blk"
-    assert_contains "$_job records target memory peak" 'memory.peak' "$_blk"
-    assert_contains "$_job checks the OOM verdict" 'State.OOMKilled' "$_blk"
-    assert_contains "$_job performs a real in-place update" 'update.answers' "$_blk"
-    assert_contains "$_job checks transaction cleanup" 'reconfigure-transaction' "$_blk"
-done
+_openrc=$(ci_job_block openrc-integration)
+_openrc_helper=$(cat "$R/.github/scripts/run-openrc-memory-gate.sh")
+assert_contains "OpenRC enforces the 128 MiB container limit" \
+    '--memory=128m --memory-swap=128m' "$_openrc"
+assert_contains "OpenRC records target memory peak" 'memory.peak' "$_openrc_helper"
+assert_contains "OpenRC performs a real in-place update" 'update.answers' "$_openrc_helper"
+assert_contains "OpenRC checks transaction cleanup" 'reconfigure-transaction' "$_openrc_helper"
+
+_distro_mem=$(ci_job_block distro-systemd-integration)
+assert_contains "systemd operations run through a scoped memory gate" \
+    'run-systemd-memory-gate.sh' "$_distro_mem"
+assert_contains "systemd scopes enforce 128 MiB" 'MemoryMax=134217728' \
+    "$(cat "$R/.github/scripts/run-systemd-memory-gate.sh")"
+assert_contains "systemd scopes disable swap" 'MemorySwapMax=0' \
+    "$(cat "$R/.github/scripts/run-systemd-memory-gate.sh")"
+assert_contains "systemd lifecycle records scoped peak memory" 'MemoryPeak' \
+    "$(cat "$R/.github/scripts/run-systemd-memory-gate.sh")"
+assert_contains "systemd performs a real in-place update" 'update.answers' "$_distro_mem"
+assert_contains "systemd checks transaction cleanup" 'reconfigure-transaction' "$_distro_mem"
 
 # =========================================================================
 # BF-08: precise workflow-shape and application guards.
