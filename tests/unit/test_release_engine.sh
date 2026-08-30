@@ -58,7 +58,7 @@ assert_contains "workflow attests the exact release binaries" \
 assert_contains "workflow refuses to replace an existing release" \
     'gh release view "$ENGINE_TAG"' "$workflow"
 assert_contains "workflow refuses to move an existing tag" \
-    'git ls-remote --exit-code --tags origin' "$workflow"
+    'gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$ENGINE_TAG"' "$workflow"
 assert_contains "workflow publishes a prerelease" '--prerelease' "$workflow"
 assert_contains "workflow emits one checksum manifest" 'SHA256SUMS' "$workflow"
 
