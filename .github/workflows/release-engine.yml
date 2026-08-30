@@ -1,0 +1,112 @@
+name: release-engine
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  ENGINE_TAG: engine-3proxy-0.9.9.0-r1
+
+jobs:
+  build:
+    name: build-${{ matrix.libc }}-${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            image: quay.io/centos/centos:stream9@sha256:64e5a212e4f2e7b706dbd822968914bb8def7de0a7fdfd3bf248241f8758101c
+            libc: glibc
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            image: quay.io/centos/centos:stream9@sha256:64e5a212e4f2e7b706dbd822968914bb8def7de0a7fdfd3bf248241f8758101c
+            libc: glibc
+            arch: arm64
+          - runner: ubuntu-24.04
+            image: alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
+            libc: musl
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            image: alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
+            libc: musl
+            arch: arm64
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - name: Build one release binary
+        run: |
+          set -eu
+          rm -rf dist
+          mkdir dist
+          case "${{ matrix.libc }}" in
+            glibc)
+              bootstrap='dnf install -y -q --setopt=install_weak_deps=False git gcc make binutils ca-certificates'
+              ;;
+            musl)
+              bootstrap='apk add --no-cache git build-base binutils linux-headers ca-certificates'
+              ;;
+          esac
+          docker run --rm \
+            -v "$PWD:/src" -w /src \
+            "${{ matrix.image }}" sh -c "$bootstrap && sh .github/scripts/build-engine.sh '${{ matrix.libc }}' '${{ matrix.arch }}' /src/dist"
+          sudo chown -R "$(id -u):$(id -g)" dist
+      - name: Upload immutable candidate bytes
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: engine-${{ matrix.libc }}-${{ matrix.arch }}
+          path: dist/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  release:
+    name: attest-and-publish
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: engine-*
+          path: dist
+          merge-multiple: true
+      - name: Verify the assembled release payload
+        run: |
+          set -eu
+          cd dist
+          test "$(find . -maxdepth 1 -type f -name '3proxy-0.9.9.0-da99424-linux-*-*' ! -name '*.sha256' ! -name '*.build-info' | wc -l)" -eq 4
+          cat ./*.sha256 | LC_ALL=C sort >SHA256SUMS
+          sha256sum -c SHA256SUMS
+          cat ./*.build-info | LC_ALL=C sort >BUILD-INFO.txt
+      - name: Attest release binaries
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
+        with:
+          subject-path: |
+            dist/3proxy-0.9.9.0-da99424-linux-glibc-amd64
+            dist/3proxy-0.9.9.0-da99424-linux-glibc-arm64
+            dist/3proxy-0.9.9.0-da99424-linux-musl-amd64
+            dist/3proxy-0.9.9.0-da99424-linux-musl-arm64
+      - name: Create immutable engine prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          if gh release view "$ENGINE_TAG" >/dev/null 2>&1 ||
+             git ls-remote --exit-code --tags origin "refs/tags/$ENGINE_TAG" >/dev/null 2>&1; then
+            echo "refusing to replace existing release or tag: $ENGINE_TAG" >&2
+            exit 1
+          fi
+          gh release create "$ENGINE_TAG" \
+            dist/3proxy-0.9.9.0-da99424-linux-* \
+            dist/SHA256SUMS dist/BUILD-INFO.txt \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --title "3proxy 0.9.9.0 engine r1" \
+            --notes "Pinned 3proxy 0.9.9.0 binaries for socks5.sh. Built from da99424eac4092e3722f1a5b1844cfe80478f580; verify with SHA256SUMS and GitHub artifact attestations."
