@@ -633,9 +633,8 @@ jobs:
             test ! -e /var/lib/socks5-manager/reconfigure-transaction
             test ! -e /run/socks5-manager.lock
             systemctl is-active socks5-manager.service
-            . /src/socks5.sh
-            S5_PORT=41081; S5_LISTEN=0.0.0.0; s5_port_listening
-            S5_PORT=41080; S5_LISTEN=0.0.0.0; if s5_port_listening; then exit 1; fi
+            /src/.github/scripts/check-listen-port.sh 41081 present
+            /src/.github/scripts/check-listen-port.sh 41080 absent
           '
           PORT=41081
 
@@ -645,7 +644,7 @@ jobs:
 
           docker exec "$CID" sh -c 'printf "2\n" | sh /src/socks5.sh status'
           docker exec "$CID" systemctl is-active socks5-manager.service
-          docker exec "$CID" sh -c ". /src/socks5.sh; S5_PORT=$PORT; S5_LISTEN=0.0.0.0; s5_port_listening"
+          docker exec "$CID" /src/.github/scripts/check-listen-port.sh "$PORT" present
 
           # The installer's own self-test already proved that correct credentials
           # work and that wrong credentials are refused; a restart must survive.
