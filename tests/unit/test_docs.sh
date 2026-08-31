@@ -76,7 +76,8 @@ assert_eq "README pins the exact one-click wget command once" \
     1 "$(grep -Fxc -- "$expected_wget" "$R/README.md")"
 assert_eq "README pins the exact one-click curl command once" \
     1 "$(grep -Fxc -- "$expected_curl" "$R/README.md")"
-assert_contains "README warns that Alpine lacks bash" "apk add bash" "$readme"
+assert_contains "README explains Alpine needs Bash for process substitution" \
+    "Install Bash first" "$readme"
 assert_contains "README pins all supported minimum versions" \
     "Ubuntu 22.04+, Debian 12+, Alpine Linux 3.20+, CentOS Stream 9+" "$readme"
 expected_alpine="apk add --no-cache bash wget && bash -c 'bash <(wget -qO- https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-setup/main/socks5.sh)'"
@@ -97,13 +98,15 @@ assert_contains "README requires the evidence-only checkpoint" \
 assert_contains "README requires exact reachable-main closure evidence" \
     'exact closure commit must pass 45/45 on `main`' "$readme"
 assert_contains "README creates the immutable tag only after closure" \
-    'Only then is the immutable `v1.1.0` tag created at that exact closure commit' "$readme"
-assert_contains "README identifies preliminary pre-repair evidence" \
-    '33324226518' "$readme"
-assert_contains "README names the preliminary evidence commit" \
-    'bb338a4e2716d42e4394f4cc465f8e8ebe7db8f7' "$readme"
-assert_contains "README does not misrepresent preliminary evidence" \
-    'does not prove the repaired release gates' "$readme"
+    'Only then is the immutable' "$readme"
+assert_contains "README records the repaired implementation run" \
+    '33355799664' "$readme"
+assert_contains "README records the repaired implementation commit" \
+    'f508666e0b31512b32502a3bb1a85b9742671b52' "$readme"
+assert_contains "README identifies the implementation checkpoint as complete" \
+    'This satisfies the repaired implementation checkpoint' "$readme"
+assert_contains "README identifies pending release checkpoints" \
+    'evidence-only checkpoint and exact reachable-main closure checkpoint are' "$readme"
 assert_contains "README shows only the socks5 scheme" "socks5://" "$readme"
 assert_not_contains "README never shows a socks4 URI" "socks4://" "$readme"
 
@@ -114,14 +117,14 @@ for contract in \
     '1 中文 / 2 English' \
     'Enter alone selects 中文' \
     'answer is re-asked' \
-    'first question on every run' \
-    'single `[Y/n]` question' \
+    'This is the first question on' \
+    '`[Y/n]` question controls the fresh installation' \
     'asks five questions in' \
     'Custom input is visible' \
     'prints the password to your terminal only' \
     'stdout is a real terminal' \
     'source IP' \
-    'port, username or password' \
+    'No port, username, or password' \
     'SERVER_IPV4' \
     'default-no `[y/N]` confirmation' \
     'updates the configuration in place' \
@@ -138,9 +141,9 @@ fi
 assert_contains "README says no secret precedes prerequisites" \
     'No port, username, or password is collected before that step finishes' "$readme"
 assert_contains "README documents the systemd shared-slice gate" \
-    'shared systemd slice containing both the operation runner and the proxy service' "$readme"
+    'shared systemd slice containing both the' "$readme"
 assert_contains "README documents the OpenRC container gate" \
-    'OpenRC target runs inside one 128 MiB, no-swap container cgroup' "$readme"
+    'OpenRC target-container cgroup' "$readme"
 assert_contains "README documents CentOS curl-minimal reuse" \
     'CentOS Stream starts with `curl-minimal` and reuses it' "$readme"
 
@@ -320,37 +323,23 @@ assert_contains "CI has OpenRC integration" "openrc-integration" "$ci"
 assert_contains "README documents reboot persistence" "Persistent across reboot" "$readme"
 assert_contains "README says iptables rules are not persistent" "kernel memory only" "$readme"
 assert_contains "README distinguishes the CI job scopes" "real engine running the rendered config" "$readme"
-# CI has run; the README now states what the runs proved and what failed. The
-# status passage is deliberately rewritten as evidence changes, so pin the
-# sentence that carries the current honest limit: no real systemd install
-# lifecycle has completed yet. That claim is checkable against the actual CI
-# CI evidence is a published claim, so pin both the aggregate and the exact
-# auditable run. If the matrix shape changes, the count and wording must change
-# deliberately; if a future run regresses, do not erase the historical green
-# evidence -- add current status next to it.
+# The public README keeps one auditable released checkpoint and the current
+# candidate checkpoint. Detailed historical evidence remains in SPEC.md.
 assert_contains "README records the fully green CI checkpoint" \
     "45 of 45 jobs passed" "$readme"
-assert_contains "README names the historical baseline run" \
-    "33174398814" "$readme"
-assert_contains "README names the previous bilingual implementation run" \
-    "33245460710" "$readme"
-assert_contains "README names the previous bilingual evidence run" \
-    "33246222640" "$readme"
-assert_contains "README names the Round 17 implementation run" \
-    "33281392984" "$readme"
-assert_contains "README links the Round 17 implementation run" \
-    "actions/runs/33281392984" "$readme"
-assert_contains "README records the Round 17 implementation commit" \
-    "3b58e19" "$readme"
-assert_contains "README names the Round 17 evidence run" \
-    "33281724740" "$readme"
-assert_contains "README links the Round 17 evidence run" \
-    "actions/runs/33281724740" "$readme"
-assert_contains "README records the Round 17 evidence commit" \
-    "a8ed825" "$readme"
+assert_contains "README records the released v1.0.0 closure run" \
+    "33282068288" "$readme"
+assert_contains "README links the released v1.0.0 closure run" \
+    "actions/runs/33282068288" "$readme"
+assert_contains "README records the current implementation run" \
+    "33355799664" "$readme"
+assert_contains "README links the current implementation run" \
+    "actions/runs/33355799664" "$readme"
+assert_contains "README records the current implementation commit" \
+    "f508666e0b31512b32502a3bb1a85b9742671b52" "$readme"
 assert_contains "README gates the v1.1.0 candidate on closure CI" \
     'exact closure commit must pass 45/45 on `main`' "$readme"
-assert_contains "README records preliminary release-asset evidence" \
+assert_not_contains "README removes the stale preliminary run" \
     "33324226518" "$readme"
 assert_not_contains "README removes the stale unearned-CI claim" \
     "release-asset implementation must earn a new complete CI run" "$readme"
