@@ -61,7 +61,8 @@ count_transfer_dirs() {
 reset_case() {
     rm -rf "${S5_TEST_ROOT:?}/build" "${S5_PREFIX:?}"
     rm -f "$S5_TEST_ROOT/stub_asset_download_fail" \
-        "$S5_TEST_ROOT/stub_asset_truncated" "$S5_TEST_ROOT/stub_asset_corrupt"
+        "$S5_TEST_ROOT/stub_asset_truncated" "$S5_TEST_ROOT/stub_asset_corrupt" \
+        "$S5_TEST_ROOT/stub_asset_oversized_unknown"
     : >"$T_TRANSCRIPT"
     S5_OS_FAMILY=debian
     S5_ARCHNAME=amd64
@@ -91,6 +92,18 @@ assert_ne "asset download failure aborts" 0 "$T_STATUS"
 assert_contains "asset download failure is explained" "failed to download" "$T_OUT"
 assert_file_absent "download failure installs nothing" "$S5_BIN"
 assert_eq "download failure removes temporary files" 0 "$(count_transfer_dirs)"
+
+# Unknown-length responses must be stopped while bytes are arriving. The N+1
+# sentinel proves a valid N-byte prefix followed by junk cannot be accepted, and
+# that old curl versions cannot fill the workdir before the size check runs.
+reset_case
+: >"$S5_TEST_ROOT/stub_asset_oversized_unknown"
+t_run s5_fetch_verified_engine
+assert_ne "unknown-length oversized asset aborts" 0 "$T_STATUS"
+assert_contains "oversized asset reports the bounded sentinel size" \
+    "got $((S5_ASSET_SIZE + 1)) bytes" "$T_OUT"
+assert_file_absent "oversized asset installs nothing" "$S5_BIN"
+assert_eq "oversized asset removes FIFO and workdir" 0 "$(count_transfer_dirs)"
 
 # A short response is rejected before hashing or installation.
 reset_case

@@ -4,11 +4,11 @@
 > commit `3b58e194887bf91a06b789353c06033b70c49c59` passed run `33281392984` with
 > 45/45 jobs. Evidence-only commit `a8ed8255fba6c9bf9b8247582d6b77ebf65d8374`
 > passed run `33281724740`; closure commit `91fd13a` passed run `33282068288`,
-> and immutable tag `v1.0.0` was created there. The v1.1.0 candidate adds
-> recoverable in-place credential/port updates and the revised interaction
-> contract below. It must pass its own complete reachable-main CI run before a
-> tag is created. Protocol, authentication, ACL and firewall boundaries remain
-> unchanged.
+> and immutable tag `v1.0.0` was created there. The v1.1.0 implementation,
+> evidence-only and exact reachable-main closure checkpoints are pending. The implementation commit
+> must pass 45/45; an evidence-only commit must then pass 45/45; the exact closure commit must pass
+> 45/45 on `main` before the immutable tag is created. Protocol, authentication, ACL and firewall
+> boundaries remain unchanged.
 
 ## 1. Objective
 A single-file POSIX shell script (`socks5.sh`) that interactively installs, verifies, and manages a
@@ -265,8 +265,11 @@ detection is functionality too.
 2. Show only genuinely missing runtime packages in the confirmation: curl, ca-certificates and an
    `ss` provider only when `/proc/net/tcp{,6}`, ss and netstat are all unusable. APT disables
    recommends, DNF/YUM disable weak deps, APK uses `--no-cache`.
-3. Download to a private temporary directory over HTTPS with HTTPS-only redirects, a time limit and
-   a byte cap. Validate regular/non-symlink type, exact embedded byte length and embedded SHA-256.
+3. Download to a private temporary directory over HTTPS with HTTPS-only redirects and a time limit.
+   A bounded reader retains at most the exact expected length plus one oversize sentinel byte, so
+   unknown-length/chunked responses are byte-capped even on curl versions whose `--max-filesize`
+   checks only known response lengths. Validate regular/non-symlink type, exact embedded byte length
+   and embedded SHA-256.
 4. Atomically copy only the verified binary to `/usr/local/libexec/socks5-manager/3proxy`, set
    `root:root 0755`, and verify the installed file's SHA-256 again. Any mismatch fails closed and
    triggers normal rollback; there is no source-build or distro-package fallback.
@@ -422,9 +425,14 @@ and process start time to distinguish a live owner from a stale lock without a t
   configured to run install → update → status → active → listening → restart → uninstall →
   cleanliness; that update evidence is not considered passed until the release-asset candidate CI
   completes. A compatibility-only cell and a direct-engine protocol cell do **not** satisfy this:
-  neither installs a service. The Debian and CentOS images deliberately ship without `git`, a
-  compiler, `curl` or an `ss` provider, so these jobs prove the installer adds only missing runtime
-  prerequisites on a clean host.
+  neither installs a service. Ubuntu, Debian and Alpine start without curl and prove missing-runtime
+  dependency installation. CentOS starts with `curl-minimal`; CI verifies and reuses that stock
+  provider instead of manufacturing an unrepresentative curl-free image. No lifecycle target gains
+  Git, Make, GCC or cc.
+- **Low-memory boundary:** containerized systemd creates one CI-only shared systemd slice containing
+  every operation runner and `socks5-manager.service`, enforces aggregate 128 MiB/no swap, validates
+  both cgroup ancestries, reads the shared peak and requires zero OOM kills. The OpenRC target-container cgroup
+  is limited to 128 MiB/no swap and supplies its whole-container peak.
 - **Asset compatibility matrix:** the matching pinned release binary must load on 8 OS versions × 2
   architectures without installing a target-side toolchain.
 - **Update safety:** a confirmed update reuses one service/account/binary, rotates one credential,
@@ -497,7 +505,11 @@ example any SOCKS4-family protocol.
 17. Round 17 implementation commit `3b58e194887bf91a06b789353c06033b70c49c59` passed run
     `33281392984`; evidence-only commit `a8ed8255fba6c9bf9b8247582d6b77ebf65d8374` passed run
     `33281724740`; closure commit `91fd13a` passed run `33282068288`; immutable tag `v1.0.0`
-    exists there. The v1.1.0 candidate must produce its own complete evidence before release.
+    exists there. Run `33245460710` / `33246222640` remains historical evidence for the previous
+    bilingual state. Run `33324226518` at `bb338a4e2716d42e4394f4cc465f8e8ebe7db8f7` is preliminary
+    v1.1 evidence only: it predates the bounded unknown-length download and shared-slice checks.
+    For v1.1.0, the implementation commit must pass 45/45; an evidence-only commit must then pass
+    45/45; the exact closure commit must pass 45/45 on `main`; only then may the immutable tag exist.
 
 ## 16. Non-goals (v1.1)
 Non-interactive install; a separate public `reload` or `reconfigure` subcommand; BIND; UDP ASSOCIATE;
@@ -517,8 +529,10 @@ RHEL/Rocky/Alma.
   one-liner separately. Never use `wget … | sh` (it feeds source into prompt stdin) or a fixed
   `/tmp/socks5.sh` path.
 - Keep the convenient `main` commands but also document an immutable semantic-version tag and the
-  exact SHA-256 of its `socks5.sh`. The README must call it a candidate until two fresh 45/45 runs
-  pass and the tag exists; the tag is created only after the evidence-only run and is never moved.
+  exact SHA-256 of its `socks5.sh`. The README must call it a candidate until an implementation
+  commit passes 45/45, an evidence-only commit records that proof and passes 45/45, and the exact
+  closure commit passes 45/45 on `main`; only then is the tag created at that closure commit and it
+  is never moved.
 - Document the exact `1 中文 / 2 English` selector, Enter=Chinese, invalid retry, per-invocation
   locale, the default-yes fresh-install confirmation, the default-no installed-update confirmation,
   dependencies before initial values, and one visible custom password read. State that
@@ -542,23 +556,20 @@ RHEL/Rocky/Alma.
 
 ## 18. Residual risks and settled decisions
 
-**Verification status (2026-08-29).** Round 17 implementation commit
-`3b58e194887bf91a06b789353c06033b70c49c59` passed run `33281392984` with **45/45 green**.
-Evidence-only commit `a8ed8255fba6c9bf9b8247582d6b77ebf65d8374` passed run `33281724740`,
-also 45/45:
+**Verification status (2026-08-30).** The released v1.0.0 evidence chain remains Round 17:
+implementation `3b58e194887bf91a06b789353c06033b70c49c59` / run `33281392984`, evidence-only
+`a8ed8255fba6c9bf9b8247582d6b77ebf65d8374` / run `33281724740`, and closure `91fd13a` /
+run `33282068288`, all 45/45 before the immutable tag was created.
 
-- all 16 build and 16 protocol cells passed on amd64/arm64;
-- all 3 ACL-resolution cells passed;
-- all 7 real systemd/OpenRC lifecycle cells passed, including the new owner/mode, account,
-  secret-sink, exact-address, logger-path and install-twice assertions;
-- lint, two unit cells, structural release gates and all Python syntax checks passed.
-
-This closure commit records both fresh runs. It is tagged `v1.0.0` only after its own reachable-main
-run is 45/45; the tag's existence is the final gate (§15.17). Runs `33245460710` / `33246222640`
-remain historical evidence for the previous bilingual state. Environmental risks remain: package
-repositories, DNS and the fixed HTTPS self-test require egress; cloud images may differ from the
-tested base images; and the pinned 3proxy 0.9 branch has no published maintenance window, so the
-operator still owns updates (§17).
+The later release-asset candidate at `bb338a4e2716d42e4394f4cc465f8e8ebe7db8f7` passed run
+`33324226518` with 45/45 on `develop`, but that run predates the unknown-length streaming cap and
+the shared systemd-slice membership proof. It is preliminary evidence only. The replacement
+implementation, evidence-only and exact reachable-main closure runs remain pending and must follow
+the §15.17 sequence before `v1.1.0` is tagged. Environmental risks remain: package repositories,
+DNS and the fixed HTTPS self-test require egress; cloud images may differ from the tested base
+images; and the pinned 3proxy 0.9 branch has no published maintenance window, so the operator still
+owns updates (§17). Historical bilingual evidence remains in runs `33245460710` /
+`33246222640`; those runs are not evidence for the v1.1 release-asset candidate.
 
 **Decided:**
 - Publishing target: `github.com/91sexboy/One-click-socks5-proxy-setup`; the README raw URL is

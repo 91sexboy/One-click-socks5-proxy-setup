@@ -485,7 +485,7 @@ jobs:
             sh .github/scripts/run-openrc-memory-gate.sh "${{ matrix.locale_stream }}" 2>&1)
           RC=$?
           set -e
-          printf '%s\n' "$OUTPUT" | grep '^S5_MEMORY_PEAK=' || true
+          printf '%s\n' "$OUTPUT" | grep -E '^S5_(STAGE|MEMORY_PEAK)=' || true
           if [ "$RC" -ne 0 ]; then
             printf '%s\n' "$OUTPUT" >&2
             exit "$RC"
@@ -533,7 +533,10 @@ jobs:
           SECRETS=$(mktemp -d); chmod 0700 "$SECRETS"
           CID=""
           cleanup() {
-            if [ -n "$CID" ]; then docker rm -f "$CID" >/dev/null 2>&1 || true; fi
+            if [ -n "$CID" ]; then
+              docker exec "$CID" /src/.github/scripts/run-systemd-memory-gate.sh cleanup >/dev/null 2>&1 || true
+              docker rm -f "$CID" >/dev/null 2>&1 || true
+            fi
             rm -rf "$SECRETS"
           }
           trap cleanup EXIT HUP INT TERM
@@ -595,6 +598,25 @@ jobs:
             exit 1
           fi
 
+          docker exec "$CID" sh -c '
+            set -eu
+            . /etc/os-release
+            case "$ID" in
+              ubuntu | debian)
+                if command -v curl >/dev/null 2>&1; then
+                  echo "target unexpectedly contains curl before install" >&2
+                  exit 1
+                fi
+                ;;
+              centos)
+                command -v curl >/dev/null
+                rpm -q curl-minimal >/dev/null
+                ;;
+              *) echo "unexpected lifecycle OS: $ID" >&2; exit 1 ;;
+            esac
+          '
+          docker exec "$CID" /src/.github/scripts/run-systemd-memory-gate.sh setup
+
           # Written from INSIDE the container through stdin: docker cp extracts
           # into the container's rootfs, and a path that is a mountpoint in the
           # container can shadow the copied file (observed on debian:13 -- cp
@@ -642,7 +664,11 @@ jobs:
             systemd "$AUDIT_DIR" /root
           docker exec "$CID" rm -rf "$AUDIT_DIR"
 
-          docker exec "$CID" sh -c 'printf "2\n" | sh /src/socks5.sh status'
+          printf '2\n' >"$SECRETS/status.answers"
+          docker exec -i "$CID" sh -c 'umask 077 && cat >/tmp/status.answers' <"$SECRETS/status.answers"
+          docker exec "$CID" /src/.github/scripts/run-systemd-memory-gate.sh \
+            s5-status /tmp/status.answers /tmp/status.log sh /src/socks5.sh status \
+            >"$SECRETS/status.peak"
           docker exec "$CID" systemctl is-active socks5-manager.service
           docker exec "$CID" /src/.github/scripts/check-listen-port.sh "$PORT" present
 
@@ -681,9 +707,10 @@ jobs:
             :
           '
           for peak_file in "$SECRETS/install.peak" "$SECRETS/update.peak" \
-            "$SECRETS/restart.peak" "$SECRETS/uninstall.peak"; do
+            "$SECRETS/status.peak" "$SECRETS/restart.peak" "$SECRETS/uninstall.peak"; do
             PEAK=$(cat "$peak_file")
-            case "$PEAK" in ''|*[!0-9]*) echo "invalid scoped memory peak: $PEAK" >&2; exit 1;; esac
+            case "$PEAK" in ''|*[!0-9]*) echo "invalid shared-slice memory peak: $PEAK" >&2; exit 1;; esac
             test "$PEAK" -le 134217728
-            echo "scoped target memory peak bytes: $PEAK"
+            echo "shared target-slice lifecycle peak bytes: $PEAK"
           done
+          docker exec "$CID" /src/.github/scripts/run-systemd-memory-gate.sh cleanup

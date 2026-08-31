@@ -90,8 +90,20 @@ assert_contains "README publishes the exact release sha256" "$release_hash" "$re
 assert_eq "README prints the release sha256 exactly twice" 2 \
     "$(grep -oF "$release_hash" "$R/README.md" | wc -l)"
 assert_contains "README verifies the release with sha256sum" "sha256sum -c -" "$readme"
-assert_contains "README gates the v1.1.0 tag on complete CI" \
-    'Tag `v1.1.0` will be created only after its own complete CI run succeeds' "$readme"
+assert_contains "README requires the implementation checkpoint" \
+    'implementation commit must pass 45/45' "$readme"
+assert_contains "README requires the evidence-only checkpoint" \
+    'evidence-only commit must then pass 45/45' "$readme"
+assert_contains "README requires exact reachable-main closure evidence" \
+    'exact closure commit must pass 45/45 on `main`' "$readme"
+assert_contains "README creates the immutable tag only after closure" \
+    'Only then is the immutable `v1.1.0` tag created at that exact closure commit' "$readme"
+assert_contains "README identifies preliminary pre-repair evidence" \
+    '33324226518' "$readme"
+assert_contains "README names the preliminary evidence commit" \
+    'bb338a4e2716d42e4394f4cc465f8e8ebe7db8f7' "$readme"
+assert_contains "README does not misrepresent preliminary evidence" \
+    'does not prove the repaired release gates' "$readme"
 assert_contains "README shows only the socks5 scheme" "socks5://" "$readme"
 assert_not_contains "README never shows a socks4 URI" "socks4://" "$readme"
 
@@ -116,6 +128,21 @@ for contract in \
     'has no firewall functionality at all'; do
     assert_contains "README keeps operator contract: $contract" "$contract" "$readme"
 done
+prereq_line=$(grep -nF 'Only after that confirmation, the displayed missing runtime prerequisites are installed' "$R/README.md" | cut -d: -f1)
+port_line=$(grep -nF '**Port** —' "$R/README.md" | cut -d: -f1)
+if [ -n "$prereq_line" ] && [ -n "$port_line" ] && [ "$prereq_line" -lt "$port_line" ]; then
+    t_ok
+else
+    t_bad "README must place prerequisite installation before all value prompts"
+fi
+assert_contains "README says no secret precedes prerequisites" \
+    'No port, username, or password is collected before that step finishes' "$readme"
+assert_contains "README documents the systemd shared-slice gate" \
+    'shared systemd slice containing both the operation runner and the proxy service' "$readme"
+assert_contains "README documents the OpenRC container gate" \
+    'OpenRC target runs inside one 128 MiB, no-swap container cgroup' "$readme"
+assert_contains "README documents CentOS curl-minimal reuse" \
+    'CentOS Stream starts with `curl-minimal` and reuses it' "$readme"
 
 # Every SOCKS4 mention must be a rejection statement, never an offer.
 #
@@ -321,8 +348,12 @@ assert_contains "README links the Round 17 evidence run" \
     "actions/runs/33281724740" "$readme"
 assert_contains "README records the Round 17 evidence commit" \
     "a8ed825" "$readme"
-assert_contains "README gates the v1.1.0 candidate on fresh CI" \
-    "earn its own final reachable-main 45/45 run" "$readme"
+assert_contains "README gates the v1.1.0 candidate on closure CI" \
+    'exact closure commit must pass 45/45 on `main`' "$readme"
+assert_contains "README records preliminary release-asset evidence" \
+    "33324226518" "$readme"
+assert_not_contains "README removes the stale unearned-CI claim" \
+    "release-asset implementation must earn a new complete CI run" "$readme"
 assert_not_contains "README removes the pre-green systemd claim" \
     "No real systemd install lifecycle has completed yet" "$readme"
 assert_not_contains "README no longer claims CI has not been run" \
@@ -353,8 +384,18 @@ assert_contains "SPEC records the full Round 17 evidence commit" \
     "a8ed8255fba6c9bf9b8247582d6b77ebf65d8374" "$spec"
 assert_contains "SPEC preserves the released v1.0.0 baseline" \
     "v1.0.0 RELEASED / v1.1.0 CANDIDATE" "$spec"
-assert_contains "SPEC gates the v1.1.0 candidate on a fresh run" \
-    "must pass its own complete reachable-main CI run" "$spec"
+assert_contains "SPEC gates v1.1.0 on implementation CI" \
+    "implementation commit must pass 45/45" "$spec"
+assert_contains "SPEC gates v1.1.0 on evidence-only CI" \
+    "evidence-only commit must then pass 45/45" "$spec"
+assert_contains "SPEC gates v1.1.0 on exact main closure CI" \
+    'exact closure commit must pass 45/45 on `main`' "$spec"
+assert_contains "SPEC distinguishes the systemd shared slice" \
+    "shared systemd slice" "$spec"
+assert_contains "SPEC distinguishes the OpenRC container cgroup" \
+    "OpenRC target-container cgroup" "$spec"
+assert_contains "SPEC records CentOS curl-minimal baseline" \
+    'CentOS starts with `curl-minimal`' "$spec"
 
 # Whatever the golden script does, the SPEC must agree. A SPEC line that
 # explicitly NEGATES a directive ("`need net` is deliberately not used") is

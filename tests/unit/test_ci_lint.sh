@@ -489,7 +489,7 @@ fi
 # Direct lifecycle commands all feed a language answer: no naked invocation
 # reaches the selector's stdin without one.
 if grep -nE '(sudo )?sh (socks5|/src/socks5)\.sh (status|restart|uninstall)( |$)' "$CI" |
-    grep -vE 'printf|run-systemd-memory-gate|s5-(restart|uninstall)'; then
+    grep -vE 'printf|run-systemd-memory-gate|s5-(status|restart|uninstall)'; then
     t_bad "a direct lifecycle command reaches stdin without a language answer"
 else
     t_ok
@@ -566,15 +566,81 @@ assert_contains "OpenRC records target memory peak" 'memory.peak' "$_openrc_help
 assert_contains "OpenRC performs a real in-place update" 'update.answers' "$_openrc_helper"
 assert_contains "OpenRC checks transaction cleanup" 'reconfigure-transaction' "$_openrc_helper"
 
+# The lifecycle stages are independent evidence and must remain in strict order.
+_openrc_code=$(printf '%s\n' "$_openrc_helper" | grep -v '^[[:space:]]*#')
+_stage_after=0
+for stage in \
+    'sh socks5.sh status' \
+    'rc-service socks5-manager status' \
+    'check-listen-port.sh "$NEW_PORT" present' \
+    'check-listen-port.sh 41080 absent' \
+    'sh socks5.sh restart' \
+    'rc-service socks5-manager status' \
+    'check-listen-port.sh "$NEW_PORT" present' \
+    'sh tests/protocol/run_protocol.sh' \
+    'sh socks5.sh uninstall'; do
+    _stage_line=$(printf '%s\n' "$_openrc_code" | grep -nF "$stage" | awk -F: -v after="$_stage_after" '$1 > after { print $1; exit }')
+    if [ -n "$_stage_line" ]; then
+        t_ok
+        _stage_after=$_stage_line
+    else
+        t_bad "OpenRC lifecycle is missing or misorders stage after line $_stage_after: $stage"
+    fi
+done
+assert_contains "OpenRC proves curl is initially absent" \
+    'command -v curl' "$_openrc_code"
+assert_contains "OpenRC fails when curl is initially present" \
+    'target unexpectedly contains curl' "$_openrc_code"
+
 _distro_mem=$(ci_job_block distro-systemd-integration)
-assert_contains "systemd operations run through a scoped memory gate" \
+_distro_code=$(printf '%s\n' "$_distro_mem" | grep -v '^[[:space:]]*#')
+for required in \
+    'ubuntu | debian)' \
+    'if command -v curl' \
+    'target unexpectedly contains curl before install' \
+    'centos)' \
+    'command -v curl' \
+    'rpm -q curl-minimal'; do
+    assert_contains "systemd lifecycle pins curl precondition: $required" \
+        "$required" "$_distro_code"
+done
+_curl_precondition_line=$(printf '%s\n' "$_distro_code" | grep -nF 'rpm -q curl-minimal' | cut -d: -f1)
+_first_install_line=$(printf '%s\n' "$_distro_code" | grep -nF 's5-install /tmp/answers' | cut -d: -f1)
+if [ -n "$_curl_precondition_line" ] && [ -n "$_first_install_line" ] &&
+    [ "$_curl_precondition_line" -lt "$_first_install_line" ]; then
+    t_ok
+else
+    t_bad "family-specific curl preconditions must precede the systemd installer"
+fi
+_systemd_gate=$(grep -v '^[[:space:]]*#' "$R/.github/scripts/run-systemd-memory-gate.sh")
+assert_contains "systemd operations run through the memory gate" \
     'run-systemd-memory-gate.sh' "$_distro_mem"
-assert_contains "systemd scopes enforce 128 MiB" 'MemoryMax=134217728' \
-    "$(cat "$R/.github/scripts/run-systemd-memory-gate.sh")"
-assert_contains "systemd scopes disable swap" 'MemorySwapMax=0' \
-    "$(cat "$R/.github/scripts/run-systemd-memory-gate.sh")"
-assert_contains "systemd lifecycle records scoped peak memory" 'memory.peak' \
-    "$(cat "$R/.github/scripts/run-systemd-memory-gate.sh")"
+_systemd_contract="$_distro_mem
+$_systemd_gate"
+for required in \
+    'system-s5target.slice' \
+    'LIMIT=134217728' \
+    'MemoryAccounting=yes' \
+    'MemoryMax=$LIMIT' \
+    'MemorySwapMax=0' \
+    'Slice=$SLICE'; do
+    assert_contains "systemd lifecycle defines shared slice contract: $required" \
+        "$required" "$_systemd_contract"
+done
+assert_contains "transient operations join the shared slice" \
+    '--slice=system-s5target.slice' "$_systemd_gate"
+assert_contains "gate queries the shared slice ControlGroup" \
+    'system-s5target.slice -p ControlGroup' "$_systemd_gate"
+assert_contains "gate queries the runner ControlGroup" \
+    '"$UNIT.service" -p ControlGroup' "$_systemd_gate"
+assert_contains "gate verifies manager placement" \
+    'socks5-manager.service -p ControlGroup' "$_systemd_gate"
+for required in memory.peak memory.max memory.swap.max memory.events oom_kill; do
+    assert_contains "systemd gate verifies shared cgroup value: $required" \
+        "$required" "$_systemd_gate"
+done
+assert_not_contains "runner cgroup no longer owns the memory limit" \
+    '--property=MemoryMax' "$_systemd_gate"
 assert_contains "systemd performs a real in-place update" 'update.answers' "$_distro_mem"
 assert_contains "systemd checks transaction cleanup" 'reconfigure-transaction' "$_distro_mem"
 

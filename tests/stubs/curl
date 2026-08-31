@@ -17,6 +17,20 @@ if [ "${1:-}" = "-q" ]; then
     shift
 fi
 
+emit_engine_asset() {
+    if [ -f "$S5_TEST_ROOT/stub_asset_truncated" ]; then
+        _size=$(wc -c <"$S5_TEST_ROOT/stub_engine_asset")
+        head -c "$((_size - 1))" "$S5_TEST_ROOT/stub_engine_asset"
+    elif [ -f "$S5_TEST_ROOT/stub_asset_corrupt" ]; then
+        sed '1s/./X/' "$S5_TEST_ROOT/stub_engine_asset"
+    else
+        cat "$S5_TEST_ROOT/stub_engine_asset"
+    fi
+    if [ -f "$S5_TEST_ROOT/stub_asset_oversized_unknown" ]; then
+        dd if=/dev/zero bs=8192 count=1 2>/dev/null | tr '\000' X
+    fi
+}
+
 case "$*" in
 *'/releases/download/engine-3proxy-0.9.9.0-r1/3proxy-'*)
     if [ -f "$S5_TEST_ROOT/stub_asset_download_fail" ]; then
@@ -31,13 +45,11 @@ case "$*" in
         _prev=$_a
     done
     [ -n "$_out" ] || exit 2
-    if [ -f "$S5_TEST_ROOT/stub_asset_truncated" ]; then
-        _size=$(wc -c <"$S5_TEST_ROOT/stub_engine_asset")
-        head -c "$((_size - 1))" "$S5_TEST_ROOT/stub_engine_asset" >"$_out"
-    elif [ -f "$S5_TEST_ROOT/stub_asset_corrupt" ]; then
-        sed '1s/./X/' "$S5_TEST_ROOT/stub_engine_asset" >"$_out"
+    if [ "$_out" = - ]; then
+        emit_engine_asset
+        if [ -f "$S5_TEST_ROOT/stub_asset_oversized_unknown" ]; then exit 23; fi
     else
-        cp "$S5_TEST_ROOT/stub_engine_asset" "$_out"
+        emit_engine_asset >"$_out"
     fi
     exit 0
     ;;

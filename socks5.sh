@@ -3787,12 +3787,24 @@ S5_ROLLBACK_ARMED=0
 S5_RECONFIG_ARMED=0
 S5_INSTALL_COMPLETE=0
 S5_WORKDIR=''
+S5_FETCH_READER_PID=''
 S5_INSTALL_TMP=''
 S5_IN_CLEANUP=0
 S5_LOCK_HELD=0
 S5_LOCK_TOKEN=''
 
-# s5_cleanup : idempotent. Removes a build tree, restores an interrupted
+# s5_fetch_reader_stop : terminate and reap the private bounded-download reader.
+s5_fetch_reader_stop() {
+    if [ -z "$S5_FETCH_READER_PID" ]; then
+        return 0
+    fi
+    kill "$S5_FETCH_READER_PID" 2>/dev/null || true
+    wait "$S5_FETCH_READER_PID" 2>/dev/null || true
+    S5_FETCH_READER_PID=''
+    return 0
+}
+
+# s5_cleanup : idempotent. Removes a download tree, restores an interrupted
 # reconfiguration, rolls back an incomplete install, then releases the lock.
 s5_cleanup() {
     if [ "$S5_IN_CLEANUP" = "1" ]; then
@@ -3800,6 +3812,8 @@ s5_cleanup() {
     fi
     S5_IN_CLEANUP=1
     _clbad=0
+
+    s5_fetch_reader_stop
 
     if [ -n "$S5_WORKDIR" ]; then
         if s5_rm_workdir "$S5_WORKDIR"; then
@@ -4089,8 +4103,9 @@ s5_runtime_deps() {
 # missing utility is named by this gate instead of surfacing as an obscure error
 # mid-install (chown while applying credential-file ownership, uname on the very
 # next line of s5_precheck, tail in the destination-deny ordering check, rmdir
-# during uninstall, cp for transactional backups, and wc for response bounds).
-S5_BASE_COMMANDS='sed awk grep tr head tail cut id chown chmod mkdir rmdir rm mv cp cat printf stat mktemp dirname uname wc sha256sum'
+# during uninstall, cp for transactional backups, wc for response bounds, and
+# mkfifo for the bounded engine-download stream).
+S5_BASE_COMMANDS='sed awk grep tr head tail cut id chown chmod mkdir rmdir rm mv cp cat printf stat mktemp mkfifo dirname uname wc sha256sum'
 
 s5_require_commands() {
     _miss=''
@@ -5542,12 +5557,43 @@ s5_fetch_verified_engine() {
     fi
     S5_WORKDIR=$_bwd
     _asset_path="$_bwd/$S5_ASSET_NAME"
+    _asset_fifo="$_bwd/asset.pipe"
+    _asset_limit=$((S5_ASSET_SIZE + 1))
+
+    if ! mkfifo "$_asset_fifo"; then
+        s5_err_msg asset.download_failed "$S5_ASSET_NAME"
+        s5_release_workdir
+        return 1
+    fi
+    head -c "$_asset_limit" <"$_asset_fifo" >"$_asset_path" &
+    S5_FETCH_READER_PID=$!
 
     s5_log_msg asset.fetching "$S5_ASSET_NAME" "$S5_ENGINE_RELEASE"
-    if ! curl -q --fail --silent --show-error --location \
+    _asset_curl_rc=0
+    curl -q --fail --silent --show-error --location \
         --proto '=https' --proto-redir '=https' \
         --connect-timeout 10 --max-time 120 --max-filesize "$S5_ASSET_SIZE" \
-        --output "$_asset_path" "$S5_ASSET_URL" </dev/null; then
+        --output - "$S5_ASSET_URL" </dev/null >"$_asset_fifo" || _asset_curl_rc=$?
+    _asset_reader_rc=0
+    wait "$S5_FETCH_READER_PID" || _asset_reader_rc=$?
+    S5_FETCH_READER_PID=''
+    rm -f "$_asset_fifo" || true
+
+    _asset_size=''
+    if [ -f "$_asset_path" ] && [ ! -L "$_asset_path" ]; then
+        _asset_size=$(wc -c <"$_asset_path" 2>/dev/null | tr -d '[:space:]')
+    fi
+    case "$_asset_size" in
+    '' | *[!0-9]*) ;;
+    *)
+        if [ "$_asset_size" -gt "$S5_ASSET_SIZE" ]; then
+            s5_err_msg asset.size_mismatch "$S5_ASSET_SIZE" "$_asset_size"
+            s5_release_workdir
+            return 1
+        fi
+        ;;
+    esac
+    if [ "$_asset_curl_rc" -ne 0 ] || [ "$_asset_reader_rc" -ne 0 ]; then
         s5_err_msg asset.download_failed "$S5_ASSET_NAME"
         s5_release_workdir
         return 1
@@ -5557,7 +5603,6 @@ s5_fetch_verified_engine() {
         s5_release_workdir
         return 1
     fi
-    _asset_size=$(wc -c <"$_asset_path" 2>/dev/null | tr -d '[:space:]')
     if [ "$_asset_size" != "$S5_ASSET_SIZE" ]; then
         s5_err_msg asset.size_mismatch "$S5_ASSET_SIZE" "${_asset_size:-unknown}"
         s5_release_workdir

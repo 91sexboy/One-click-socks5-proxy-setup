@@ -110,20 +110,20 @@ an existing installation, visible single-entry custom passwords, strict public-I
 connection cards, and additional safety checks. Its exact candidate bytes have this SHA-256:
 
 ```text
-a9fe345f9bff4d801b3f962b4fa5c02edb9ccf8c1225553ab4e75f2aa26ccde1  socks5.sh
+081fa3f37654c43c89e416c31843171e3aff6b53b70be77f734597f20c337478  socks5.sh
 ```
 
 Download and verify the tagged artifact after `v1.1.0` is published:
 
 ```sh
 wget -qO socks5.sh https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-setup/v1.1.0/socks5.sh
-printf '%s  %s\n' 'a9fe345f9bff4d801b3f962b4fa5c02edb9ccf8c1225553ab4e75f2aa26ccde1' socks5.sh | sha256sum -c -
+printf '%s  %s\n' '081fa3f37654c43c89e416c31843171e3aff6b53b70be77f734597f20c337478' socks5.sh | sha256sum -c -
 sudo sh socks5.sh
 ```
 
-Tag `v1.1.0` will be created only after its own complete CI run succeeds, and is never moved.
-A tag's existence is therefore the final proof that its implementation, verification and reachable
-release tree all passed.
+The release chain is deliberately explicit: the implementation commit must pass 45/45;
+the evidence-only commit must then pass 45/45 after recording that full SHA and run;
+the exact closure commit must pass 45/45 on `main`. Only then is the immutable `v1.1.0` tag created at that exact closure commit, and it is never moved.
 
 ## The interactive flow
 
@@ -136,6 +136,11 @@ order; the first picks the language the other four are printed in:
 2. **Confirmation** — the detected system, the exact list of packages it will
    install, and the security warning, then a single `[Y/n]` question. This is
    the only yes/no question in the flow.
+
+Only after that confirmation, the displayed missing runtime prerequisites are installed.
+That step finishes before the following value prompts; it is not a sixth question.
+No port, username, or password is collected before that step finishes.
+
 3. **Port** — press Enter for a random port in 20000–60000, or supply one in
    1024–65535. An occupied port is rejected.
 4. **Username** — press Enter for a random one. `A-Z a-z 0-9 _ -`, 3–32 chars.
@@ -296,10 +301,15 @@ uses `--no-cache`. These runtime packages are intentionally left in place:
 `uninstall` never removes system packages because it cannot know what else on
 the server depends on them.
 
-The low-memory lifecycle gate runs clean Debian 12, Alpine 3.20 and CentOS
-Stream 9 targets with a **128 MiB memory limit and no swap**. That limit covers
-the target-side install, service start, authentication checks, in-place update
-and uninstall; CI compilation happens separately and is not charged to the VPS.
+Ubuntu, Debian and Alpine lifecycle targets start without `curl` and prove that the
+installer adds it when genuinely missing. CentOS Stream starts with `curl-minimal` and reuses it;
+CI verifies that stock package rather than manufacturing an unrepresentative curl-free image.
+
+The low-memory lifecycle gates enforce **128 MiB with no swap**. Containerized systemd uses a
+shared systemd slice containing both the operation runner and the proxy service, verifies their
+cgroup ancestry and zero OOM kills, and reads the aggregate slice peak. The OpenRC target runs inside one 128 MiB, no-swap container cgroup and reads that target-container peak. These limits
+cover target-side install, service start, authentication checks, in-place update and uninstall;
+CI compilation happens separately and is not charged to the VPS.
 
 ## Updates are your responsibility
 
@@ -446,16 +456,14 @@ at commit `df6885c`, **45 of 45 jobs passed**:
 > [`33281724740`](https://github.com/91sexboy/One-click-socks5-proxy-setup/actions/runs/33281724740),
 > also 45/45. Closure commit `91fd13a` then passed run
 > [`33282068288`](https://github.com/91sexboy/One-click-socks5-proxy-setup/actions/runs/33282068288),
-> also 45/45, and tag `v1.0.0` was created there. The `v1.1.0` candidate must
-> earn its own final reachable-main 45/45 run before release. Runs `33245460710` / `33246222640` remain
+> also 45/45, and tag `v1.0.0` was created there. Runs `33245460710` / `33246222640` remain
 > historical evidence for the previous bilingual state.
 
-The published v1.0.0 evidence covers the earlier source-build lifecycle for
-every supported OS family. Run `33308776407` proves the transactional update
-work on that source-build implementation. The release-asset implementation
-must earn a new complete CI run; the older runs remain historical evidence and
-are not presented as low-memory proof. Every OS version/architecture named in
-the CI matrix still receives real asset compatibility and protocol coverage.
+Run [`33324226518`](https://github.com/91sexboy/One-click-socks5-proxy-setup/actions/runs/33324226518)
+at commit `bb338a4e2716d42e4394f4cc465f8e8ebe7db8f7` passed 45/45 on `develop`, but it predates
+the streaming byte cap and shared-slice membership checks. It is preliminary evidence and does not
+prove the repaired release gates or authorize `v1.1.0`; in short, it does not prove the repaired release gates. The new implementation, evidence-only and
+exact reachable-main closure checkpoints remain pending.
 Versions newer than the listed matrix are accepted by the documented
 minimum-version rule, but that does not claim CI has verified a future release.
 What each CI job actually proves is deliberately distinct:

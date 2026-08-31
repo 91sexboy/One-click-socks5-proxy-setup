@@ -81,6 +81,26 @@ assert_eq "cleanup succeeds" 0 "$rc"
 assert_file_absent "the build directory was removed" "$wd"
 assert_eq "cleanup cleared the workdir variable" "" "$S5_WORKDIR"
 
+# Cleanup must stop a bounded-download reader before unlinking its FIFO. Merely
+# removing the pathname leaves a child blocked forever in open(2).
+wd_reader=$(mktemp -d "$S5_TEST_ROOT/build/b.XXXXXX")
+mkfifo "$wd_reader/asset.pipe"
+head -c 1 <"$wd_reader/asset.pipe" >"$wd_reader/asset" &
+reader_pid=$!
+S5_WORKDIR=$wd_reader
+S5_FETCH_READER_PID=$reader_pid
+S5_IN_CLEANUP=0
+s5_cleanup >/dev/null 2>&1
+reader_alive=0
+if kill -0 "$reader_pid" 2>/dev/null; then
+    reader_alive=1
+    kill "$reader_pid" 2>/dev/null || true
+fi
+wait "$reader_pid" 2>/dev/null || true
+assert_eq "cleanup terminates the blocked download reader" 0 "$reader_alive"
+assert_eq "cleanup clears download reader ownership" "" "$S5_FETCH_READER_PID"
+assert_file_absent "cleanup removes the FIFO workdir" "$wd_reader"
+
 # A failed recursive removal must remain observable: clearing S5_WORKDIR would
 # falsely report cleanup while abandoning a source tree that may hold build
 # output or copied source. The function shadow fails only this workdir removal.

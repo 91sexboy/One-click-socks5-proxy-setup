@@ -11,6 +11,10 @@ rc-status -a >/dev/null 2>&1
 command -v logger >/dev/null
 if [ ! -S /dev/log ] && command -v syslogd >/dev/null 2>&1; then syslogd; fi
 logger -t socks5-manager-ci -p daemon.info "openrc logger probe"
+if command -v curl >/dev/null 2>&1; then
+    printf 'target unexpectedly contains curl before install\n' >&2
+    exit 1
+fi
 
 umask 077
 SECRETS=$(mktemp -d)
@@ -48,11 +52,24 @@ fi
 test ! -e /var/lib/socks5-manager/reconfigure-transaction
 test ! -e /run/socks5-manager.lock
 sh tests/protocol/post_install_audit.sh openrc "$SECRETS" /root
+printf '2\n' | sh socks5.sh status
+printf 'S5_STAGE=status\n'
 rc-service socks5-manager status
+printf 'S5_STAGE=active-before-restart\n'
+sh .github/scripts/check-listen-port.sh "$NEW_PORT" present
+sh .github/scripts/check-listen-port.sh 41080 absent
+printf 'S5_STAGE=listening-before-restart\n'
 printf '2\n' | sh socks5.sh restart
+printf 'S5_STAGE=restart\n'
+rc-service socks5-manager status
+printf 'S5_STAGE=active-after-restart\n'
+sh .github/scripts/check-listen-port.sh "$NEW_PORT" present
+printf 'S5_STAGE=listening-after-restart\n'
 PORT=$NEW_PORT PROXY_USER=$NEW_USER PASSFILE="$SECRETS/pass2" \
     sh tests/protocol/run_protocol.sh
+printf 'S5_STAGE=protocol\n'
 printf '2\ny\n' | sh socks5.sh uninstall
+printf 'S5_STAGE=uninstall\n'
 
 test ! -e /etc/socks5-manager
 test ! -e /var/lib/socks5-manager

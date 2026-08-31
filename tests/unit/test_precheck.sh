@@ -84,8 +84,9 @@ done
 #   tail   build diagnostics and the destination-deny ordering check
 #   rmdir  uninstall refuses to continue when it cannot remove a directory
 #   cp     creates byte-for-byte transaction backups
-#   wc     enforces the public-IP response size before parsing
-for base in chown uname tail rmdir cp wc; do
+#   wc     enforces response-size boundaries before parsing/installing
+#   mkfifo provides the bounded engine-download stream
+for base in chown uname tail rmdir cp wc mkfifo; do
     if printf '%s' "$S5_BASE_COMMANDS" | grep -qw "$base"; then
         t_ok
     else
