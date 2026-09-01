@@ -209,6 +209,15 @@ t_run s5_selftest_bad "$USER_OK" "$PASS_OK"
 assert_eq "legacy curl explicit SOCKS5 auth rejection is accepted" 0 "$T_STATUS"
 rm -f "$S5_TEST_ROOT/stub_curl_legacy_auth_reject"
 
+# Some old curl builds expose only status 7 for the proxy's CONNECT ruleset
+# rejection. Prove that verdict differentially: bad credentials fail, the known
+# good credentials succeed, and the same bad credentials fail again.
+s5env_reset_transcript
+: >"$S5_TEST_ROOT/stub_curl_legacy_differential"
+t_run s5_selftest_bad "$USER_OK" "$PASS_OK"
+assert_eq "legacy curl differential bad-good-bad proof is accepted" 0 "$T_STATUS"
+rm -f "$S5_TEST_ROOT/stub_curl_legacy_differential"
+
 # ...and a failure that is NOT a proxy handshake error proves nothing about
 # authentication, so it must be reported as inconclusive rather than as a pass.
 # Only curl 97 (CURLE_PROXY) shows the proxy itself rejected the credential; 7

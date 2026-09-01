@@ -91,6 +91,11 @@ if [ "${1:-}" = "--config" ] && [ "${2:-}" = "-" ]; then
     else
         want=''
     fi
+    if [ -f "$S5_TEST_ROOT/stub_curl_legacy_differential" ] &&
+        [ -n "$want" ] && [ "$got" != "$want" ]; then
+        printf 'curl: (7) legacy SOCKS5 ruleset rejection\n' >&2
+        exit 7
+    fi
     if [ -n "$want" ] && [ "$got" = "$want" ]; then
         exit 0
     fi

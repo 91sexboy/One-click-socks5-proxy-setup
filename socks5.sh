@@ -6665,9 +6665,10 @@ s5_selftest_good() {
 }
 
 # The configured username paired with a guaranteed-different password must be
-# refused BY THE PROXY. Current curl uses CURLE_PROXY (97); curl 7.68 uses
-# CURLE_COULDNT_CONNECT (7) but emits a protocol-specific libcurl rejection text.
-# Every other status/text combination remains inconclusive.
+# refused BY THE PROXY. Current curl uses CURLE_PROXY (97). For curl 7.68,
+# accept either its protocol-specific rejection text or a bad-good-bad
+# differential where only the password changes. Every other combination is
+# inconclusive.
 s5_selftest_bad() {
     _stu=$1
     case "$2" in
@@ -6676,13 +6677,26 @@ s5_selftest_bad() {
     esac
     _sterr=$(s5_curl_config "$_stu" "$_stp" | curl -q --config - 2>&1)
     _strc=$?
+    _stlegacy=0
+    if [ "$_strc" -eq "$S5_CURL_LEGACY_PROXY_ERR" ] &&
+        ! printf '%s\n' "$_sterr" | grep -Fq "$S5_CURL_LEGACY_AUTH_TEXT"; then
+        if s5_selftest_good "$_stu" "$2" >/dev/null 2>&1; then
+            _sterr2=$(s5_curl_config "$_stu" "$_stp" | curl -q --config - 2>&1)
+            _strc2=$?
+            if [ "$_strc2" -eq "$S5_CURL_LEGACY_PROXY_ERR" ]; then
+                _stlegacy=1
+            fi
+            _sterr2=''
+        fi
+    fi
     _stresult=0
     if [ "$_strc" -eq 0 ]; then
         s5_err_msg selftest.security_accepted
         _stresult=1
     elif [ "$_strc" -eq "$S5_CURL_PROXY_ERR" ] ||
         { [ "$_strc" -eq "$S5_CURL_LEGACY_PROXY_ERR" ] &&
-          printf '%s\n' "$_sterr" | grep -Fq "$S5_CURL_LEGACY_AUTH_TEXT"; }; then
+          { [ "$_stlegacy" -eq 1 ] ||
+            printf '%s\n' "$_sterr" | grep -Fq "$S5_CURL_LEGACY_AUTH_TEXT"; }; }; then
         _stresult=0
     else
         s5_err_msg selftest.inconclusive "$_strc" "$S5_CURL_PROXY_ERR"
