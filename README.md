@@ -74,7 +74,7 @@ on them.
 ### Alpine engine assets
 
 Alpine selects the versioned **musl** asset from release
-`engine-3proxy-0.9.9.0-r1`, built from pinned commit
+`engine-3proxy-0.9.9.0-r2`, built from pinned commit
 `da99424eac4092e3722f1a5b1844cfe80478f580`:
 
 | Architecture | Asset family | Embedded size | Embedded SHA-256 |
@@ -244,14 +244,19 @@ password. A confirmed `install` on a healthy existing installation updates the c
 
 | Requirement | Supported values |
 |---|---|
-| OS floor | Ubuntu 22.04+, Debian 12+, Alpine Linux 3.20+, CentOS Stream 9+ |
+| Ubuntu support | Ubuntu 20.04: `amd64` only; Ubuntu 22.04+: `amd64` / `arm64` |
+| Other OS floors | Debian 12+, Alpine Linux 3.20+, CentOS Stream 9+ |
 | Architecture | `x86_64` / `amd64`, `aarch64` / `arm64` |
 | Privileges | root |
 | Init | systemd; OpenRC on Alpine |
 
-A recognised version at or above the floor is accepted. Acceptance does not
-claim that every future release was tested. Current exact-version CI covers
-Ubuntu 22.04/24.04, Debian 12/13, Alpine 3.20/3.24, and CentOS Stream 9/10 for
+Ubuntu 20.04 is an exact amd64-only exception; Ubuntu 22.04 and newer retain
+both architectures. Ubuntu 20.04 is outside standard security maintenance, so
+compatibility support does not replace an operator's Ubuntu Pro/ESM or other
+patch-management policy. A recognised version at or above the other floors is accepted. Acceptance does not
+claim that every future release was tested. The expanded workflow includes Ubuntu 20.04 amd64 compatibility, protocol and
+real systemd lifecycle cells. Existing exact-version evidence covers Ubuntu
+22.04/24.04, Debian 12/13, Alpine 3.20/3.24, and CentOS Stream 9/10 for
 asset compatibility and protocol boundaries on both architectures. The real
 OpenRC lifecycle cells cover Alpine 3.20 and 3.24 on the amd64 runner; musl arm64
 is separately proved by compatibility and protocol cells. RHEL, Rocky Linux,
@@ -344,11 +349,13 @@ Alpine maps to the two musl labels. The four exact technical labels are
 `glibc amd64`, `glibc arm64`, `musl amd64`, and `musl arm64`. Asset names,
 exact sizes, and embedded SHA-256 values are fixed in `socks5.sh`. The installer
 verifies downloaded bytes before installation and hashes the installed file
-again. It has no target-side compile or fallback path.
+again. The r2 generic glibc amd64 binary is built on Ubuntu 20.04 and gated at
+`max_required_glibc=2.31` (the published binary currently requires at most
+`GLIBC_2.25`). It has no target-side compile or fallback path.
 
 | Family | Asset | Size | SHA-256 |
 |---|---|---:|---|
-| glibc amd64 | `3proxy-0.9.9.0-da99424-linux-glibc-amd64` | 263168 | `ce3c604d0133df0028b4e9cd93c326b36790db789c769b2a2c78b400b9967a80` |
+| glibc amd64 | `3proxy-0.9.9.0-da99424-linux-glibc-amd64` | 294552 | `9c2892b46121439f3c5a05fc19ec07fe68d2ce3498110cac29c165749efaafcf` |
 | glibc arm64 | `3proxy-0.9.9.0-da99424-linux-glibc-arm64` | 279288 | `344e482272e5c16d1f9c762d7ed240cda43bb050a53be767e5393a616607ccf5` |
 | musl amd64 | `3proxy-0.9.9.0-da99424-linux-musl-amd64` | 298280 | `ac3fe1a7d52d2b1494d4d00884fc7517acb2340454c2653c95a7346c05d69298` |
 | musl arm64 | `3proxy-0.9.9.0-da99424-linux-musl-arm64` | 277624 | `38f2733dfc5d375a4faaebe79f66bd181c7cc3e7b3eb9443c3ac4476fbfeebeb` |
@@ -401,42 +408,44 @@ acbfbfe3e6ba0f37f4e2a24ba8a6d68ec5a36513caae2e22e44a0ed28322e0b1
 Current candidate `socks5.sh` SHA-256:
 
 ```text
-be9c46ff675b0a64d87da01ecbf0c2d51fba925ffc95b0a96a5a03b89b091230  socks5.sh
+31e7337842dbb0db1d7c2f2908087fb7c68544d3e2ec782457d6c66be6fe0953  socks5.sh
 ```
 
-The implementation checkpoint is complete: commit
-`2003d7b47aa13d71b3e37294df0c32fb15577d23` passed all 45 jobs in
-[run `33460169077`](https://github.com/91sexboy/One-click-socks5-proxy-setup/actions/runs/33460169077).
-That run includes Alpine 3.20/3.24 asset compatibility and protocol cells,
-Alpine 3.24 ACL resolution, and real Alpine 3.20/3.24 OpenRC lifecycle cells.
+The previous bilingual checkpoint, commit
+`27ed6d97048f9d3aadd306461f82bb026146e83e`, passed the former 45-job workflow in
+[run `33473381427`](https://github.com/91sexboy/One-click-socks5-proxy-setup/actions/runs/33473381427).
+It predates the r2 consumer and Ubuntu 20.04 support and is historical evidence,
+not proof of the current candidate.
 
-This bilingual revision is the prospective evidence-only checkpoint. It must
-pass its own complete 45-job push CI before that checkpoint is earned. An
-implementation commit must pass 45/45; an evidence-only commit must then pass 45/45; the exact closure commit must pass 45/45 on `develop`. Only then is the versioned `v1.1.0` tag created under the project's never-move policy. `v1.1.0` is not published yet.
+This Ubuntu 20.04 implementation is the prospective implementation checkpoint.
+It must pass the expanded 48-job workflow before an evidence-only commit can
+record that result. The evidence-only commit and exact closure commit must each
+then pass all 48 jobs on `develop`. Only then is the versioned `v1.1.0` tag
+created under the project's never-move policy. `v1.1.0` is not published yet.
 
 After the tag exists, verify it with:
 
 ```sh
 wget -qO socks5.sh https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-setup/v1.1.0/socks5.sh
-printf '%s  %s\n' 'be9c46ff675b0a64d87da01ecbf0c2d51fba925ffc95b0a96a5a03b89b091230' socks5.sh | sha256sum -c -
+printf '%s  %s\n' '31e7337842dbb0db1d7c2f2908087fb7c68544d3e2ec782457d6c66be6fe0953' socks5.sh | sha256sum -c -
 sudo sh socks5.sh
 ```
 
 <!-- section: verification -->
 ## Verification and development
 
-The current workflow expands to 45 blocking jobs:
+The current workflow expands to 48 blocking jobs:
 
 | Job | Cells | Evidence |
 |---|---:|---|
 | `lint` | 1 | shellcheck, syntax and workflow guards |
 | `unit` | 2 | sh, dash and BusyBox sh on amd64/arm64 |
-| `build-matrix` | 16 | 8 OS versions × 2 architectures |
-| `protocol` | 16 | seven protocol cases against a real engine running the rendered config |
+| `build-matrix` | 17 | 16 existing OS/architecture tuples plus Ubuntu 20.04 amd64 |
+| `protocol` | 17 | seven protocol cases, including Ubuntu 20.04 amd64 |
 | `acl-resolution` | 3 | literal-IP and hostname destination denies |
 | `systemd-integration` | 2 | native Ubuntu lifecycle on amd64/arm64 |
 | `openrc-integration` | 2 | Alpine 3.20/3.24 lifecycle and OpenRC target-container cgroup |
-| `distro-systemd-integration` | 3 | Ubuntu 22.04, Debian 12, CentOS Stream 9 |
+| `distro-systemd-integration` | 4 | Ubuntu 20.04/22.04, Debian 12, CentOS Stream 9 |
 
 The systemd memory gate uses a shared systemd slice containing both the operation runner and proxy service. All jobs block release; none uses
 `continue-on-error`.

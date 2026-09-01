@@ -10,7 +10,7 @@ s5env_setup
 s5env_load
 
 assert_eq "engine release tag is pinned" \
-    engine-3proxy-0.9.9.0-r1 "$S5_ENGINE_RELEASE"
+    engine-3proxy-0.9.9.0-r2 "$S5_ENGINE_RELEASE"
 assert_eq "upstream version remains pinned" 0.9.9.0 "$S5_UPSTREAM_TAG"
 assert_eq "upstream commit remains pinned" \
     da99424eac4092e3722f1a5b1844cfe80478f580 "$S5_PINNED_COMMIT"
@@ -31,9 +31,9 @@ check_asset() {
 }
 
 check_asset debian amd64 3proxy-0.9.9.0-da99424-linux-glibc-amd64 \
-    ce3c604d0133df0028b4e9cd93c326b36790db789c769b2a2c78b400b9967a80 263168
+    9c2892b46121439f3c5a05fc19ec07fe68d2ce3498110cac29c165749efaafcf 294552
 check_asset el amd64 3proxy-0.9.9.0-da99424-linux-glibc-amd64 \
-    ce3c604d0133df0028b4e9cd93c326b36790db789c769b2a2c78b400b9967a80 263168
+    9c2892b46121439f3c5a05fc19ec07fe68d2ce3498110cac29c165749efaafcf 294552
 check_asset debian arm64 3proxy-0.9.9.0-da99424-linux-glibc-arm64 \
     344e482272e5c16d1f9c762d7ed240cda43bb050a53be767e5393a616607ccf5 279288
 check_asset alpine amd64 3proxy-0.9.9.0-da99424-linux-musl-amd64 \

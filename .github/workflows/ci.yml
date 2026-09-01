@@ -138,9 +138,8 @@ jobs:
       - run: S5_TEST_SHELL=dash sh tests/run.sh
       - run: S5_TEST_SHELL='busybox sh' sh tests/run.sh
 
-  # -------------------------------------------------- 16-cell build matrix
-  # 8 OS versions x 2 architectures. Every cell blocks the release, Alpine
-  # included: there is no experimental tier.
+  # -------------------------------------------------- 17-cell build matrix
+  # 8 shared OS versions x 2 architectures, plus Ubuntu 20.04 amd64 only.
   build-matrix:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
@@ -149,6 +148,7 @@ jobs:
       matrix:
         runner: [ubuntu-24.04, ubuntu-24.04-arm]
         image:
+          - "ubuntu:20.04"
           - "ubuntu:22.04"
           - "ubuntu:24.04"
           - "debian:12"
@@ -157,6 +157,9 @@ jobs:
           - "alpine:3.24"
           - "quay.io/centos/centos:stream9"
           - "quay.io/centos/centos:stream10"
+        exclude:
+          - runner: ubuntu-24.04-arm
+            image: "ubuntu:20.04"
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Verify release asset in ${{ matrix.image }} on ${{ matrix.runner }}
@@ -178,18 +181,21 @@ jobs:
             S5_TEST_MODE=1 S5_TEST_ROOT=$ROOT S5_LIB_ONLY=1 \
             S5_SKIP_OWNERSHIP=1 S5_ASSUME_ROOT=1 sh -c "
               . /src/socks5.sh
-              s5_detect_platform
               S5_ARCHNAME=\$(s5_map_arch \"\$(uname -m)\")
+              s5_detect_platform \"\$S5_ARCHNAME\"
               s5_select_engine_asset
               s5_fetch_verified_engine ephemeral
               test -f \"\$S5_BIN\" || { echo no binary >&2; exit 1; }
               test -x \"\$S5_BIN\" || { echo binary not executable >&2; exit 1; }
               file \"\$S5_BIN\" | grep -q ELF
-              ldd \"\$S5_BIN\"
+              LDD_OUT=\$(ldd \"\$S5_BIN\" 2>&1)
+              printf \"%s\\n\" \"\$LDD_OUT\"
+              ! printf \"%s\\n\" \"\$LDD_OUT\" | grep -q \"not found\"
             "
             command -v git >/dev/null 2>&1 && { echo "git was installed in compatibility cell" >&2; exit 1; }
             command -v make >/dev/null 2>&1 && { echo "make was installed in compatibility cell" >&2; exit 1; }
             command -v gcc >/dev/null 2>&1 && { echo "gcc was installed in compatibility cell" >&2; exit 1; }
+            command -v cc >/dev/null 2>&1 && { echo "cc was installed in compatibility cell" >&2; exit 1; }
             :
           '
 
@@ -212,6 +218,7 @@ jobs:
       matrix:
         runner: [ubuntu-24.04, ubuntu-24.04-arm]
         image:
+          - "ubuntu:20.04"
           - "ubuntu:22.04"
           - "ubuntu:24.04"
           - "debian:12"
@@ -220,6 +227,9 @@ jobs:
           - "alpine:3.24"
           - "quay.io/centos/centos:stream9"
           - "quay.io/centos/centos:stream10"
+        exclude:
+          - runner: ubuntu-24.04-arm
+            image: "ubuntu:20.04"
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Protocol acceptance in ${{ matrix.image }}
@@ -495,6 +505,9 @@ jobs:
           # the image build. systemd-resolved is not needed to boot systemd in
           # a container. Debian's systemd does not pull it, so that cell is
           # left untouched.
+          - image: "ubuntu:20.04"
+            setup: "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends systemd systemd-sysv ca-certificates"
+            locale_stream: en-explicit
           - image: "ubuntu:22.04"
             setup: "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends systemd systemd-sysv ca-certificates"
             locale_stream: zh-default

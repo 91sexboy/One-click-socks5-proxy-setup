@@ -306,10 +306,50 @@ account_uid	900
 account_gid	900
 status	complete"
 t_run s5_state_load
-assert_eq "matching release-asset state loads" 0 "$T_STATUS"
+assert_eq "r1 release state remains compatible after r2" 0 "$T_STATUS"
 s5_state_load >/dev/null 2>&1
 assert_eq "release state keeps its asset" \
     3proxy-0.9.9.0-da99424-linux-glibc-amd64 "$(s5_state_get asset)"
+
+# New r2 glibc-amd64 provenance loads with the new exact digest.
+rm -rf "$S5_STATEDIR"
+write_state "tag	0.9.9.0
+commit	da99424eac4092e3722f1a5b1844cfe80478f580
+origin	release-asset
+asset	3proxy-0.9.9.0-da99424-linux-glibc-amd64
+sha256	9c2892b46121439f3c5a05fc19ec07fe68d2ce3498110cac29c165749efaafcf
+port	31080
+username	gooduser
+family	debian
+init	systemd
+listen	0.0.0.0
+arch	amd64
+os	ubuntu-20.04
+account_uid	900
+account_gid	900
+status	complete"
+t_run s5_state_load
+assert_eq "r2 focal amd64 release state loads" 0 "$T_STATUS"
+
+# An unknown third digest for the known asset never becomes trusted provenance.
+rm -rf "$S5_STATEDIR"
+write_state "tag	0.9.9.0
+commit	da99424eac4092e3722f1a5b1844cfe80478f580
+origin	release-asset
+asset	3proxy-0.9.9.0-da99424-linux-glibc-amd64
+sha256	1111111111111111111111111111111111111111111111111111111111111111
+port	31080
+username	gooduser
+family	debian
+init	systemd
+listen	0.0.0.0
+arch	amd64
+os	ubuntu-22.04
+account_uid	900
+account_gid	900
+status	complete"
+t_run s5_state_load
+assert_ne "unknown glibc-amd64 digest is rejected" 0 "$T_STATUS"
 
 # ==========================================================================
 # A symlinked state file is refused.

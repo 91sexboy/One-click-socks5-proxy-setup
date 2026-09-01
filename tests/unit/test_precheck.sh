@@ -50,6 +50,13 @@ for fn in s5_require_commands s5_detect_platform s5_map_arch s5_is_root s5_pkgmg
         t_bad "s5_precheck does not call $fn"
     fi
 done
+mapline=$(printf '%s\n' "$precheck_body" | grep -n 's5_map_arch' | head -n 1 | cut -d: -f1)
+detectline=$(printf '%s\n' "$precheck_body" | grep -n 's5_detect_platform "\$S5_ARCHNAME"' | head -n 1 | cut -d: -f1)
+if [ -n "$mapline" ] && [ -n "$detectline" ] && [ "$mapline" -lt "$detectline" ]; then
+    t_ok
+else
+    t_bad "s5_precheck must normalize architecture before tuple authorization"
+fi
 # ...and s5_precheck itself is called before acquiring the mutation lock. The
 # locked implementation owns all prompts and writes.
 install_body=$(sed -n '/^s5_cmd_install() {/,/^}/p' "${S5_SRC}")
@@ -168,6 +175,19 @@ S5_OSRELEASE="${S5_REPO_ROOT}/tests/fixtures/os-release/debian-11"
 t_run s5_cmd_install <"$S5_TEST_ROOT/answers"
 assert_contains "Debian 11 error names the version" "11" "$T_OUT"
 assert_aborts_before_prompting "debian-11 (too old)"
+
+reset_machine
+S5_OSRELEASE="${S5_REPO_ROOT}/tests/fixtures/os-release/ubuntu-20.04"
+focal_arm_install() (
+    uname() {
+        case "${1:-}" in -m) printf 'aarch64\n' ;; *) command uname "$@" ;; esac
+    }
+    s5_cmd_install <"$S5_TEST_ROOT/answers"
+)
+t_run focal_arm_install
+assert_contains "focal arm64 rejection names the version" "20.04" "$T_OUT"
+assert_contains "focal arm64 rejection names the architecture" "arm64" "$T_OUT"
+assert_aborts_before_prompting "ubuntu-20.04 arm64"
 
 # ==========================================================================
 # Non-root stops before any prompt.

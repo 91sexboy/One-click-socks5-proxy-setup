@@ -65,7 +65,7 @@ apk add --no-cache bash wget && bash -c 'bash <(wget -qO- https://raw.githubuser
 
 ### Alpine engine 资产
 
-Alpine 从版本化 release `engine-3proxy-0.9.9.0-r1` 中选择 **musl** 资产；
+Alpine 从版本化 release `engine-3proxy-0.9.9.0-r2` 中选择 **musl** 资产；
 它们来自固定 commit `da99424eac4092e3722f1a5b1844cfe80478f580`：
 
 | 架构 | 资产族 | 内嵌大小 | 内嵌 SHA-256 |
@@ -219,13 +219,18 @@ sudo sh socks5.sh uninstall
 
 | 要求 | 支持值 |
 |---|---|
-| OS 最低版本 | Ubuntu 22.04+, Debian 12+, Alpine Linux 3.20+, CentOS Stream 9+ |
+| Ubuntu 支持 | Ubuntu 20.04：仅 `amd64`；Ubuntu 22.04+：`amd64` / `arm64` |
+| 其他 OS 最低版本 | Debian 12+, Alpine Linux 3.20+, CentOS Stream 9+ |
 | 架构 | `x86_64` / `amd64`, `aarch64` / `arm64` |
 | 权限 | root |
 | Init | systemd；Alpine 使用 OpenRC |
 
-识别到的版本达到最低门槛就会接受，但不代表每个未来版本都经过测试。当前精确版本 CI
-在两个架构上覆盖 Ubuntu 22.04/24.04、Debian 12/13、Alpine 3.20/3.24、CentOS
+Ubuntu 20.04 是精确的 amd64-only 例外；Ubuntu 22.04 及更新版本继续支持两种架构。
+Ubuntu 20.04 已结束标准安全维护，因此兼容支持不能替代 operator 的 Ubuntu Pro/ESM
+或其他补丁管理策略。其他 OS 达到最低门槛就会接受，但不代表每个未来版本都经过测试。
+扩展后的 workflow 包含 Ubuntu 20.04 amd64 compatibility、protocol 与真实 systemd
+lifecycle cells。现有精确版本证据在两个架构上覆盖 Ubuntu 22.04/24.04、Debian 12/13、
+Alpine 3.20/3.24、CentOS
 Stream 9/10 的资产兼容和协议边界。真实 OpenRC lifecycle cells 在 amd64 runner 上
 覆盖 Alpine 3.20/3.24；musl arm64 由 compatibility/protocol cells 分别验证。
 RHEL、Rocky Linux、AlmaLinux 会被报告为可能兼容，但不会安装。不支持的 ID、
@@ -305,11 +310,13 @@ IP 与 hostname 路径。
 
 主机映射为：Ubuntu、Debian、CentOS Stream 使用两种 glibc 标签；Alpine 使用两种
 musl 标签。四个精确技术标签是 `glibc amd64`、`glibc arm64`、`musl amd64` 和
-`musl arm64`。资产名、精确大小和 embedded SHA-256 固定在 `socks5.sh` 中。安装器在安装前验证下载字节，安装后再次计算 hash，没有 target-side compile 或 fallback。
+`musl arm64`。资产名、精确大小和 embedded SHA-256 固定在 `socks5.sh` 中。安装器在安装前验证下载字节，安装后再次计算 hash。r2 通用
+glibc amd64 binary 在 Ubuntu 20.04 上构建，并由 `max_required_glibc=2.31` gate 限制
+（已发布 binary 当前最高只需要 `GLIBC_2.25`），没有 target-side compile 或 fallback。
 
 | 资产族 | 资产 | 大小 | SHA-256 |
 |---|---|---:|---|
-| glibc amd64 | `3proxy-0.9.9.0-da99424-linux-glibc-amd64` | 263168 | `ce3c604d0133df0028b4e9cd93c326b36790db789c769b2a2c78b400b9967a80` |
+| glibc amd64 | `3proxy-0.9.9.0-da99424-linux-glibc-amd64` | 294552 | `9c2892b46121439f3c5a05fc19ec07fe68d2ce3498110cac29c165749efaafcf` |
 | glibc arm64 | `3proxy-0.9.9.0-da99424-linux-glibc-arm64` | 279288 | `344e482272e5c16d1f9c762d7ed240cda43bb050a53be767e5393a616607ccf5` |
 | musl amd64 | `3proxy-0.9.9.0-da99424-linux-musl-amd64` | 298280 | `ac3fe1a7d52d2b1494d4d00884fc7517acb2340454c2653c95a7346c05d69298` |
 | musl arm64 | `3proxy-0.9.9.0-da99424-linux-musl-arm64` | 277624 | `38f2733dfc5d375a4faaebe79f66bd181c7cc3e7b3eb9443c3ac4476fbfeebeb` |
@@ -357,43 +364,43 @@ acbfbfe3e6ba0f37f4e2a24ba8a6d68ec5a36513caae2e22e44a0ed28322e0b1
 当前候选 `socks5.sh` SHA-256：
 
 ```text
-be9c46ff675b0a64d87da01ecbf0c2d51fba925ffc95b0a96a5a03b89b091230  socks5.sh
+31e7337842dbb0db1d7c2f2908087fb7c68544d3e2ec782457d6c66be6fe0953  socks5.sh
 ```
 
-implementation checkpoint 已完成：commit
-`2003d7b47aa13d71b3e37294df0c32fb15577d23` 在
-[run `33460169077`](https://github.com/91sexboy/One-click-socks5-proxy-setup/actions/runs/33460169077)
-通过全部 45 个 jobs。该 run 包含 Alpine 3.20/3.24 asset compatibility 和 protocol
-cells、Alpine 3.24 ACL resolution，以及真实 Alpine 3.20/3.24 OpenRC lifecycle cells。
+上一份双语 checkpoint commit
+`27ed6d97048f9d3aadd306461f82bb026146e83e` 在
+[run `33473381427`](https://github.com/91sexboy/One-click-socks5-proxy-setup/actions/runs/33473381427)
+通过了旧的 45-job workflow。它早于 r2 consumer 与 Ubuntu 20.04 支持，只是历史证据，
+不能证明当前候选。
 
-本次双语 revision 是预期的 evidence-only checkpoint。它必须先通过自身完整 45-job
-push CI 才能获得该资格。实现 commit 已通过 45/45；evidence-only commit 随后也必须
-通过 45/45；最后 exact closure commit 必须在 `develop` 上通过 45/45。只有这样才能
-创建版本化 `v1.1.0` tag，并遵守项目 never-move 政策。`v1.1.0` 尚未发布。
+本次 Ubuntu 20.04 implementation 是预期的 implementation checkpoint，必须先通过扩展后
+的 48-job workflow。之后 evidence-only commit 和 exact closure commit 还必须各自在
+`develop` 上通过全部 48 jobs。只有这样才能按项目 never-move 政策创建版本化
+`v1.1.0` tag。`v1.1.0` 尚未发布。
 
 Tag 存在后，使用以下方式验证：
 
 ```sh
 wget -qO socks5.sh https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-setup/v1.1.0/socks5.sh
-printf '%s  %s\n' 'be9c46ff675b0a64d87da01ecbf0c2d51fba925ffc95b0a96a5a03b89b091230' socks5.sh | sha256sum -c -
+printf '%s  %s\n' '31e7337842dbb0db1d7c2f2908087fb7c68544d3e2ec782457d6c66be6fe0953' socks5.sh | sha256sum -c -
 sudo sh socks5.sh
 ```
 
 <!-- section: verification -->
 ## 验证与开发
 
-当前 workflow 展开为 45 个 blocking jobs：
+当前 workflow 展开为 48 个 blocking jobs：
 
 | Job | Cells | 证据 |
 |---|---:|---|
 | `lint` | 1 | shellcheck、syntax 与 workflow guards |
 | `unit` | 2 | amd64/arm64 上的 sh、dash、BusyBox sh |
-| `build-matrix` | 16 | 8 个 OS 版本 × 2 个架构 |
-| `protocol` | 16 | 对真实 engine 和 production config 运行七种协议用例 |
+| `build-matrix` | 17 | 现有 16 个 OS/架构 tuple，加 Ubuntu 20.04 amd64 |
+| `protocol` | 17 | 七种协议用例，包括 Ubuntu 20.04 amd64 |
 | `acl-resolution` | 3 | literal-IP 与 hostname 目标拒绝 |
 | `systemd-integration` | 2 | amd64/arm64 原生 Ubuntu lifecycle |
 | `openrc-integration` | 2 | Alpine 3.20/3.24 lifecycle 和 OpenRC target-container cgroup |
-| `distro-systemd-integration` | 3 | Ubuntu 22.04、Debian 12、CentOS Stream 9 |
+| `distro-systemd-integration` | 4 | Ubuntu 20.04/22.04、Debian 12、CentOS Stream 9 |
 
 systemd memory gate 使用同时包含 operation runner 与 proxy service 的 shared systemd
 slice。所有 job 都阻断发布，没有 `continue-on-error`。

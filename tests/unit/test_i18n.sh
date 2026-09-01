@@ -592,8 +592,9 @@ assert_eq "the full-install stream starts at the confirmation" y \
 # unknown keys and these assertions are RED by construction.
 # ---------------------------------------------------------------------------
 S5_LANG=zh
-t_run s5_say_msg detect.unsupported 'funny-os' '9'
+t_run s5_say_msg detect.unsupported 'funny-os' '9' 'amd64'
 assert_contains "zh: unsupported OS names the OS" 'funny-os' "$T_OUT"
+assert_contains "zh: support list names focal amd64 only" 'Ubuntu 20.04（仅 amd64）' "$T_OUT"
 assert_not_contains "zh: unsupported OS is not English prose" \
     'is not supported' "$T_OUT"
 
@@ -606,8 +607,9 @@ assert_not_contains "zh: security warning is not English" 'CLEARTEXT' "$T_OUT"
 assert_contains "zh: security warning keeps the protocol token" 'SOCKS5' "$T_OUT"
 
 S5_LANG=en
-t_run s5_say_msg detect.unsupported 'funny-os' '9'
+t_run s5_say_msg detect.unsupported 'funny-os' '9' 'amd64'
 assert_contains "en: unsupported OS names the OS" 'funny-os' "$T_OUT"
+assert_contains "en: support list names focal amd64 only" 'Ubuntu 20.04 (amd64 only)' "$T_OUT"
 assert_contains "en: unsupported OS is English prose" 'unsupported' "$T_OUT"
 
 # ---------------------------------------------------------------------------

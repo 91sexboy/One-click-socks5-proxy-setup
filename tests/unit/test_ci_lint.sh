@@ -593,27 +593,42 @@ assert_contains "systemd checks transaction cleanup" 'reconfigure-transaction' "
 # BF-08: precise workflow-shape and application guards.
 # =========================================================================
 
-# The workflow expands to EXACTLY 45 jobs. A matrix shrink must fail here,
+# The workflow expands to EXACTLY 48 jobs. A matrix shrink must fail here,
 # not in a CI run.
 _jobs_count=$(awk '/^jobs:/{f=1;next} f && /^  [a-z][a-z0-9-]*:$/{n++} END{print n+0}' "$CI")
 _timeouts=$(grep -c '^[[:space:]]*timeout-minutes:' "$CI")
-assert_eq "eight job definitions (expanding to 45)" 8 "$_jobs_count"
+assert_eq "eight job definitions (expanding to 48)" 8 "$_jobs_count"
 assert_eq "every definition carries a timeout" "$_jobs_count" "$_timeouts"
 
-# The expansion is 1 lint + 2 unit + 16 build + 16 protocol + 3 acl + 2 systemd
-# + 2 openrc + 3 distro. The structure test must compute this from the
-# definitions themselves.
-_build_imgs=$(awk '/^  build-matrix:/{f=1} f && /^  protocol:/{exit} f && /- "/{c++} END{print c+0}' "$CI")
-_proto_imgs=$(awk '/^  protocol:/{f=1} f && /^  acl-resolution:/{exit} f && /- "/{c++} END{print c+0}' "$CI")
-assert_eq "build matrix has 8 images x 2 runners = 16 cells" 8 "$_build_imgs"
-assert_eq "protocol matrix has 8 images x 2 runners = 16 cells" 8 "$_proto_imgs"
+# The expansion is 1 lint + 2 unit + 17 build + 17 protocol + 3 acl + 2 systemd
+# + 2 openrc + 4 distro. Each product matrix has 9 images x 2 runners minus the
+# explicitly unsupported Ubuntu 20.04 arm64 tuple.
+_build_imgs=$(awk '/^  build-matrix:/{f=1} f && /^  protocol:/{exit} f && /^          - "/{c++} END{print c+0}' "$CI")
+_proto_imgs=$(awk '/^  protocol:/{f=1} f && /^  acl-resolution:/{exit} f && /^          - "/{c++} END{print c+0}' "$CI")
+_build_excludes=$(awk '/^  build-matrix:/{f=1} f && /^  protocol:/{exit} f && /^          - runner: ubuntu-24.04-arm/{c++} END{print c+0}' "$CI")
+_proto_excludes=$(awk '/^  protocol:/{f=1} f && /^  acl-resolution:/{exit} f && /^          - runner: ubuntu-24.04-arm/{c++} END{print c+0}' "$CI")
+assert_eq "build matrix declares 9 images" 9 "$_build_imgs"
+assert_eq "protocol matrix declares 9 images" 9 "$_proto_imgs"
+assert_eq "build matrix excludes focal arm64 once" 1 "$_build_excludes"
+assert_eq "protocol matrix excludes focal arm64 once" 1 "$_proto_excludes"
+_build_cells=$((_build_imgs * 2 - _build_excludes))
+_proto_cells=$((_proto_imgs * 2 - _proto_excludes))
+assert_eq "build matrix has 17 supported cells" 17 "$_build_cells"
+assert_eq "protocol matrix has 17 supported cells" 17 "$_proto_cells"
+_distro_cells=$(awk '/^  distro-systemd-integration:/{f=1} f && /^    steps:/{exit} f && /^          - image:/{c++} END{print c+0}' "$CI")
+assert_eq "distro systemd has four lifecycle cells" 4 "$_distro_cells"
 build_job=$(awk '/^  build-matrix:/{f=1} f && /^  protocol:/{exit} f' "$CI")
 assert_contains "compatibility cells use ephemeral binary placement" \
     's5_fetch_verified_engine ephemeral' "$build_job"
 assert_not_contains "compatibility cells never require product state" \
     's5_fetch_verified_engine managed' "$build_job"
-_expanded=$((1 + 2 + _build_imgs*2 + _proto_imgs*2 + 3 + 2 + 2 + 3))
-assert_eq "workflow expands to exactly 45 jobs" 45 "$_expanded"
+assert_contains "compatibility matrix includes focal" 'image: "ubuntu:20.04"' "$build_job"
+assert_contains "compatibility cell rejects missing shared libraries" 'grep -q \"not found\"' "$build_job"
+assert_contains "compatibility cell checks cc absence" 'command -v cc' "$build_job"
+distro_job=$(awk '/^  distro-systemd-integration:/{f=1} f' "$CI")
+assert_contains "focal has a real systemd lifecycle cell" 'image: "ubuntu:20.04"' "$distro_job"
+_expanded=$((1 + 2 + _build_cells + _proto_cells + 3 + 2 + 2 + _distro_cells))
+assert_eq "workflow expands to exactly 48 jobs" 48 "$_expanded"
 
 # The redaction is APPLIED in every lifecycle job that can emit a generated
 # password on failure.

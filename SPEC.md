@@ -5,11 +5,10 @@
 > evidence-only `a8ed8255fba6c9bf9b8247582d6b77ebf65d8374` / run `33281724740`, and
 > closure `91fd13a` / run `33282068288`, all 45/45 before versioned `v1.0.0` was created
 > under the project's never-move release policy.
-> For v1.1, implementation commit `2003d7b47aa13d71b3e37294df0c32fb15577d23` passed
-> all 45 jobs in run `33460169077`. The bilingual documentation revision is the prospective
-> evidence-only checkpoint and must pass its own complete push CI; the exact closure commit must then
-> pass 45/45 on `develop`. Only after both later checkpoints may versioned `v1.1.0` be created under
-> the project's never-move release policy.
+> For v1.1, bilingual checkpoint `27ed6d9` / run `33473381427` passed the former 45-job workflow;
+> r2 engine prerelease is published, and the focal consumer implementation is the new prospective
+> implementation checkpoint. It, a later evidence-only commit, and exact closure must each pass the
+> expanded 48-job workflow before versioned `v1.1.0` may be created under the never-move policy.
 > Protocol, authentication, ACL and firewall boundaries remain unchanged.
 
 ## 1. Objective
@@ -34,7 +33,7 @@ only — it never offers or documents a SOCKS4-family service.
 ## 2. Tech stack (verified 2026-08-23)
 - 3proxy tag `0.9.9.0`, pinned commit `da99424eac4092e3722f1a5b1844cfe80478f580` — confirmed via the
   GitHub API to be that tag, dated 2026-08-22. Source: `https://github.com/3proxy/3proxy` over HTTPS.
-- Engine assets: release `engine-3proxy-0.9.9.0-r1`, built once by this project's CI as four dynamic
+- Engine assets: release `engine-3proxy-0.9.9.0-r2`, built once by this project's CI as four dynamic
   glibc/musl × amd64/arm64 binaries. Target hosts select one fixed asset and verify its embedded size
   and SHA-256 before and after atomic installation; they never compile or automatically fall back.
 - `auth strong` — man page at pinned ref: "username/password authentication required".
@@ -49,21 +48,21 @@ only — it never offers or documents a SOCKS4-family service.
 ## 3. Supported targets
 | OS | `/etc/os-release` | Pkg mgr | Init | Minimum version |
 |---|---|---|---|---|
-| Ubuntu | `ID=ubuntu` | apt | systemd | 22.04 or newer |
+| Ubuntu | `ID=ubuntu` | apt | systemd | 20.04 on amd64 only; 22.04 or newer on amd64/arm64 |
 | Debian | `ID=debian` | apt | systemd | 12 or newer |
 | Alpine | `ID=alpine` | apk | OpenRC | 3.20 or newer |
 | CentOS Stream | `ID=centos` | dnf, yum fallback | systemd | 9 or newer |
 
-**Version acceptance is a floor, not an enumeration.** A recognized `ID` at or above its minimum
-version installs. The CI matrix proves Ubuntu 22.04/24.04, Debian 12/13, Alpine 3.20/3.24 and
-CentOS Stream 9/10 on both architectures; a release **newer** than those installs on the same code
-path with **no CI evidence behind it**. That is deliberate — refusing every future distro release
-until a new version ships would turn each release into an outage for new users, which is the worse
-failure — but it is untested surface, and the user-facing message advertises the floor form
-("Ubuntu 22.04+, Debian 12+, Alpine 3.20+, CentOS Stream 9+") so nobody is told a newer release was
-verified. Below the floor → hard error.
-
-Arch: `x86_64`/`amd64` and `aarch64`/`arm64` only. Anything else → hard error, never guess.
+**Version acceptance is normally a floor, with one exact architecture-specific exception:** Ubuntu
+20.04 is accepted only on amd64; Ubuntu 22.04+ accepts amd64/arm64. Debian, Alpine and CentOS Stream
+retain their listed floors. The expanded CI matrix includes Ubuntu 20.04 amd64 compatibility,
+protocol and real systemd lifecycle cells, while prior evidence covers Ubuntu 22.04/24.04, Debian
+12/13, Alpine 3.20/3.24 and CentOS Stream 9/10 on both architectures where promised. A release newer
+than the exact matrix versions may install through the floor path without exact-version evidence.
+Ubuntu 20.04 is outside standard security maintenance; compatibility support does not replace an
+operator's Ubuntu Pro/ESM or other patch-management policy. Below-floor or unsupported tuples hard
+fail. Both normalized architectures remain globally recognized, but Ubuntu 20.04 arm64 is an explicit
+unsupported tuple.
 **CentOS detection is exact.** Only `ID=centos` (Stream 9 or newer) installs. RHEL, Rocky, and
 AlmaLinux are recognized via `ID_LIKE=rhel` and told they are *likely compatible*, but v1 **does not
 install on
@@ -269,8 +268,10 @@ read-only detection to print backend-specific advice; the owner removed even tha
 detection is functionality too.
 
 ## 8. Verified engine-asset installation
-1. After platform/architecture detection, map Debian/Ubuntu/CentOS Stream to glibc and Alpine to
-   musl, then select the fixed amd64/arm64 asset from release `engine-3proxy-0.9.9.0-r1`.
+1. Normalize architecture before authorizing the OS/version/architecture tuple. Authorize exact
+   Ubuntu 20.04 amd64, or Ubuntu 22.04+ on amd64/arm64; reject focal arm64. Then map
+   Debian/Ubuntu/CentOS Stream to glibc and Alpine to musl and select the fixed asset from release
+   `engine-3proxy-0.9.9.0-r2`.
 2. Show only genuinely missing runtime packages in the confirmation: curl, ca-certificates and an
    `ss` provider only when `/proc/net/tcp{,6}`, ss and netstat are all unusable. APT disables
    recommends, DNF/YUM disable weak deps, APK uses `--no-cache`.
@@ -287,9 +288,11 @@ detection is functionality too.
    credential/port update never changes their existing binary.
 6. Remove the download directory. Runtime packages are not removed during uninstall.
 
-The four release assets are built separately from pinned commit
-`da99424eac4092e3722f1a5b1844cfe80478f580`; release builds are serial, single-target,
-`-O2 -fno-lto`, without optional SSL/PCRE/PAM/plugins, and are stripped before attestation.
+The r2 glibc-amd64 asset is built on Ubuntu 20.04 and must require no symbol newer than GLIBC_2.31;
+its published binary currently tops out at GLIBC_2.25. The other three r2 assets are carried
+byte-for-byte from r1 by exact size/SHA and retain their original provenance. All four derive from
+pinned commit `da99424eac4092e3722f1a5b1844cfe80478f580`; the newly built asset uses serial
+`-O2 -fno-lto`, disables optional SSL/PCRE/PAM/plugins, and is stripped before attestation.
 
 ## 9. Service integration
 - **systemd:** `User=socks5proxy`, `Group=socks5proxy`,
@@ -433,33 +436,31 @@ and process start time to distinguish a live owner from a stale lock without a t
   SOCKS4 CONNECT → **fail**; SOCKS4a CONNECT → **fail**; SOCKS5 BIND → **fail**; SOCKS5 UDP ASSOCIATE
   → **fail**. The SOCKS4/4a cases are **rejection** tests: a pass requires refusal, never a working
   proxy.
-- **Real service lifecycle — one per promised OS family, all four blocking:**
-  Ubuntu (systemd on the runner), Debian (systemd as PID 1 in a privileged container), Alpine
-  (OpenRC), CentOS Stream (systemd as PID 1 in a privileged container). Each v1.1.0 candidate job is
-  configured to run install → update → status → active → listening → restart → uninstall →
-  cleanliness; that update evidence is not considered passed until the release-asset candidate CI
-  completes. A compatibility-only cell and a direct-engine protocol cell do **not** satisfy this:
-  neither installs a service. Ubuntu, Debian and Alpine start without curl and prove missing-runtime
-  dependency installation. CentOS starts with `curl-minimal`; CI verifies and reuses that stock
-  provider instead of manufacturing an unrepresentative curl-free image. No lifecycle target gains
-  Git, Make, GCC or cc.
+- **Real service lifecycle — one per promised OS family plus exact focal amd64 evidence, all blocking:**
+  Ubuntu 24.04 on native amd64/arm64 runners; Ubuntu 20.04 and 22.04, Debian 12 and CentOS Stream 9
+  as privileged systemd PID-1 containers; and Alpine 3.20/3.24 under OpenRC. Each v1.1.0 candidate
+  cell runs install → update → status → active → listening → restart → uninstall → cleanliness.
+  Compatibility-only and direct-engine protocol cells do **not** satisfy lifecycle evidence. Ubuntu,
+  Debian and Alpine start without curl and prove missing-runtime dependency installation. CentOS
+  starts with `curl-minimal`, which CI verifies and reuses. No lifecycle target gains Git, Make, GCC
+  or cc.
 - **Low-memory boundary:** containerized systemd creates one CI-only shared systemd slice containing
   every operation runner and `socks5-manager.service`, enforces aggregate 128 MiB/no swap, validates
   both cgroup ancestries, reads the shared peak and requires zero OOM kills. The OpenRC target-container cgroup
   is limited to 128 MiB/no swap and supplies its whole-container peak.
-- **Asset compatibility matrix:** the matching pinned release binary must load on 8 OS versions × 2
-  architectures without installing a target-side toolchain.
+- **Asset compatibility matrix:** 17 supported tuples: the existing 8 OS versions × 2 architectures,
+  plus Ubuntu 20.04 amd64; focal arm64 is explicitly excluded. No target gains a build toolchain.
 - **Update safety:** a confirmed update reuses one service/account/binary, rotates one credential,
   verifies the new proxy, and restores the old verified proxy on failure.
 - **Cleanliness:** after uninstall no project file or account remains, no system package was removed,
   and no firewall rule was ever created.
 
 systemd targets need systemd-capable containers or VMs (`systemctl` in a plain container lies).
-**No tier is exempt: every cell is blocking, Alpine included.** The full 45-job workflow passed in
-run `33174398814` at commit `df6885c`: all build/protocol/ACL cells and all seven real service
-lifecycles (§18).
+**No tier is exempt.** Historical 45-job workflow run `33174398814` at `df6885c` passed its then-current
+matrix. The Ubuntu 20.04 implementation expands the current workflow to 48 blocking jobs and must
+earn new evidence; no historical run proves the focal tuple.
 
-The 16 protocol cells download the pinned release asset for their libc/architecture, render the
+The 17 protocol cells download the pinned release asset for their libc/architecture, render the
 production config and run the engine **directly** — they prove the protocol boundary, not a service
 install. Real init-system installation is covered separately, once per promised OS family (§13).
 
@@ -520,11 +521,11 @@ example any SOCKS4-family protocol.
     `33281392984`; evidence-only commit `a8ed8255fba6c9bf9b8247582d6b77ebf65d8374` passed run
     `33281724740`; closure commit `91fd13a` passed run `33282068288`; versioned tag `v1.0.0`
     exists there. Run `33245460710` / `33246222640` remains historical evidence for the previous
-    bilingual state. Current v1.1 implementation commit
-    `2003d7b47aa13d71b3e37294df0c32fb15577d23` passed all 45 jobs in run
-    `33460169077`. The bilingual documentation revision must then pass 45/45 as the evidence-only
-    checkpoint; the exact closure commit must pass 45/45 on `develop`; only then may the versioned tag
-    exist. Earlier f508/a7 candidate runs remain historical evidence.
+    bilingual state. The latest completed bilingual checkpoint `27ed6d9` / run `33473381427` passed
+    the former 45-job workflow but predates r2 and focal support. The Ubuntu 20.04 implementation must
+    pass the expanded 48-job workflow; an evidence-only commit and exact `develop` closure must each
+    then pass all 48 jobs before the versioned v1.1 tag may exist. Earlier candidate runs remain
+    historical evidence.
 
 ## 16. Non-goals (v1.1)
 Non-interactive install; a separate public `reload` or `reconfigure` subcommand; BIND; UDP ASSOCIATE;
@@ -539,7 +540,8 @@ RHEL/Rocky/Alma.
   Simplified Chinese document. Both carry `[English](README.md) | [简体中文](README.zh-CN.md)` near
   the top and use the same section order. Commands, paths, hashes, run IDs, URLs, protocol tokens,
   numeric limits, release status and security facts are identical; a load-bearing fact changes in
-  both files in the same commit.
+  both files in the same commit. Both must state the exact Ubuntu exception: 20.04 amd64 only,
+  22.04+ amd64/arm64, plus the 20.04 upstream-maintenance caveat.
 - Both documents lead with a complete Alpine Linux deployment tutorial before the general distro
   quick start: explain that process-substitution support is BusyBox-build-dependent and that quoted
   `bash -c` deliberately guarantees Bash parsing; retain the exact bootstrap, separate bootstrap packages from runtime dependencies, document musl
@@ -559,8 +561,8 @@ RHEL/Rocky/Alma.
 - Keep the convenient moving `develop` commands but also document versioned semantic tags, the
   project never-move policy, the lack of GitHub-enforced tag immutability, and
   the exact SHA-256 of each tagged `socks5.sh`. The README must call v1.1 a candidate until the current
-  implementation commit passes 45/45, an evidence-only commit records that proof and passes 45/45,
-  and the exact closure commit passes 45/45 on `develop`; only then is the tag created at that closure
+  implementation commit passes 48/48, an evidence-only commit records that proof and passes 48/48,
+  and the exact closure commit passes 48/48 on `develop`; only then is the tag created at that closure
   commit and it is never moved.
 - Document the exact `1 中文 / 2 English` selector, Enter=Chinese, invalid retry, per-invocation
   locale, the default-yes fresh-install confirmation, the default-no installed-update confirmation,
@@ -590,15 +592,15 @@ implementation `3b58e194887bf91a06b789353c06033b70c49c59` / run `33281392984`, e
 `a8ed8255fba6c9bf9b8247582d6b77ebf65d8374` / run `33281724740`, and closure `91fd13a` /
 run `33282068288`, all 45/45 before the versioned tag was created under the never-move policy.
 
-Current implementation commit `2003d7b47aa13d71b3e37294df0c32fb15577d23` passed all 45
-jobs in run `33460169077`, including the repaired no-replace/identity boundaries and all Alpine
-compatibility, protocol and OpenRC cells described in §13. The bilingual documentation revision is
-the prospective evidence-only checkpoint and has no earned run yet; exact `develop` closure evidence
-also remains pending and must follow §15.17 before `v1.1.0` is tagged. Earlier f508/a7 runs remain
-historical candidate evidence. Environmental risks remain: package repositories, DNS and the fixed
-HTTPS self-test require egress; cloud images may differ from the tested base images; and the pinned
-3proxy 0.9 branch has no published maintenance window, so the operator still owns updates (§17).
-Historical bilingual evidence remains in runs `33245460710` / `33246222640`.
+The bilingual checkpoint `27ed6d97048f9d3aadd306461f82bb026146e83e` passed the former
+45-job workflow in run `33473381427`. The r2 engine prerelease is published at tag
+`engine-3proxy-0.9.9.0-r2`, with generic glibc-amd64 bytes built on Ubuntu 20.04 and requiring at
+most GLIBC_2.25. The focal consumer/detection implementation changes the candidate again and must
+earn a new 48-job implementation run; evidence-only and exact `develop` closure evidence remain
+pending under §15.17. Earlier candidate runs remain historical evidence. Environmental risks remain:
+package repositories, DNS and the fixed HTTPS self-test require egress; Ubuntu 20.04 standard
+maintenance has ended; cloud images may differ from tested bases; and the pinned 3proxy branch has
+no published maintenance window, so the operator owns update policy (§17).
 
 **Decided:**
 - Publishing target: `github.com/91sexboy/One-click-socks5-proxy-setup`; the README raw URL is

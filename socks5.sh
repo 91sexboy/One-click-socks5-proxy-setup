@@ -26,11 +26,11 @@ S5_SERVICE_GROUP=socks5proxy
 S5_PINNED_COMMIT=da99424eac4092e3722f1a5b1844cfe80478f580
 S5_UPSTREAM_TAG=0.9.9.0
 S5_REPO_URL=https://github.com/3proxy/3proxy
-S5_ENGINE_RELEASE=engine-3proxy-0.9.9.0-r1
+S5_ENGINE_RELEASE=engine-3proxy-0.9.9.0-r2
 S5_ENGINE_BASE_URL=https://github.com/91sexboy/One-click-socks5-proxy-setup/releases/download/$S5_ENGINE_RELEASE
 S5_ASSET_GLIBC_AMD64=3proxy-0.9.9.0-da99424-linux-glibc-amd64
-S5_ASSET_GLIBC_AMD64_SHA=ce3c604d0133df0028b4e9cd93c326b36790db789c769b2a2c78b400b9967a80
-S5_ASSET_GLIBC_AMD64_SIZE=263168
+S5_ASSET_GLIBC_AMD64_SHA=9c2892b46121439f3c5a05fc19ec07fe68d2ce3498110cac29c165749efaafcf
+S5_ASSET_GLIBC_AMD64_SIZE=294552
 S5_ASSET_GLIBC_ARM64=3proxy-0.9.9.0-da99424-linux-glibc-arm64
 S5_ASSET_GLIBC_ARM64_SHA=344e482272e5c16d1f9c762d7ed240cda43bb050a53be767e5393a616607ccf5
 S5_ASSET_GLIBC_ARM64_SIZE=279288
@@ -436,21 +436,21 @@ s5_msg() {
     _s5_i18n_key=$1
     shift
     case "$_s5_i18n_key" in
-    # @s5-msg detect.unsupported 2
+    # @s5-msg detect.unsupported 3
     detect.unsupported)
-        [ "$#" -eq 2 ] || { s5_msg_contract_error detect.unsupported 2 "$#"; return 1; }
+        [ "$#" -eq 3 ] || { s5_msg_contract_error detect.unsupported 3 "$#"; return 1; }
         case "$S5_LANG" in
-        zh) printf '不支持此系统：ID=%s VERSION_ID=%s（支持：Ubuntu 22.04+、Debian 12+、Alpine 3.20+、CentOS Stream 9+）' "${1}" "${2}" ;;
-        en) printf 'unsupported system: ID=%s VERSION_ID=%s (supported: Ubuntu 22.04+, Debian 12+, Alpine 3.20+, CentOS Stream 9+)' "${1}" "${2}" ;;
+        zh) printf '不支持此系统：ID=%s VERSION_ID=%s ARCH=%s（支持：Ubuntu 20.04（仅 amd64）、Ubuntu 22.04+（amd64/arm64）、Debian 12+、Alpine 3.20+、CentOS Stream 9+）' "${1}" "${2}" "${3}" ;;
+        en) printf 'unsupported system: ID=%s VERSION_ID=%s ARCH=%s (supported: Ubuntu 20.04 (amd64 only), Ubuntu 22.04+ (amd64/arm64), Debian 12+, Alpine 3.20+, CentOS Stream 9+)' "${1}" "${2}" "${3}" ;;
         *) s5_msg_locale_error; return 1 ;;
         esac
         ;;
-    # @s5-msg detect.likely_compatible 2
+    # @s5-msg detect.likely_compatible 3
     detect.likely_compatible)
-        [ "$#" -eq 2 ] || { s5_msg_contract_error detect.likely_compatible 2 "$#"; return 1; }
+        [ "$#" -eq 3 ] || { s5_msg_contract_error detect.likely_compatible 3 "$#"; return 1; }
         case "$S5_LANG" in
-        zh) printf 'ID=%s VERSION_ID=%s 可能与 3proxy 兼容，但本脚本不支持。支持：Ubuntu 22.04+、Debian 12+、Alpine 3.20+、CentOS Stream 9+。' "${1}" "${2}" ;;
-        en) printf 'ID=%s VERSION_ID=%s is likely compatible with 3proxy, but it is not supported by this script. Supported: Ubuntu 22.04+, Debian 12+, Alpine 3.20+, CentOS Stream 9+.' "${1}" "${2}" ;;
+        zh) printf 'ID=%s VERSION_ID=%s ARCH=%s 可能与 3proxy 兼容，但本脚本不支持。支持：Ubuntu 20.04（仅 amd64）、Ubuntu 22.04+（amd64/arm64）、Debian 12+、Alpine 3.20+、CentOS Stream 9+。' "${1}" "${2}" "${3}" ;;
+        en) printf 'ID=%s VERSION_ID=%s ARCH=%s is likely compatible with 3proxy, but it is not supported by this script. Supported: Ubuntu 20.04 (amd64 only), Ubuntu 22.04+ (amd64/arm64), Debian 12+, Alpine 3.20+, CentOS Stream 9+.' "${1}" "${2}" "${3}" ;;
         *) s5_msg_locale_error; return 1 ;;
         esac
         ;;
@@ -4000,6 +4000,7 @@ s5_select_engine_asset() {
 # AlmaLinux are recognised only so we can tell the operator they are likely
 # compatible, and then refuse.
 s5_detect_platform() {
+    _dparch=${1:-}
     _osf=${S5_OSRELEASE:-/etc/os-release}
     S5_OS_ID=''
     S5_OS_VERSION_ID=''
@@ -4007,6 +4008,13 @@ s5_detect_platform() {
     S5_OS_FAMILY=''
     S5_PKGMGR=''
     S5_INIT=''
+    case "$_dparch" in
+    amd64 | arm64) ;;
+    *)
+        s5_err_msg detect.unsupported unknown unknown "${_dparch:-missing}"
+        return "$EX_UNSUPPORTED"
+        ;;
+    esac
     if [ ! -r "$_osf" ]; then
         s5_err_msg detect.cannot_read_osrelease "$_osf"
         return "$EX_UNSUPPORTED"
@@ -4018,7 +4026,8 @@ s5_detect_platform() {
 
     case "$S5_OS_ID" in
     ubuntu)
-        if s5_ver_ge "$S5_OS_VERSION_ID" 22.04; then
+        if [ "$S5_OS_VERSION_ID:$_dparch" = 20.04:amd64 ] ||
+            s5_ver_ge "$S5_OS_VERSION_ID" 22.04; then
             S5_OS_FAMILY=debian
             S5_PKGMGR=apt
             S5_INIT=systemd
@@ -4050,19 +4059,19 @@ s5_detect_platform() {
         fi
         ;;
     rhel | rocky | almalinux)
-        s5_err_msg detect.likely_compatible "$S5_OS_ID" "$S5_OS_VERSION_ID"
+        s5_err_msg detect.likely_compatible "$S5_OS_ID" "$S5_OS_VERSION_ID" "$_dparch"
         return "$EX_UNSUPPORTED"
         ;;
     esac
 
     case " $S5_OS_ID_LIKE " in
     *" rhel "*)
-        s5_err_msg detect.likely_compatible "$S5_OS_ID" "$S5_OS_VERSION_ID"
+        s5_err_msg detect.likely_compatible "$S5_OS_ID" "$S5_OS_VERSION_ID" "$_dparch"
         return "$EX_UNSUPPORTED"
         ;;
     esac
 
-    s5_err_msg detect.unsupported "$S5_OS_ID" "$S5_OS_VERSION_ID"
+    s5_err_msg detect.unsupported "$S5_OS_ID" "$S5_OS_VERSION_ID" "$_dparch"
     return "$EX_UNSUPPORTED"
 }
 
@@ -4188,10 +4197,10 @@ s5_precheck() {
         s5_err_msg detect.no_base_utilities
         return "$EX_FAIL"
     fi
-    if ! s5_detect_platform; then
+    S5_ARCHNAME=$(s5_map_arch "$(uname -m)") || return "$EX_UNSUPPORTED"
+    if ! s5_detect_platform "$S5_ARCHNAME"; then
         return "$EX_UNSUPPORTED"
     fi
-    S5_ARCHNAME=$(s5_map_arch "$(uname -m)") || return "$EX_UNSUPPORTED"
     if ! s5_select_engine_asset production; then
         return "$EX_UNSUPPORTED"
     fi
@@ -4990,6 +4999,27 @@ S5_STATE_KEYS_MULTI='package'
 S5_STATE_BUF=''
 S5_STATE_LOADED=0
 
+s5_state_release_asset_ok() {
+    _sraoos=$1
+    _sraofamily=$2
+    _sraoarch=$3
+    _sraoasset=$4
+    _sraosha=$5
+    case "$_sraofamily:$_sraoarch:$_sraoasset:$_sraosha" in
+    debian:amd64:3proxy-0.9.9.0-da99424-linux-glibc-amd64:ce3c604d0133df0028b4e9cd93c326b36790db789c769b2a2c78b400b9967a80 | \
+    el:amd64:3proxy-0.9.9.0-da99424-linux-glibc-amd64:ce3c604d0133df0028b4e9cd93c326b36790db789c769b2a2c78b400b9967a80)
+        [ "$_sraoos" != ubuntu-20.04 ]
+        ;;
+    debian:amd64:3proxy-0.9.9.0-da99424-linux-glibc-amd64:9c2892b46121439f3c5a05fc19ec07fe68d2ce3498110cac29c165749efaafcf | \
+    el:amd64:3proxy-0.9.9.0-da99424-linux-glibc-amd64:9c2892b46121439f3c5a05fc19ec07fe68d2ce3498110cac29c165749efaafcf) return 0 ;;
+    debian:arm64:3proxy-0.9.9.0-da99424-linux-glibc-arm64:344e482272e5c16d1f9c762d7ed240cda43bb050a53be767e5393a616607ccf5 | \
+    el:arm64:3proxy-0.9.9.0-da99424-linux-glibc-arm64:344e482272e5c16d1f9c762d7ed240cda43bb050a53be767e5393a616607ccf5) return 0 ;;
+    alpine:amd64:3proxy-0.9.9.0-da99424-linux-musl-amd64:ac3fe1a7d52d2b1494d4d00884fc7517acb2340454c2653c95a7346c05d69298) return 0 ;;
+    alpine:arm64:3proxy-0.9.9.0-da99424-linux-musl-arm64:38f2733dfc5d375a4faaebe79f66bd181c7cc3e7b3eb9443c3ac4476fbfeebeb) return 0 ;;
+    *) return 1 ;;
+    esac
+}
+
 s5_state_key_known() {
     for _skk in $S5_STATE_KEYS_REQUIRED $S5_STATE_KEYS_OPTIONAL $S5_STATE_KEYS_FLAG $S5_STATE_KEYS_MULTI; do
         if [ "$_skk" = "$1" ]; then
@@ -5257,21 +5287,14 @@ EOF
             fi
             _slfamily=$(s5_state_get family)
             _slarch=$(s5_state_get arch)
-            _slsaved_family=$S5_OS_FAMILY
-            _slsaved_arch=$S5_ARCHNAME
-            S5_OS_FAMILY=$_slfamily
-            S5_ARCHNAME=$_slarch
-            if ! s5_select_engine_asset production || [ "$S5_ASSET_NAME" != "$_slasset" ] ||
-                [ "$S5_ASSET_SHA256" != "$_slsha" ]; then
-                S5_OS_FAMILY=$_slsaved_family
-                S5_ARCHNAME=$_slsaved_arch
+            _slos=$(s5_state_get os)
+            if ! s5_state_release_asset_ok "$_slos" "$_slfamily" "$_slarch" \
+                "$_slasset" "$_slsha"; then
                 s5_err_msg state.asset_mismatch
                 S5_STATE_BUF=''
                 S5_STATE_LOADED=0
                 return 1
             fi
-            S5_OS_FAMILY=$_slsaved_family
-            S5_ARCHNAME=$_slsaved_arch
         fi
     fi
     return 0

@@ -40,28 +40,31 @@ assert_eq "absent key yields empty" "" "$(s5_osrel_get "$FIX/alpine-3.24" ID_LIK
 
 # --- supported platforms map to the right package manager and init ---
 check_supported() {
-    # <fixture> <expected-pkgmgr> <expected-init>
+    # <fixture> <arch> <expected-pkgmgr> <expected-init>
     S5_OSRELEASE="$FIX/$1"
-    if s5_detect_platform >/dev/null 2>&1; then
-        assert_eq "$1 pkgmgr" "$2" "$S5_PKGMGR"
-        assert_eq "$1 init" "$3" "$S5_INIT"
+    if s5_detect_platform "$2" >/dev/null 2>&1; then
+        assert_eq "$1/$2 pkgmgr" "$3" "$S5_PKGMGR"
+        assert_eq "$1/$2 init" "$4" "$S5_INIT"
     else
-        t_bad "$1 should be supported but detection failed"
+        t_bad "$1/$2 should be supported but detection failed"
     fi
 }
-check_supported ubuntu-22.04 apt systemd
-check_supported ubuntu-24.04 apt systemd
-check_supported debian-12 apt systemd
-check_supported debian-13 apt systemd
-check_supported alpine-3.20 apk openrc
-check_supported alpine-3.24 apk openrc
-check_supported centos-stream-9 dnf systemd
-check_supported centos-stream-10 dnf systemd
+check_supported ubuntu-20.04 amd64 apt systemd
+check_supported ubuntu-22.04 amd64 apt systemd
+check_supported ubuntu-22.04 arm64 apt systemd
+check_supported ubuntu-24.04 amd64 apt systemd
+check_supported ubuntu-24.04 arm64 apt systemd
+check_supported debian-12 amd64 apt systemd
+check_supported debian-13 arm64 apt systemd
+check_supported alpine-3.20 amd64 apk openrc
+check_supported alpine-3.24 arm64 apk openrc
+check_supported centos-stream-9 amd64 dnf systemd
+check_supported centos-stream-10 arm64 dnf systemd
 
 # --- RHEL / Rocky / Alma: recognised, told they are likely compatible, and REFUSED ---
 check_rhel_like() {
     S5_OSRELEASE="$FIX/$1"
-    t_run s5_detect_platform
+    t_run s5_detect_platform amd64
     assert_eq "$1 is refused" "$EX_UNSUPPORTED" "$T_STATUS"
     assert_contains "$1 says likely compatible" "likely compatible" "$T_OUT"
     assert_contains "$1 says not supported" "not supported" "$T_OUT"
@@ -74,7 +77,7 @@ check_rhel_like almalinux-9
 # refusal message. It must never select a package manager or authorize install.
 S5_OSRELEASE="$FIX/oracle-9"
 detect_with_state() {
-    s5_detect_platform
+    s5_detect_platform amd64
     _dws=$?
     printf '\nSTATE:%s|%s|%s\n' "$S5_OS_FAMILY" "$S5_PKGMGR" "$S5_INIT"
     return "$_dws"
@@ -86,33 +89,39 @@ assert_contains "the refusal leaves family/pkgmgr/init unset" "STATE:||" "$T_OUT
 
 # Substrings are not tokens: `notrhel` must not be mistaken for `rhel`.
 S5_OSRELEASE="$FIX/notrhel-9"
-t_run s5_detect_platform
+t_run s5_detect_platform amd64
 assert_eq "an ID_LIKE substring is refused generically" "$EX_UNSUPPORTED" "$T_STATUS"
 assert_not_contains "notrhel does not receive the RHEL-specific wording" "likely compatible" "$T_OUT"
 assert_contains "the generic refusal names the derivative ID" "notrhel-linux" "$T_OUT"
 
 # ID_LIKE=rhel alone must never authorise an install
 S5_OSRELEASE="$FIX/rocky-9"
-t_run s5_detect_platform
+t_run s5_detect_platform amd64
 assert_ne "ID_LIKE=rhel does not authorise install" 0 "$T_STATUS"
 
-# --- unknown and too-old systems are hard errors naming ID and VERSION_ID ---
+# --- unknown, too-old and unsupported tuples are hard errors naming dimensions ---
 check_unsupported() {
     S5_OSRELEASE="$FIX/$1"
-    t_run s5_detect_platform
-    assert_eq "$1 unsupported" "$EX_UNSUPPORTED" "$T_STATUS"
-    assert_contains "$1 error names ID" "$2" "$T_OUT"
-    assert_contains "$1 error names VERSION_ID" "$3" "$T_OUT"
+    t_run s5_detect_platform "$4"
+    assert_eq "$1/$4 unsupported" "$EX_UNSUPPORTED" "$T_STATUS"
+    assert_contains "$1/$4 error names ID" "$2" "$T_OUT"
+    assert_contains "$1/$4 error names VERSION_ID" "$3" "$T_OUT"
+    assert_contains "$1/$4 error names architecture" "$4" "$T_OUT"
 }
-check_unsupported fedora-40 fedora 40
-check_unsupported ubuntu-20.04 ubuntu 20.04
-check_unsupported debian-11 debian 11
-check_unsupported alpine-3.19 alpine 3.19.9
-check_unsupported centos-stream-8 centos 8
+check_unsupported fedora-40 fedora 40 amd64
+check_unsupported ubuntu-20.04 ubuntu 20.04 arm64
+check_unsupported debian-11 debian 11 amd64
+check_unsupported alpine-3.19 alpine 3.19.9 amd64
+check_unsupported centos-stream-8 centos 8 amd64
+
+t_run s5_detect_platform
+assert_eq "detector without normalized architecture fails closed" "$EX_UNSUPPORTED" "$T_STATUS"
+t_run s5_detect_platform riscv64
+assert_eq "detector rejects non-normalized architecture" "$EX_UNSUPPORTED" "$T_STATUS"
 
 # missing os-release file
 S5_OSRELEASE="$S5_TEST_ROOT/definitely-absent"
-t_run s5_detect_platform
+t_run s5_detect_platform amd64
 assert_ne "missing os-release is an error" 0 "$T_STATUS"
 
 # --- architecture mapping ---

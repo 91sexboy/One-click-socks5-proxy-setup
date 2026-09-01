@@ -62,8 +62,8 @@ if [ -n "$ENGINE_BIN" ]; then
     printf 'installing supplied verified release engine %s\n' "$ENGINE_BIN" >&2
     s5_install_binary "$ENGINE_BIN" ephemeral
 else
-    s5_detect_platform
     S5_ARCHNAME=$(s5_map_arch "$(uname -m)")
+    s5_detect_platform "$S5_ARCHNAME"
     s5_select_engine_asset
     printf 'downloading verified release engine %s\n' "$S5_ASSET_NAME" >&2
     s5_fetch_verified_engine ephemeral
