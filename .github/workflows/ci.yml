@@ -618,9 +618,16 @@ jobs:
           docker exec "$CID" chmod 0600 /tmp/answers
           docker exec "$CID" /src/.github/scripts/run-systemd-memory-gate.sh \
             s5-install /tmp/answers /tmp/install.log sh /src/socks5.sh install \
-            >"$SECRETS/install.peak" || { docker exec "$CID" cat /tmp/install.log >"$SECRETS/install.log" 2>&1 || true
-                 sed -f "$SECRETS/redact.sed" "$SECRETS/install.log" >&2
-                 exit 1; }
+            >"$SECRETS/install.peak" || {
+              docker exec "$CID" cat /tmp/install.log >"$SECRETS/install.log" 2>&1 || true
+              sed -f "$SECRETS/redact.sed" "$SECRETS/install.log" >&2
+              docker exec "$CID" systemctl status socks5-manager.service --no-pager -l 2>&1 | \
+                sed -f "$SECRETS/redact.sed" >&2 || true
+              docker exec "$CID" journalctl -u socks5-manager.service --no-pager -n 200 2>&1 | \
+                sed -f "$SECRETS/redact.sed" >&2 || true
+              docker exec "$CID" /src/.github/scripts/check-listen-port.sh "$PORT" present >&2 2>&1 || true
+              exit 1
+            }
           docker exec "$CID" rm -f /tmp/answers
 
           AUDIT_DIR=$(docker exec "$CID" mktemp -d)
