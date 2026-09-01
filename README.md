@@ -333,7 +333,7 @@ hardened credential cards, verified prebuilt engine assets, bounded downloads,
 `socks5.sh` SHA-256:
 
 ```text
-858b89bc9713ec14a4864b928b1128ec96b794cf73a28dfbe3058a8acee823c9  socks5.sh
+be9c46ff675b0a64d87da01ecbf0c2d51fba925ffc95b0a96a5a03b89b091230  socks5.sh
 ```
 
 Before the current safety repair, implementation commit
@@ -353,7 +353,7 @@ After the tag exists, download and verify it with:
 
 ```sh
 wget -qO socks5.sh https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-setup/v1.1.0/socks5.sh
-printf '%s  %s\n' '858b89bc9713ec14a4864b928b1128ec96b794cf73a28dfbe3058a8acee823c9' socks5.sh | sha256sum -c -
+printf '%s  %s\n' 'be9c46ff675b0a64d87da01ecbf0c2d51fba925ffc95b0a96a5a03b89b091230' socks5.sh | sha256sum -c -
 sudo sh socks5.sh
 ```
 

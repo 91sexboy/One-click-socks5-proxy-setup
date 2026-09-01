@@ -181,7 +181,7 @@ jobs:
               s5_detect_platform
               S5_ARCHNAME=\$(s5_map_arch \"\$(uname -m)\")
               s5_select_engine_asset
-              s5_fetch_verified_engine
+              s5_fetch_verified_engine ephemeral
               test -f \"\$S5_BIN\" || { echo no binary >&2; exit 1; }
               test -x \"\$S5_BIN\" || { echo binary not executable >&2; exit 1; }
               file \"\$S5_BIN\" | grep -q ELF

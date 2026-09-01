@@ -72,7 +72,7 @@ reset_case() {
 
 # Happy path: one bounded HTTPS download, exact size/hash, one installed binary.
 reset_case
-t_run s5_fetch_verified_engine
+t_run s5_fetch_verified_engine managed
 assert_eq "verified asset installation succeeds" 0 "$T_STATUS"
 assert_file_exists "binary installed" "$S5_BIN"
 assert_mode "binary is mode 0755" 755 "$S5_BIN"
@@ -98,7 +98,7 @@ assert_file_absent "ephemeral placement creates no product state" "$S5_STATE"
 # A transport/HTTP failure leaves no binary or transfer directory.
 reset_case
 : >"$S5_TEST_ROOT/stub_asset_download_fail"
-t_run s5_fetch_verified_engine
+t_run s5_fetch_verified_engine managed
 assert_ne "asset download failure aborts" 0 "$T_STATUS"
 assert_contains "asset download failure is explained" "failed to download" "$T_OUT"
 assert_file_absent "download failure installs nothing" "$S5_BIN"
@@ -109,7 +109,7 @@ assert_eq "download failure removes temporary files" 0 "$(count_transfer_dirs)"
 # that old curl versions cannot fill the workdir before the size check runs.
 reset_case
 : >"$S5_TEST_ROOT/stub_asset_oversized_unknown"
-t_run s5_fetch_verified_engine
+t_run s5_fetch_verified_engine managed
 assert_ne "unknown-length oversized asset aborts" 0 "$T_STATUS"
 assert_contains "oversized asset reports the bounded sentinel size" \
     "got $((S5_ASSET_SIZE + 1)) bytes" "$T_OUT"
@@ -119,7 +119,7 @@ assert_eq "oversized asset removes FIFO and workdir" 0 "$(count_transfer_dirs)"
 # A short response is rejected before hashing or installation.
 reset_case
 : >"$S5_TEST_ROOT/stub_asset_truncated"
-t_run s5_fetch_verified_engine
+t_run s5_fetch_verified_engine managed
 assert_ne "truncated asset aborts" 0 "$T_STATUS"
 assert_contains "truncated asset reports the size mismatch" "size check failed" "$T_OUT"
 assert_file_absent "truncated asset installs nothing" "$S5_BIN"
@@ -128,7 +128,7 @@ assert_eq "truncated asset leaves no temporary tree" 0 "$(count_transfer_dirs)"
 # Same-size corruption reaches and fails the embedded digest check.
 reset_case
 : >"$S5_TEST_ROOT/stub_asset_corrupt"
-t_run s5_fetch_verified_engine
+t_run s5_fetch_verified_engine managed
 assert_ne "same-size corrupt asset aborts" 0 "$T_STATUS"
 assert_contains "corrupt asset reports SHA-256 failure" "SHA-256 verification failed" "$T_OUT"
 assert_file_absent "corrupt asset installs nothing" "$S5_BIN"
@@ -143,7 +143,7 @@ s5_install_binary() {
     chmod 0755 "$S5_BIN"
     s5_state_mark created_bin
 }
-t_run s5_fetch_verified_engine
+t_run s5_fetch_verified_engine managed
 unset -f s5_install_binary
 assert_ne "post-install digest mismatch aborts" 0 "$T_STATUS"
 assert_contains "post-install mismatch is explained" "installed binary SHA-256" "$T_OUT"

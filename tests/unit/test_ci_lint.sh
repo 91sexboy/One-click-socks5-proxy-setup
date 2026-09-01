@@ -603,6 +603,11 @@ _build_imgs=$(awk '/^  build-matrix:/{f=1} f && /^  protocol:/{exit} f && /- "/{
 _proto_imgs=$(awk '/^  protocol:/{f=1} f && /^  acl-resolution:/{exit} f && /- "/{c++} END{print c+0}' "$CI")
 assert_eq "build matrix has 8 images x 2 runners = 16 cells" 8 "$_build_imgs"
 assert_eq "protocol matrix has 8 images x 2 runners = 16 cells" 8 "$_proto_imgs"
+build_job=$(awk '/^  build-matrix:/{f=1} f && /^  protocol:/{exit} f' "$CI")
+assert_contains "compatibility cells use ephemeral binary placement" \
+    's5_fetch_verified_engine ephemeral' "$build_job"
+assert_not_contains "compatibility cells never require product state" \
+    's5_fetch_verified_engine managed' "$build_job"
 _expanded=$((1 + 2 + _build_imgs*2 + _proto_imgs*2 + 3 + 2 + 2 + 3))
 assert_eq "workflow expands to exactly 45 jobs" 45 "$_expanded"
 

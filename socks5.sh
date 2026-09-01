@@ -4840,15 +4840,22 @@ _s5_publish_new() {
     fi
     s5_modelog "tmp-created:$_pnp" "$_pnt"
     case "$_pnkind" in
-    text) printf '%s\n' "$_pnpayload" >"$_pnt" ;;
-    file) cat <"$_pnpayload" >"$_pnt" ;;
+    text)
+        if ! printf '%s\n' "$_pnpayload" >"$_pnt"; then
+            s5_err_msg fs.atomic_write_tmp "$_pnt"
+            rm -f "$_pnt"
+            return 1
+        fi
+        ;;
+    file)
+        if ! cat <"$_pnpayload" >"$_pnt"; then
+            s5_err_msg fs.atomic_write_tmp "$_pnt"
+            rm -f "$_pnt"
+            return 1
+        fi
+        ;;
     *) rm -f "$_pnt"; return 1 ;;
     esac
-    if [ "$?" -ne 0 ]; then
-        s5_err_msg fs.atomic_write_tmp "$_pnt"
-        rm -f "$_pnt"
-        return 1
-    fi
     s5_modelog "tmp-written:$_pnp" "$_pnt"
     if ! s5_apply_owner_mode "$_pnt" "$_pno" "$_pnm"; then
         rm -f "$_pnt"
@@ -4876,7 +4883,7 @@ _s5_publish_new() {
         return 1
     fi
     S5_PENDING_CLAIM_PATH=$_pnp
-    S5_PENDING_CLAIM_KIND=file
+    S5_PENDING_CLAIM_KIND='file'
     S5_PENDING_CLAIM_ID=$_pnid
     S5_PENDING_CLAIM_TEMP=$_pnt
     return 0
@@ -5762,7 +5769,7 @@ s5_release_workdir() {
 }
 
 s5_install_binary() {
-    _ibmode=${2:-managed}
+    _ibmode=$2
     case "$_ibmode" in managed | ephemeral) ;; *) return 1 ;; esac
     # Shared ancestors may exist, but the project prefix and binary are claimed
     # exclusively at their final paths. Managed installation hands those claims
@@ -5798,7 +5805,7 @@ s5_install_binary() {
 }
 
 s5_fetch_verified_engine() {
-    _fvemode=${1:-managed}
+    _fvemode=$1
     case "$_fvemode" in managed | ephemeral) ;; *) return 1 ;; esac
     if ! s5_select_engine_asset runtime; then
         return 1
@@ -8123,7 +8130,7 @@ s5_install_steps() {
         return 1
     fi
 
-    if ! s5_fetch_verified_engine; then
+    if ! s5_fetch_verified_engine managed; then
         return 1
     fi
 
