@@ -78,7 +78,7 @@ jobs:
           python3 -m py_compile tests/pty/show_xtrace.py
       - name: Documentation names only the supported SOCKS5 surface
         run: |
-          if grep -rniE 'socks4' README.md; then
+          if grep -niE 'socks4' README.md README.zh-CN.md; then
             echo "README must not display or advertise a legacy SOCKS family" >&2
             exit 1
           fi

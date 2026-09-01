@@ -12,6 +12,7 @@ R="${S5_REPO_ROOT}"
 
 # --------------------------------------------------------------- deliverables
 assert_file_exists "README.md exists" "$R/README.md"
+assert_file_exists "README.zh-CN.md exists" "$R/README.zh-CN.md"
 assert_file_exists "LICENSE exists" "$R/LICENSE"
 assert_file_exists "CI workflow exists" "$R/.github/workflows/ci.yml"
 assert_file_exists "protocol runner exists" "$R/tests/protocol/run_protocol.sh"
@@ -51,6 +52,24 @@ fi
 
 # --------------------------------------------------- README: SOCKS5 only
 readme=$(cat "$R/README.md")
+readme_zh=$(cat "$R/README.zh-CN.md" 2>/dev/null || true)
+lang_switch='[English](README.md) | [简体中文](README.zh-CN.md)'
+for doc in "$R/README.md" "$R/README.zh-CN.md"; do
+    _docname=${doc##*/}
+    if [ -f "$doc" ]; then
+        assert_eq "$_docname has one language switch" 1 \
+            "$(grep -Fxc "$lang_switch" "$doc")"
+        _switch_line=$(grep -nFx "$lang_switch" "$doc" | cut -d: -f1)
+        if [ -n "$_switch_line" ] && [ "$_switch_line" -le 6 ]; then t_ok; else t_bad "$_docname language switch must be near the top"; fi
+    fi
+done
+assert_contains "Chinese README is genuinely Chinese" "Alpine Linux 部署" "$readme_zh"
+assert_contains "Chinese README says SOCKS5 is not a VPN" "不是 VPN" "$readme_zh"
+assert_contains "Chinese README says authentication is cleartext" "明文传输" "$readme_zh"
+assert_contains "Chinese README says password storage is plaintext" "明文保存" "$readme_zh"
+assert_contains "Chinese README says firewall is untouched" "不检测或修改防火墙" "$readme_zh"
+assert_contains "Chinese README keeps v1.1 as candidate" "v1.1.0 — 候选版本" "$readme_zh"
+
 assert_contains "README states SOCKS5 is not a VPN" "not a VPN" "$readme"
 assert_contains "README warns authentication is cleartext" "cleartext" "$readme"
 assert_contains "README says the password is stored in plaintext" "plaintext" "$readme"
@@ -62,63 +81,100 @@ assert_not_contains "README no longer requires build-essential on target hosts" 
 assert_contains "README says runtime packages are left in place" "left in place" "$readme"
 assert_contains "README says updates are the operator's job" "responsibility" "$readme"
 assert_contains "README names the pinned commit" "da99424eac4092e3722f1a5b1844cfe80478f580" "$readme"
-assert_contains "README names the immutable engine release" "engine-3proxy-0.9.9.0-r1" "$readme"
+assert_contains "README names the versioned engine release" "engine-3proxy-0.9.9.0-r1" "$readme"
 assert_contains "README documents embedded digest verification" "embedded SHA-256" "$readme"
 assert_contains "README documents the 128 MiB gate" "128 MiB" "$readme"
-# The primary install form is the one-click one-liner over the real raw URL,
-# in both the wget and curl variants. It must use bash process substitution
-# (dash and busybox sh cannot parse `<(...)`), and it must not be a pipe --
-# `wget -qO- URL | sh` would feed the script itself to the prompts' stdin and
-# break the interactive flow.
+# The commands use Bash process substitution. The project-standard Alpine form
+# explicitly installs Bash and routes parsing through a quoted `bash -c` string;
+# none of the forms may pipe the interactive installer into sh.
 expected_wget='bash <(wget -qO- https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-setup/develop/socks5.sh)'
 expected_curl='bash <(curl -fsSL https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-setup/develop/socks5.sh)'
-assert_eq "README pins the exact one-click wget command once" \
-    1 "$(grep -Fxc -- "$expected_wget" "$R/README.md")"
-assert_eq "README pins the exact one-click curl command once" \
-    1 "$(grep -Fxc -- "$expected_curl" "$R/README.md")"
-assert_contains "README explains Alpine needs Bash for process substitution" \
-    "Install Bash first" "$readme"
+assert_contains "README explains Alpine uses explicit Bash parsing" \
+    "explicitly make Bash parse" "$readme"
 assert_contains "README pins all supported minimum versions" \
     "Ubuntu 22.04+, Debian 12+, Alpine Linux 3.20+, CentOS Stream 9+" "$readme"
 expected_alpine="apk add --no-cache bash wget && bash -c 'bash <(wget -qO- https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-setup/develop/socks5.sh)'"
-assert_eq "README pins the exact stock-Alpine bootstrap once" \
-    1 "$(grep -Fxc -- "$expected_alpine" "$R/README.md")"
-assert_not_contains "README never uses a fixed /tmp path" "/tmp/socks5.sh" "$readme"
 release_hash=$(sha256sum "$R/socks5.sh" | cut -d' ' -f1)
 v1_hash='acbfbfe3e6ba0f37f4e2a24ba8a6d68ec5a36513caae2e22e44a0ed28322e0b1'
-v1_section=$(awk '/^### v1\.0\.0/{on=1} /^### v1\.1\.0/{on=0} on' "$R/README.md")
-v11_section=$(awk '/^### v1\.1\.0/{on=1} on' "$R/README.md")
-assert_contains "README documents the immutable v1.0.0 URL" \
-    "/v1.0.0/socks5.sh" "$v1_section"
-assert_eq "v1.0 section pins the immutable v1.0 digest once" 1 \
-    "$(printf '%s\n' "$v1_section" | grep -oF "$v1_hash" | wc -l)"
-assert_not_contains "v1.0 section never uses the moving candidate digest" \
-    "$release_hash" "$v1_section"
-assert_eq "v1.1 section prints the current candidate digest twice" 2 \
-    "$(printf '%s\n' "$v11_section" | grep -oF "$release_hash" | wc -l)"
-assert_not_contains "v1.1 section never uses the immutable v1.0 digest" \
-    "$v1_hash" "$v11_section"
+section_markers='<!-- section: alpine -->
+<!-- section: general-install -->
+<!-- section: credentials -->
+<!-- section: management -->
+<!-- section: supported-systems -->
+<!-- section: protocol -->
+<!-- section: security -->
+<!-- section: firewall -->
+<!-- section: resources -->
+<!-- section: dependencies -->
+<!-- section: uninstall -->
+<!-- section: releases -->
+<!-- section: verification -->
+<!-- section: license -->'
+
+check_shared_readme_contract() {
+    _src=$1
+    _name=${_src##*/}
+    [ -f "$_src" ] || return 0
+    _body=$(cat "$_src")
+    assert_eq "$_name pins Alpine bootstrap once" 1 "$(grep -Fxc -- "$expected_alpine" "$_src")"
+    assert_eq "$_name pins wget bootstrap once" 1 "$(grep -Fxc -- "$expected_wget" "$_src")"
+    assert_eq "$_name pins curl bootstrap once" 1 "$(grep -Fxc -- "$expected_curl" "$_src")"
+    _aline=$(grep -nFx "$expected_alpine" "$_src" | cut -d: -f1)
+    _gline=$(grep -nFx "$expected_wget" "$_src" | cut -d: -f1)
+    if [ -n "$_aline" ] && [ -n "$_gline" ] && [ "$_aline" -lt "$_gline" ]; then t_ok; else t_bad "$_name must put Alpine deployment first"; fi
+    assert_eq "$_name has exactly one socks5 URI example" 1 "$(grep -oF 'socks5://' "$_src" | wc -l)"
+    assert_eq "$_name contains no legacy SOCKS family name" 0 "$(grep -ciE 'socks4' "$_src" || true)"
+    for token in 'RFC 1929' 'CONNECT' 'BIND' 'UDP ASSOCIATE' 'auth strong' 'socks -u2' 'deny *' \
+        '0.0.0.0' 'https://example.com/' 'https://icanhazip.com' 'SERVER_IPV4' '17-byte' \
+        '20000–60000' '1024–65535' '3–32' '12–128' '32' '[Y/n]' '[y/N]' \
+        '/etc/socks5-manager/users.cfg' 'root:socks5proxy 0640' \
+        '/var/lib/socks5-manager/reconfigure-transaction/' 'non-recursive' \
+        'engine-3proxy-0.9.9.0-r1' 'glibc amd64' 'glibc arm64' 'musl amd64' 'musl arm64' \
+        '3proxy-0.9.9.0-da99424-linux-glibc-amd64' '263168' 'ce3c604d0133df0028b4e9cd93c326b36790db789c769b2a2c78b400b9967a80' \
+        '3proxy-0.9.9.0-da99424-linux-glibc-arm64' '279288' '344e482272e5c16d1f9c762d7ed240cda43bb050a53be767e5393a616607ccf5' \
+        '3proxy-0.9.9.0-da99424-linux-musl-amd64' '298280' 'ac3fe1a7d52d2b1494d4d00884fc7517acb2340454c2653c95a7346c05d69298' \
+        '3proxy-0.9.9.0-da99424-linux-musl-arm64' '277624' '38f2733dfc5d375a4faaebe79f66bd181c7cc3e7b3eb9443c3ac4476fbfeebeb' \
+        'da99424eac4092e3722f1a5b1844cfe80478f580' '128 MiB' \
+        '2003d7b47aa13d71b3e37294df0c32fb15577d23' '33460169077' \
+        'README.md' 'README.zh-CN.md' 'SPEC.md' 'LICENSE'; do
+        assert_contains "$_name keeps shared fact: $token" "$token" "$_body"
+    done
+    _markers=$(grep '^<!-- section: [a-z-]* -->$' "$_src")
+    assert_eq "$_name keeps the canonical section order" "$section_markers" "$_markers"
+    _v1=$(awk '/^### v1\.0\.0/{on=1} /^### v1\.1\.0/{on=0} on' "$_src")
+    _v11=$(awk '/^### v1\.1\.0/{on=1} on' "$_src")
+    assert_eq "$_name pins the released v1 digest once" 1 \
+        "$(printf '%s\n' "$_v1" | grep -oF "$v1_hash" | wc -l)"
+    assert_not_contains "$_name keeps candidate digest out of v1" "$release_hash" "$_v1"
+    assert_eq "$_name pins the candidate digest twice" 2 \
+        "$(printf '%s\n' "$_v11" | grep -oF "$release_hash" | wc -l)"
+    assert_not_contains "$_name keeps v1 digest out of candidate" "$v1_hash" "$_v11"
+    assert_not_contains "$_name never recommends a fixed /tmp script" '/tmp/socks5.sh' "$_body"
+}
+check_shared_readme_contract "$R/README.md"
+check_shared_readme_contract "$R/README.zh-CN.md"
+
 assert_contains "README verifies the release with sha256sum" "sha256sum -c -" "$readme"
 assert_contains "README names develop as the moving channel" \
     'moving development channel' "$readme"
-assert_contains "README names version tags as immutable" \
-    'immutable semantic-version tag' "$readme"
+assert_contains "README names versioned tags and never-move policy" \
+    'never-move release policy' "$readme"
+assert_contains "README discloses lack of GitHub tag enforcement" \
+    'does not currently enforce tag immutability' "$readme"
 assert_contains "README requires the implementation checkpoint" \
     'implementation commit must pass 45/45' "$readme"
 assert_contains "README requires the evidence-only checkpoint" \
     'evidence-only commit must then pass 45/45' "$readme"
 assert_contains "README requires exact develop closure evidence" \
     'exact closure commit must pass 45/45 on `develop`' "$readme"
-assert_contains "README creates the immutable tag only after closure" \
-    'Only then is the immutable' "$readme"
-assert_contains "README records the superseded implementation run" \
-    '33355799664' "$readme"
-assert_contains "README records the superseded evidence run" \
-    '33376645854' "$readme"
-assert_contains "README says the safety repair resets release evidence" \
-    'superseded by the current safety repair' "$readme"
-assert_contains "README shows only the socks5 scheme" "socks5://" "$readme"
-assert_not_contains "README never shows a socks4 URI" "socks4://" "$readme"
+assert_contains "README creates the versioned tag only after closure" \
+    'Only then is the versioned' "$readme"
+assert_contains "README records the current implementation run" \
+    '33460169077' "$readme"
+assert_contains "README records the current implementation commit" \
+    '2003d7b47aa13d71b3e37294df0c32fb15577d23' "$readme"
+assert_contains "README says bilingual evidence is still pending" \
+    'prospective evidence-only checkpoint' "$readme"
 
 # The operator contract is public behaviour, not explanatory decoration. Pin
 # the load-bearing phrases so deleting any promise fails this test while normal
@@ -161,11 +217,6 @@ assert_contains "README documents the OpenRC container gate" \
     'OpenRC target-container cgroup' "$readme"
 assert_contains "README documents CentOS curl-minimal reuse" \
     'CentOS Stream starts with `curl-minimal` and reuses it' "$readme"
-
-# The public operator document names only the supported SOCKS5 surface. Legacy
-# family names remain in the developer spec and rejection suite, never README.
-assert_eq "README contains no legacy SOCKS family name" 0 \
-    "$(grep -ciE 'socks4' "$R/README.md" || true)"
 
 assert_not_contains "public README does not expose internal task ledgers" "tasks/" "$readme"
 
@@ -310,18 +361,18 @@ assert_contains "README says iptables rules are not persistent" "kernel memory o
 assert_contains "README distinguishes the CI job scopes" "real engine running the rendered config" "$readme"
 # The public README keeps one auditable released checkpoint and the current
 # candidate checkpoint. Detailed historical evidence remains in SPEC.md.
-assert_contains "README records both superseded green checkpoints" \
-    "both 45/45" "$readme"
+assert_contains "README records the implementation checkpoint as green" \
+    "passed all 45 jobs" "$readme"
 assert_contains "README records the released v1.0.0 closure run" \
     "33282068288" "$readme"
 assert_contains "README links the released v1.0.0 closure run" \
     "actions/runs/33282068288" "$readme"
 assert_contains "README records the current implementation run" \
-    "33355799664" "$readme"
+    "33460169077" "$readme"
 assert_contains "README links the current implementation run" \
-    "actions/runs/33355799664" "$readme"
+    "actions/runs/33460169077" "$readme"
 assert_contains "README records the current implementation commit" \
-    "f508666e0b31512b32502a3bb1a85b9742671b52" "$readme"
+    "2003d7b47aa13d71b3e37294df0c32fb15577d23" "$readme"
 assert_contains "README gates the v1.1.0 candidate on develop closure CI" \
     'exact closure commit must pass 45/45 on `develop`' "$readme"
 assert_not_contains "README removes the stale preliminary run" \
@@ -358,20 +409,20 @@ assert_contains "SPEC records the full Round 17 evidence commit" \
     "a8ed8255fba6c9bf9b8247582d6b77ebf65d8374" "$spec"
 assert_contains "SPEC preserves the released v1.0.0 baseline" \
     "v1.0.0 RELEASED / v1.1.0 CANDIDATE" "$spec"
-assert_contains "SPEC gates v1.1.0 on implementation CI" \
-    "implementation commit must pass 45/45" "$spec"
+assert_contains "SPEC records completed v1.1 implementation CI" \
+    "passed all 45 jobs" "$spec"
 assert_contains "SPEC gates v1.1.0 on evidence-only CI" \
-    "evidence-only commit must then pass 45/45" "$spec"
+    "must pass its own complete push CI" "$spec"
 assert_contains "SPEC gates v1.1.0 on exact develop closure CI" \
     'exact closure commit must pass 45/45 on `develop`' "$spec"
-assert_contains "SPEC records the superseded implementation run" \
-    '33355799664' "$spec"
-assert_contains "SPEC records the superseded evidence run" \
-    '33376645854' "$spec"
-assert_contains "SPEC marks old v1.1 evidence as superseded" \
-    'superseded historical candidate evidence' "$spec"
-assert_contains "SPEC says current checkpoints remain pending" \
-    'runs remain pending' "$spec"
+assert_contains "SPEC records the current implementation run" \
+    '33460169077' "$spec"
+assert_contains "SPEC records the current implementation commit" \
+    '2003d7b47aa13d71b3e37294df0c32fb15577d23' "$spec"
+assert_contains "SPEC says bilingual evidence is pending" \
+    'prospective evidence-only checkpoint' "$spec"
+assert_contains "SPEC says closure evidence remains pending" \
+    'closure evidence' "$spec"
 assert_not_contains "SPEC has no current raw main install URL" \
     '/main/socks5.sh' "$spec"
 assert_contains "SPEC distinguishes the systemd shared slice" \

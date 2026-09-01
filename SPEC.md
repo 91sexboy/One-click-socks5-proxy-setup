@@ -3,12 +3,14 @@
 > **Status: v1.0.0 RELEASED / v1.1.0 CANDIDATE.** The released Round 17 chain remains:
 > implementation `3b58e194887bf91a06b789353c06033b70c49c59` / run `33281392984`,
 > evidence-only `a8ed8255fba6c9bf9b8247582d6b77ebf65d8374` / run `33281724740`, and
-> closure `91fd13a` / run `33282068288`, all 45/45 before immutable `v1.0.0` was created.
-> For v1.1, `f508666` / run `33355799664` and `a7fbaeb` / run `33376645854` are
-> superseded historical candidate evidence because the current safety repair changes `socks5.sh`
-> again. The repaired implementation must pass 45/45; an evidence-only commit must then record that
-> proof and pass 45/45; the exact closure commit must pass 45/45 on `develop`; only then may immutable
-> `v1.1.0` be created. Protocol, authentication, ACL and firewall boundaries remain unchanged.
+> closure `91fd13a` / run `33282068288`, all 45/45 before versioned `v1.0.0` was created
+> under the project's never-move release policy.
+> For v1.1, implementation commit `2003d7b47aa13d71b3e37294df0c32fb15577d23` passed
+> all 45 jobs in run `33460169077`. The bilingual documentation revision is the prospective
+> evidence-only checkpoint and must pass its own complete push CI; the exact closure commit must then
+> pass 45/45 on `develop`. Only after both later checkpoints may versioned `v1.1.0` be created under
+> the project's never-move release policy.
+> Protocol, authentication, ACL and firewall boundaries remain unchanged.
 
 ## 1. Objective
 A single-file POSIX shell script (`socks5.sh`) that interactively installs, verifies, and manages a
@@ -314,7 +316,9 @@ The primary Ubuntu/Debian/CentOS command (and the same command after entering Ba
 bash <(wget -qO- https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-setup/develop/socks5.sh)
 ```
 
-Stock Alpine's default ash parses `<(...)` before Bash can run, so its one-line bootstrap is:
+The project-standard stock-Alpine bootstrap explicitly installs Bash and passes the command through a
+quoted `bash -c` string, so Bash parses process substitution without depending on a BusyBox build's
+optional Bash-compatibility behavior:
 
 ```sh
 apk add --no-cache bash wget && bash -c 'bash <(wget -qO- https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-setup/develop/socks5.sh)'
@@ -514,14 +518,13 @@ example any SOCKS4-family protocol.
     secret and accepts at most 17 response bytes.
 17. Round 17 implementation commit `3b58e194887bf91a06b789353c06033b70c49c59` passed run
     `33281392984`; evidence-only commit `a8ed8255fba6c9bf9b8247582d6b77ebf65d8374` passed run
-    `33281724740`; closure commit `91fd13a` passed run `33282068288`; immutable tag `v1.0.0`
+    `33281724740`; closure commit `91fd13a` passed run `33282068288`; versioned tag `v1.0.0`
     exists there. Run `33245460710` / `33246222640` remains historical evidence for the previous
-    bilingual state. Run `33324226518` at `bb338a4e2716d42e4394f4cc465f8e8ebe7db8f7` is preliminary
-    v1.1 evidence only: it predates the bounded unknown-length download and shared-slice checks.
-    For the current safety-repaired v1.1.0 candidate, the implementation commit must pass 45/45; an
-    evidence-only commit must then pass 45/45; the exact closure commit must pass 45/45 on `develop`;
-    only then may the immutable tag exist. Earlier f508/a7 candidate runs remain historical evidence
-    but do not prove the repaired bytes.
+    bilingual state. Current v1.1 implementation commit
+    `2003d7b47aa13d71b3e37294df0c32fb15577d23` passed all 45 jobs in run
+    `33460169077`. The bilingual documentation revision must then pass 45/45 as the evidence-only
+    checkpoint; the exact closure commit must pass 45/45 on `develop`; only then may the versioned tag
+    exist. Earlier f508/a7 candidate runs remain historical evidence.
 
 ## 16. Non-goals (v1.1)
 Non-interactive install; a separate public `reload` or `reconfigure` subcommand; BIND; UDP ASSOCIATE;
@@ -532,15 +535,29 @@ Docker; multi-node management; distro packaging; automatic upgrades; 3proxy 1.x;
 RHEL/Rocky/Alma.
 
 ## 17. README requirements
+- `README.md` is the complete English operator document and `README.zh-CN.md` is the complete
+  Simplified Chinese document. Both carry `[English](README.md) | [简体中文](README.zh-CN.md)` near
+  the top and use the same section order. Commands, paths, hashes, run IDs, URLs, protocol tokens,
+  numeric limits, release status and security facts are identical; a load-bearing fact changes in
+  both files in the same commit.
+- Both documents lead with a complete Alpine Linux deployment tutorial before the general distro
+  quick start: explain that process-substitution support is BusyBox-build-dependent and that quoted
+  `bash -c` deliberately guarantees Bash parsing; retain the exact bootstrap, separate bootstrap packages from runtime dependencies, document musl
+  assets, OpenRC/default-runlevel/syslog behavior, root-shell management without assuming `sudo`,
+  the operator-owned firewall/cloud port, and the 128 MiB whole-container CI gate. State that the
+  floor is Alpine 3.20+ while exact current evidence covers 3.20/3.24; do not promise a universal
+  syslog-reading command or arm64 OpenRC lifecycle evidence.
 - Use the name **SOCKS5** exclusively, and show only `socks5://user:password@host:port`. Never
   advertise, display, or provide a usage example for SOCKS4, SOCKS4a, or SOCKS4.5. State that
   CONNECT is the only supported command and that BIND and UDP ASSOCIATE are unsupported.
 - The primary Ubuntu/Debian/CentOS install form is the exact published
-  `bash <(wget -qO- …/develop/socks5.sh)` command. Because stock Alpine ash parses `<(...)` before
-  Bash executes, document its exact `apk add --no-cache bash wget && bash -c 'bash <(wget …)'`
+  `bash <(wget -qO- …/develop/socks5.sh)` command. The stock-Alpine form must explicitly install Bash
+  and use a quoted `bash -c` string so the project does not depend on optional BusyBox compatibility;
+  document its exact `apk add --no-cache bash wget && bash -c 'bash <(wget …)'`
   one-liner separately. Never use `wget … | sh` (it feeds source into prompt stdin) or a fixed
   `/tmp/socks5.sh` path.
-- Keep the convenient moving `develop` commands but also document immutable semantic-version tags and
+- Keep the convenient moving `develop` commands but also document versioned semantic tags, the
+  project never-move policy, the lack of GitHub-enforced tag immutability, and
   the exact SHA-256 of each tagged `socks5.sh`. The README must call v1.1 a candidate until the current
   implementation commit passes 45/45, an evidence-only commit records that proof and passes 45/45,
   and the exact closure commit passes 45/45 on `develop`; only then is the tag created at that closure
@@ -559,7 +576,7 @@ RHEL/Rocky/Alma.
 - State plainly: the password is plaintext in a permission-protected file readable by root and the
   proxy process; SOCKS5 auth is **cleartext on the wire**; SOCKS5 is **not** an encrypted VPN;
   sensitive use should be combined with SSH, TLS, or a VPN.
-- Document the immutable engine release, four libc/architecture assets, embedded size/SHA checks,
+- Document the versioned engine release, four libc/architecture assets, embedded size/SHA checks,
   target-side no-compile policy, 128 MiB gate, and only the runtime dependencies that may be left in
   place.
 - State that v1 pins one upstream commit, so **the operator owns updates**. 3proxy's `lts` channel is
@@ -571,18 +588,17 @@ RHEL/Rocky/Alma.
 **Verification status (2026-08-30).** The released v1.0.0 evidence chain remains Round 17:
 implementation `3b58e194887bf91a06b789353c06033b70c49c59` / run `33281392984`, evidence-only
 `a8ed8255fba6c9bf9b8247582d6b77ebf65d8374` / run `33281724740`, and closure `91fd13a` /
-run `33282068288`, all 45/45 before the immutable tag was created.
+run `33282068288`, all 45/45 before the versioned tag was created under the never-move policy.
 
-The later release-asset checkpoints `f508666e0b31512b32502a3bb1a85b9742671b52` /
-`33355799664` and `a7fbaeb2e9a6507fe45a502c65324c828d132fc8` / `33376645854` each passed
-45/45 on `develop`, but both precede the current fail-closed resource-claim and identity-race repair.
-They are superseded historical candidate evidence, not proof of the current bytes. The repaired
-implementation, evidence-only and exact `develop` closure runs remain pending and must follow the
-§15.17 sequence before `v1.1.0` is tagged. Environmental risks remain: package repositories,
-DNS and the fixed HTTPS self-test require egress; cloud images may differ from the tested base
-images; and the pinned 3proxy 0.9 branch has no published maintenance window, so the operator still
-owns updates (§17). Historical bilingual evidence remains in runs `33245460710` /
-`33246222640`; those runs are not evidence for the v1.1 release-asset candidate.
+Current implementation commit `2003d7b47aa13d71b3e37294df0c32fb15577d23` passed all 45
+jobs in run `33460169077`, including the repaired no-replace/identity boundaries and all Alpine
+compatibility, protocol and OpenRC cells described in §13. The bilingual documentation revision is
+the prospective evidence-only checkpoint and has no earned run yet; exact `develop` closure evidence
+also remains pending and must follow §15.17 before `v1.1.0` is tagged. Earlier f508/a7 runs remain
+historical candidate evidence. Environmental risks remain: package repositories, DNS and the fixed
+HTTPS self-test require egress; cloud images may differ from the tested base images; and the pinned
+3proxy 0.9 branch has no published maintenance window, so the operator still owns updates (§17).
+Historical bilingual evidence remains in runs `33245460710` / `33246222640`.
 
 **Decided:**
 - Publishing target: `github.com/91sexboy/One-click-socks5-proxy-setup`; the README raw URL is

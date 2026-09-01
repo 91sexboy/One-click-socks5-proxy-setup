@@ -23,13 +23,15 @@ CI="$R/.github/workflows/ci.yml"
 # F8: public operator documentation must contain no legacy SOCKS-family token.
 # The CI gate is deliberately allowlist-free: any occurrence is a failure.
 # ==========================================================================
-assert_eq "the real README contains no legacy family token" 0 \
-    "$(grep -rciE 'socks4' "$R/README.md" || true)"
-if grep -F "grep -rniE 'socks4' README.md" "$CI" >/dev/null &&
-    ! grep -F "grep -rniE 'socks4' README.md |" "$CI" >/dev/null; then
+assert_eq "the English README contains no legacy family token" 0 \
+    "$(grep -ciE 'socks4' "$R/README.md" || true)"
+assert_eq "the Chinese README contains no legacy family token" 0 \
+    "$(grep -ciE 'socks4' "$R/README.zh-CN.md" 2>/dev/null || true)"
+if grep -F "grep -niE 'socks4' README.md README.zh-CN.md" "$CI" >/dev/null &&
+    ! grep -F "grep -niE 'socks4' README.md README.zh-CN.md |" "$CI" >/dev/null; then
     t_ok
 else
-    t_bad "CI must reject every README SOCKS4 occurrence without an allowlist"
+    t_bad "CI must reject every occurrence in both README files without an allowlist"
 fi
 if grep -F 'grep -viE' "$CI" | grep -qi 'socks4'; then
     t_bad "the README legacy-family gate must not carry an allowlist"
@@ -38,11 +40,13 @@ else
 fi
 
 SCRATCH=$(mktemp -d)
-cp "$R/README.md" "$SCRATCH/R.md"
-printf '\nYou can also point legacy clients at socks4://host:port for convenience.\n' >>"$SCRATCH/R.md"
-scratch_hits=$(grep -rniE 'socks4' "$SCRATCH/R.md" || true)
-assert_contains "the strict gate catches a legacy-family advertisement" \
-    "socks4://" "$scratch_hits"
+for _readme in README.md README.zh-CN.md; do
+    cp "$R/$_readme" "$SCRATCH/$_readme"
+    printf '\nYou can also point legacy clients at socks4://host:port for convenience.\n' >>"$SCRATCH/$_readme"
+    scratch_hits=$(grep -niE 'socks4' "$SCRATCH/$_readme" || true)
+    assert_contains "the strict gate catches an advertisement in $_readme" \
+        "socks4://" "$scratch_hits"
+done
 rm -rf "$SCRATCH"
 
 # ==========================================================================

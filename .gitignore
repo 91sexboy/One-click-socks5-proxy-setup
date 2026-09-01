@@ -13,3 +13,4 @@ __pycache__/
 # `git bundle` kept outside this tree.
 .claude/
 tasks/
+.scratch/
