@@ -199,6 +199,16 @@ assert_ne "accepting bad credentials fails the check" 0 "$T_STATUS"
 assert_contains "accepting bad credentials is reported as a security failure" "SECURITY" "$T_OUT"
 rm -f "$S5_TEST_ROOT/stub_curl_accept_all"
 
+# curl 7.68 reports an explicit SOCKS5 credential rejection as CURLE_COULDNT_CONNECT
+# (7), but its error text distinguishes that protocol verdict from an ordinary
+# connect failure. Accept only that exact legacy signature; generic curl 7 remains
+# inconclusive in the loop below.
+s5env_reset_transcript
+: >"$S5_TEST_ROOT/stub_curl_legacy_auth_reject"
+t_run s5_selftest_bad "$USER_OK" "$PASS_OK"
+assert_eq "legacy curl explicit SOCKS5 auth rejection is accepted" 0 "$T_STATUS"
+rm -f "$S5_TEST_ROOT/stub_curl_legacy_auth_reject"
+
 # ...and a failure that is NOT a proxy handshake error proves nothing about
 # authentication, so it must be reported as inconclusive rather than as a pass.
 # Only curl 97 (CURLE_PROXY) shows the proxy itself rejected the credential; 7

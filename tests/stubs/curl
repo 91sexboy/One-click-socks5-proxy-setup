@@ -63,6 +63,10 @@ if [ "${1:-}" = "--config" ] && [ "${2:-}" = "-" ]; then
         printf 'curl: (97) proxy handshake failed\n' >&2
         exit 97
     fi
+    if [ -f "$S5_TEST_ROOT/stub_curl_legacy_auth_reject" ]; then
+        printf 'curl: (7) User was rejected by the SOCKS5 server (1 1).\n' >&2
+        exit 7
+    fi
     # An arbitrary NON-97 failure on the proxy path. s5_selftest_bad treats only
     # curl 97 (CURLE_PROXY) as proof that the *proxy* refused the credential;
     # anything else is "inconclusive, refusing to continue". Without this marker

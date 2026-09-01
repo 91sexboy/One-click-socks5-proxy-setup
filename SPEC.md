@@ -396,7 +396,10 @@ starting the process; this spec makes no such claim. Sequence:
 Credential checks use `curl -q --config -`, feeding `socks5-hostname`, `proxy-user`, and `url` on
 **stdin** so ambient curlrc files cannot alter the request and the password never appears in `argv`.
 The rejection probe uses the configured username with a guaranteed-different valid password, not an
-unknown user. This needs server egress; when the service is up and the port listening but the request
+unknown user. Current curl proves rejection with CURLE_PROXY (97); curl 7.68 reports the same SOCKS5
+credential status as CURLE_COULDNT_CONNECT (7), so that legacy status counts only when libcurl emits
+its protocol-generated `User was rejected by the SOCKS5 server` text. Any other status/text pair is
+inconclusive. This needs server egress; when the service is up and the port listening but the request
 fails, the report must distinguish: proxy auth failure; no outbound network; DNS failure; external
 test service unavailable.
 

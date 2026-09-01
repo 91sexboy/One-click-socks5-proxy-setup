@@ -55,9 +55,11 @@ fail=0
 inconclusive=0
 gate_violation=0
 
-# curl's CURLE_PROXY. Only this status proves the PROXY refused the handshake;
-# any other non-zero status means the attempt failed for an unrelated reason.
+# Current curl uses CURLE_PROXY. curl 7.68 reports the same explicit SOCKS5
+# credential rejection as CURLE_COULDNT_CONNECT plus a protocol-specific error.
 S5_CURL_PROXY_ERR=97
+S5_CURL_LEGACY_PROXY_ERR=7
+S5_CURL_LEGACY_AUTH_TEXT='User was rejected by the SOCKS5 server'
 
 ok() {
     pass=$((pass + 1))
@@ -143,15 +145,18 @@ esac
 # case that proves authentication is enforced was the easiest in the file to
 # pass accidentally. curl is now classified the same way as cases 4a/5a (only
 # CURLE_PROXY is attributable to the proxy) and probe 2b is authoritative.
-curl_socks5 "$PROXY_USER" "$S5_WRONG_PASS" >/dev/null 2>&1
+curl2err=$(curl_socks5 "$PROXY_USER" "$S5_WRONG_PASS" 2>&1)
 rc2=$?
 if [ "$rc2" -eq 0 ]; then
     bad "2a curl: SOCKS5 accepted a wrong password"
-elif [ "$rc2" -eq "$S5_CURL_PROXY_ERR" ]; then
-    ok "2a curl: SOCKS5 + wrong password refused by the proxy (curl $S5_CURL_PROXY_ERR)"
+elif [ "$rc2" -eq "$S5_CURL_PROXY_ERR" ] ||
+    { [ "$rc2" -eq "$S5_CURL_LEGACY_PROXY_ERR" ] &&
+      printf '%s\n' "$curl2err" | grep -Fq "$S5_CURL_LEGACY_AUTH_TEXT"; }; then
+    ok "2a curl: SOCKS5 + wrong password refused by the proxy (curl $rc2)"
 else
     note "2a curl: SOCKS5 + wrong password did not succeed (curl $rc2, indicative only; 2b is authoritative)"
 fi
+curl2err=''
 probe socks5-badauth wrong-creds
 case $? in
 1) ok "2b probe: wrong credentials caused the proxy to reject CONNECT" ;;

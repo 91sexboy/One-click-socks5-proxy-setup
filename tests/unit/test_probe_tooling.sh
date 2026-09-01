@@ -402,8 +402,12 @@ code_has "an accepted wrong password fails the run" \
     "$RP" 'bad "2b probe: SOCKS5 ACCEPTED a wrong password and granted CONNECT"'
 code_has "and an inconclusive probe result fails too" \
     "$RP" 'bad "2b probe: inconclusive'
-code_has "curl's verdict is classified by CURLE_PROXY, not by any non-zero exit" \
+code_has "curl recognizes current CURLE_PROXY rejection" \
     "$RP" '[ "$rc2" -eq "$S5_CURL_PROXY_ERR" ]'
+code_has "curl recognizes the legacy status only with protocol text" \
+    "$RP" '[ "$rc2" -eq "$S5_CURL_LEGACY_PROXY_ERR" ]'
+code_has "legacy curl classification pins the SOCKS5 rejection signature" \
+    "$RP" 'S5_CURL_LEGACY_AUTH_TEXT'
 code_has "and an unrelated curl failure is marked indicative only" \
     "$RP" '2b is authoritative'
 # The deliberately-wrong password must be proven different from the real one:

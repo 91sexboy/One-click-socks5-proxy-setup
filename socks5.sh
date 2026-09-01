@@ -59,6 +59,10 @@ S5_USER_MAX=32
 # curl's CURLE_PROXY. The only exit status that proves a SOCKS handshake was
 # refused by the proxy rather than failing for an unrelated reason.
 S5_CURL_PROXY_ERR=97
+# curl before CURLE_PROXY existed reports an explicit SOCKS5 credential rejection
+# as CURLE_COULDNT_CONNECT, while emitting a protocol-specific libcurl error.
+S5_CURL_LEGACY_PROXY_ERR=7
+S5_CURL_LEGACY_AUTH_TEXT='User was rejected by the SOCKS5 server'
 # curl's CURLE_HTTP_RETURNED_ERROR, emitted only when --fail is active.
 S5_CURL_HTTP_ERR=22
 
@@ -6661,29 +6665,32 @@ s5_selftest_good() {
 }
 
 # The configured username paired with a guaranteed-different password must be
-# refused BY THE PROXY. Only curl's CURLE_PROXY (97) proves that; any other
-# status leaves the authentication property unverified.
+# refused BY THE PROXY. Current curl uses CURLE_PROXY (97); curl 7.68 uses
+# CURLE_COULDNT_CONNECT (7) but emits a protocol-specific libcurl rejection text.
+# Every other status/text combination remains inconclusive.
 s5_selftest_bad() {
     _stu=$1
     case "$2" in
     A*) _stp="B${2#?}" ;;
     *) _stp="A${2#?}" ;;
     esac
-    s5_curl_config "$_stu" "$_stp" | curl -q --config - >/dev/null 2>&1
+    _sterr=$(s5_curl_config "$_stu" "$_stp" | curl -q --config - 2>&1)
     _strc=$?
+    _stresult=0
     if [ "$_strc" -eq 0 ]; then
-        _stu=''; _stp=''
         s5_err_msg selftest.security_accepted
-        return 1
-    fi
-    if [ "$_strc" -ne "$S5_CURL_PROXY_ERR" ]; then
-        _stu=''; _stp=''
+        _stresult=1
+    elif [ "$_strc" -eq "$S5_CURL_PROXY_ERR" ] ||
+        { [ "$_strc" -eq "$S5_CURL_LEGACY_PROXY_ERR" ] &&
+          printf '%s\n' "$_sterr" | grep -Fq "$S5_CURL_LEGACY_AUTH_TEXT"; }; then
+        _stresult=0
+    else
         s5_err_msg selftest.inconclusive "$_strc" "$S5_CURL_PROXY_ERR"
         s5_err_msg selftest.rejection_unproven
-        return 1
+        _stresult=1
     fi
-    _stu=''; _stp=''
-    return 0
+    _stu=''; _stp=''; _sterr=''
+    return "$_stresult"
 }
 
 s5_direct_egress_ok() {
