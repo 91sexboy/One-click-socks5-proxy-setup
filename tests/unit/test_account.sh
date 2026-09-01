@@ -16,7 +16,13 @@ reset_db() {
     : >"$S5_TEST_ROOT/stub_group"
     rm -f "$S5_TEST_ROOT/stub_userdel_fail" "$S5_TEST_ROOT/stub_groupdel_fail" \
         "$S5_TEST_ROOT/stub_no_userdel" "$S5_TEST_ROOT/stub_no_deluser" \
-        "$S5_TEST_ROOT/stub_getent_error"
+        "$S5_TEST_ROOT/stub_getent_error" \
+        "$S5_TEST_ROOT/stub_group_appear_on_second_query" \
+        "$S5_TEST_ROOT/stub_group_query_count" \
+        "$S5_TEST_ROOT/stub_group_rebind_after_capture" \
+        "$S5_TEST_ROOT/stub_group_postadd_queries" \
+        "$S5_TEST_ROOT/stub_group_created" \
+        "$S5_TEST_ROOT/stub_foreign_identity"
     s5env_reset_transcript
 }
 
@@ -198,6 +204,48 @@ assert_ne "install aborts when the group appears after the collision check" \
     0 "$T_STATUS"
 assert_contains "the abort names the group" "group" "$T_OUT"
 t_assert_never_called "no foreign group is adopted" 'groupadd'
+
+# The group can appear inside s5_account_create itself, after install_steps'
+# final absence check. The inner lookup must treat that as a collision rather
+# than accepting the late group and creating the proxy account inside it.
+reset_db
+S5_OS_FAMILY=debian
+rm -rf "$S5_STATEDIR" "$S5_SYSCONFDIR" "$S5_PREFIX"
+s5_state_begin >/dev/null 2>&1
+: >"$S5_TEST_ROOT/stub_group_appear_on_second_query"
+s5env_reset_transcript
+t_run s5_install_steps
+assert_ne "install rejects a group appearing between the outer and inner lookups" \
+    0 "$T_STATUS"
+assert_contains "the inner race is reported as a group collision" "group" "$T_OUT"
+t_assert_cmd_never_called "the late foreign group is never adopted" useradd adduser
+assert_file_absent "no credentials are written for the late foreign group" "$S5_USERSCFG"
+t_assert_cmd_never_called "the late foreign group is never deleted" groupdel delgroup
+assert_eq "the late foreign group remains present" "socks5proxy" \
+    "$(cat "$S5_TEST_ROOT/stub_group")"
+
+# Minimal Alpine images may not provide getent. Before the service user exists,
+# the group GID must be read from the rooted group database rather than `id -g`
+# on a group name.
+mkdir -p "$S5_ROOTDIR/etc"
+printf 'socks5proxy:x:912:\n' >"$S5_ROOTDIR/etc/group"
+_gid_without_getent=$(
+    command() { return 1; }
+    s5_current_gid
+)
+assert_eq "group GID fallback works without getent" 912 "$_gid_without_getent"
+
+# A group name can also be rebound after groupadd succeeds but before useradd
+# consumes it. The numeric GID captured at creation must still match before the
+# account is created.
+reset_db
+S5_OS_FAMILY=debian
+: >"$S5_TEST_ROOT/stub_group_rebind_after_capture"
+s5env_reset_transcript
+t_run s5_account_create
+assert_ne "account creation rejects a group rebound after groupadd" 0 "$T_STATUS"
+assert_contains "group rebinding is reported" "reused" "$T_OUT"
+t_assert_cmd_never_called "no user is attached to the rebound group" useradd adduser
 
 # ==========================================================================
 # Ownership fingerprints. The fixed names can be removed and recreated by an

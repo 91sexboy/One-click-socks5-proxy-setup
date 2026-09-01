@@ -59,6 +59,31 @@ id)
 getent)
     if [ -f "$S5_TEST_ROOT/stub_getent_error" ]; then exit 3; fi
     if [ "${1:-}" = "group" ]; then
+        if [ -f "$S5_TEST_ROOT/stub_group_appear_on_second_query" ]; then
+            _gqc=0
+            if [ -f "$S5_TEST_ROOT/stub_group_query_count" ]; then
+                _gqc=$(cat "$S5_TEST_ROOT/stub_group_query_count" 2>/dev/null)
+                case "$_gqc" in '' | *[!0-9]*) _gqc=0 ;; esac
+            fi
+            _gqc=$((_gqc + 1))
+            printf '%s\n' "$_gqc" >"$S5_TEST_ROOT/stub_group_query_count"
+            if [ "$_gqc" -eq 2 ] && ! has_group "${2:-}"; then
+                add_line "$GR" "${2:-}"
+            fi
+        fi
+        if [ -f "$S5_TEST_ROOT/stub_group_rebind_after_capture" ] &&
+            [ -f "$S5_TEST_ROOT/stub_group_created" ]; then
+            _grc=0
+            if [ -f "$S5_TEST_ROOT/stub_group_postadd_queries" ]; then
+                _grc=$(cat "$S5_TEST_ROOT/stub_group_postadd_queries" 2>/dev/null)
+                case "$_grc" in '' | *[!0-9]*) _grc=0 ;; esac
+            fi
+            _grc=$((_grc + 1))
+            printf '%s\n' "$_grc" >"$S5_TEST_ROOT/stub_group_postadd_queries"
+            if [ "$_grc" -ge 2 ]; then
+                : >"$S5_TEST_ROOT/stub_foreign_identity"
+            fi
+        fi
         if has_group "${2:-}"; then
             printf '%s:x:%s:\n' "${2:-}" "$(getent_gid "${2:-}")"
             exit 0
@@ -88,6 +113,7 @@ useradd | adduser)
     ;;
 groupadd | addgroup)
     add_line "$GR" "$name"
+    : >"$S5_TEST_ROOT/stub_group_created"
     exit 0
     ;;
 userdel | deluser)

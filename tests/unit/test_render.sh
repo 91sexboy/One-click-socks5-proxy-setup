@@ -5,6 +5,7 @@
 S5T_NAME=test_render
 . "${S5_REPO_ROOT}/tests/lib/assert.sh"
 . "${S5_REPO_ROOT}/tests/lib/stub.sh"
+. "${S5_REPO_ROOT}/tests/lib/env.sh"
 
 t_mktestroot
 t_stub_init
@@ -174,6 +175,7 @@ S5_OS_FAMILY=alpine
 assert_eq "nologin path on alpine" "/sbin/nologin" "$(s5_nologin_path)"
 
 : >"$T_TRANSCRIPT"
+s5env_account_stubs
 S5_OS_FAMILY=debian
 t_run s5_account_create
 assert_eq "account creation succeeds on debian" 0 "$T_STATUS"
@@ -184,6 +186,9 @@ t_assert_called "nologin shell" 'nologin'
 t_assert_cmd_never_called "no password is ever set on the account" passwd chpasswd
 
 : >"$T_TRANSCRIPT"
+: >"$S5_TEST_ROOT/stub_passwd"
+: >"$S5_TEST_ROOT/stub_group"
+rm -f "$S5_TEST_ROOT/stub_group_created"
 S5_OS_FAMILY=alpine
 t_run s5_account_create
 assert_eq "account creation succeeds on alpine" 0 "$T_STATUS"

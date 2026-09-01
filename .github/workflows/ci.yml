@@ -76,30 +76,10 @@ jobs:
           python3 -m py_compile tests/protocol/socks_probe.py
           python3 -m py_compile tests/pty/interrupt.py
           python3 -m py_compile tests/pty/show_xtrace.py
-      - name: Documentation must never advertise SOCKS4
+      - name: Documentation names only the supported SOCKS5 surface
         run: |
-          # The allowlist exempts a line from the advertisement check, so every
-          # token in it is a hole. Each one below is the sole cover for exactly
-          # one README line, and is specific enough that it cannot appear in an
-          # advertisement. The previous list carried bare negations -- `never`,
-          # `does not`, `cannot`, `refus`, `fails` -- which exempt a line for
-          # negating anything at all: "SOCKS4 is fully supported; the password is
-          # never logged" passed. `enable SOCKS4` was worse, exempting the literal
-          # sentence "We enable SOCKS4 for legacy clients". Six tokens covered no
-          # line at all. Keep this list minimal and line-specific; if a README
-          # edit trips it, reword the README rather than widening the allowlist.
-          if grep -rniE 'socks4' README.md | grep -viE 'not supported|rejection tests|no option|only a user-ID|not[^ ]* enable SOCKS4|fails the job'; then
-            echo "README must not advertise SOCKS4 in any form" >&2
-            exit 1
-          fi
-          # ...and the number of SOCKS4-mentioning lines is pinned. Without this,
-          # a NEW advertisement that happens to contain a token meant for a
-          # different line is exempted silently. Any change to the count must be
-          # a deliberate edit here, which forces the new line to be read.
-          n=$(grep -rciE 'socks4' README.md)
-          if [ "$n" -ne 6 ]; then
-            echo "README has $n SOCKS4-mentioning lines, expected 6." >&2
-            echo "Read the new/removed line, confirm it is not an offer, then update this count." >&2
+          if grep -rniE 'socks4' README.md; then
+            echo "README must not display or advertise a legacy SOCKS family" >&2
             exit 1
           fi
       - name: The release gates must have no escape hatch

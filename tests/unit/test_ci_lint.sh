@@ -20,89 +20,30 @@ R="${S5_REPO_ROOT}"
 CI="$R/.github/workflows/ci.yml"
 
 # ==========================================================================
-# F8: the two SOCKS4 doc-lint allowlists must be byte-identical, and the CI
-# pipeline must actually pass against the real README.
+# F8: public operator documentation must contain no legacy SOCKS-family token.
+# The CI gate is deliberately allowlist-free: any occurrence is a failure.
 # ==========================================================================
-ci_pat=$(grep -F 'grep -viE' "$CI" | head -n 1 | sed -e "s/.*grep -viE '//" -e "s/'.*//")
-doc_pat=$(grep -F 'grep -viE' "$R/tests/unit/test_docs.sh" | head -n 1 | sed -e "s/.*grep -viE '//" -e "s/'.*//")
-assert_ne "the CI allowlist was found" "" "$ci_pat"
-assert_ne "the test_docs allowlist was found" "" "$doc_pat"
-assert_eq "the two SOCKS4 doc-lint allowlists are identical" "$ci_pat" "$doc_pat"
-
-# Run the CI job's exact pipeline. It must produce no output.
-ci_hits=$(grep -rniE 'socks4' "$R/README.md" | grep -viE "$ci_pat" || true)
-if [ -z "$ci_hits" ]; then
+assert_eq "the real README contains no legacy family token" 0 \
+    "$(grep -rciE 'socks4' "$R/README.md" || true)"
+if grep -F "grep -rniE 'socks4' README.md" "$CI" >/dev/null &&
+    ! grep -F "grep -rniE 'socks4' README.md |" "$CI" >/dev/null; then
     t_ok
 else
-    t_bad "the CI doc-lint would fail on: $ci_hits"
+    t_bad "CI must reject every README SOCKS4 occurrence without an allowlist"
+fi
+if grep -F 'grep -viE' "$CI" | grep -qi 'socks4'; then
+    t_bad "the README legacy-family gate must not carry an allowlist"
+else
+    t_ok
 fi
 
-# And the local pipeline, for symmetry.
-doc_hits=$(grep -rniE 'socks4' "$R/README.md" | grep -viE "$doc_pat" || true)
-assert_eq "both pipelines agree on the same README" "$ci_hits" "$doc_hits"
-
-# The allowlist must not have become a catch-all: a genuine advertisement in a
-# scratch copy still has to be caught.
 SCRATCH=$(mktemp -d)
 cp "$R/README.md" "$SCRATCH/R.md"
 printf '\nYou can also point legacy clients at socks4://host:port for convenience.\n' >>"$SCRATCH/R.md"
-scratch_hits=$(grep -rniE 'socks4' "$SCRATCH/R.md" | grep -viE "$ci_pat" || true)
-assert_contains "the allowlist still catches a real advertisement" "socks4://" "$scratch_hits"
+scratch_hits=$(grep -rniE 'socks4' "$SCRATCH/R.md" || true)
+assert_contains "the strict gate catches a legacy-family advertisement" \
+    "socks4://" "$scratch_hits"
 rm -rf "$SCRATCH"
-
-# ...and specifically the advertisements the PREVIOUS allowlist let through. Its
-# bare negations exempted a line for negating anything at all, and `enable
-# SOCKS4` exempted the very sentence an operator would write to offer it. Each
-# line below is an offer of SOCKS4 and must be reported by the shipped pattern.
-ADS=$(mktemp -d)
-adcount=0
-while IFS= read -r ad; do
-    [ -n "$ad" ] || continue
-    printf '%s\n' "$ad" >"$ADS/line.md"
-    if grep -niE 'socks4' "$ADS/line.md" | grep -viE "$ci_pat" >/dev/null; then
-        t_ok
-    else
-        t_bad "the allowlist exempts an advertisement: $ad"
-    fi
-    adcount=$((adcount + 1))
-done <<'ADEOF'
-SOCKS4 is fully supported; the password is never logged.
-We enable SOCKS4 for legacy clients.
-SOCKS4 works and the connection fails only on timeout.
-SOCKS4a is offered too, though DNS does not leak.
-Legacy clients cannot use SOCKS5, so SOCKS4 is available as a fallback.
-ADEOF
-assert_eq "every advertisement sample was actually tested" 5 "$adcount"
-rm -rf "$ADS"
-
-# Every token in the shipped allowlist must be load-bearing against the real
-# README: one that covers no line is a hole with no purpose. The tokens are read
-# out of the pattern the pipeline actually uses, split on the ERE alternation.
-# Read from a file, not a pipe: a `while read` on the right of a pipe runs in a
-# subshell in most shells, so the accumulated result would be discarded.
-TOKD=$(mktemp -d)
-s4lines=$(grep -niE 'socks4' "$R/README.md")
-printf '%s\n' "$ci_pat" | tr '|' '\n' >"$TOKD/toks"
-untok=''
-ntok=0
-while IFS= read -r _t; do
-    [ -n "$_t" ] || continue
-    ntok=$((ntok + 1))
-    printf '%s\n' "$s4lines" | grep -qiE -- "$_t" || untok="$untok [$_t]"
-done <"$TOKD/toks"
-assert_eq "no allowlist token covers zero README lines" "" "$untok"
-if [ "$ntok" -ge 1 ]; then t_ok; else t_bad "the allowlist split yielded no tokens"; fi
-rm -rf "$TOKD"
-
-# The count pin is read out of the CI job rather than restated here, so this
-# cannot pass by checking a number the pipeline does not use.
-ci_pin=$(grep -F 'if [ "$n" -ne ' "$CI" | head -n 1 | sed -e 's/.*-ne //' -e 's/[^0-9].*//')
-case "$ci_pin" in
-'' | *[!0-9]*) t_bad "the CI pipeline does not pin the SOCKS4 line count (found: '$ci_pin')" ;;
-*) t_ok ;;
-esac
-assert_eq "the CI count pin matches the real README" \
-    "$ci_pin" "$(grep -ciE 'socks4' "$R/README.md")"
 
 # ==========================================================================
 # F9: no CI step may place a credential in a command's argv.

@@ -13,18 +13,22 @@ server does not compile anything.
 
 ## Quick start
 
+The raw `develop/socks5.sh` URL is the moving development channel and serves
+current candidate code. For immutable, reviewed bytes, use a published
+immutable semantic-version tag and verify its documented SHA-256.
+
 ### Ubuntu, Debian, or CentOS Stream
 
 Run as root, or from a root shell:
 
 ```sh
-bash <(wget -qO- https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-setup/main/socks5.sh)
+bash <(wget -qO- https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-setup/develop/socks5.sh)
 ```
 
 Curl alternative:
 
 ```sh
-bash <(curl -fsSL https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-setup/main/socks5.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-setup/develop/socks5.sh)
 ```
 
 ### Stock Alpine Linux
@@ -33,7 +37,7 @@ Alpine's default `ash` shell cannot parse `<(...)`. Install Bash first and hide
 the process substitution inside the string Bash will parse:
 
 ```sh
-apk add --no-cache bash wget && bash -c 'bash <(wget -qO- https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-setup/main/socks5.sh)'
+apk add --no-cache bash wget && bash -c 'bash <(wget -qO- https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-setup/develop/socks5.sh)'
 ```
 
 Do not replace these commands with `wget ... | sh`: the installer is
@@ -42,7 +46,7 @@ interactive, so piping the script into `sh` would consume the wizard's stdin.
 ### Read the script before running it
 
 ```sh
-wget -qO socks5.sh https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-setup/main/socks5.sh
+wget -qO socks5.sh https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-setup/develop/socks5.sh
 less socks5.sh
 sudo sh socks5.sh
 ```
@@ -71,6 +75,8 @@ No port, username, or password is collected before that step finishes.
    `A-Z a-z 0-9 _ -` and must be 3–32 characters.
 5. **Password** — Enter generates a 32-character password. Custom input is visible,
    read once, limited to `A-Z a-z 0-9 . _ ~ -`, and must be 12–128 characters.
+   Enter it only where another person, terminal recorder, or serial-console logger
+   cannot observe the screen.
 
 Entering only blank answers selects Chinese and securely generated values.
 Package-manager and service-manager output remains in the language those tools
@@ -96,15 +102,16 @@ authentication:
 | Username | `Username` |
 | Password | `Password` |
 
-The Host is a strictly validated public IPv4 derived from one short HTTPS
-request. The endpoint sees only the server's source IP and request time; no
-port, username, or password is sent. A source IP is an egress observation, not
-proof that inbound traffic can reach the server.
+The Host is a strictly validated public IPv4 derived from exactly one short HTTPS
+request per card to the fixed endpoint `https://icanhazip.com`. The endpoint sees
+only the server's source IP and request time; no port, username, or password is
+sent. A source IP is an egress observation, not proof that inbound traffic can
+reach the server.
 
 If lookup fails or returns anything other than one public IPv4, the card uses
-`SERVER_IPV4`. Replace that placeholder with your server's public IPv4. The
-lookup response is capped at 17 bytes, and lookup failure does not fail the
-installation.
+`SERVER_IPV4` and prints exactly one localized warning telling you to replace it
+with your server's public IPv4. The lookup response is capped at 17 bytes, and
+lookup failure does not fail the installation.
 
 If output was redirected or piped, installation still completes but the secret
 card is withheld. Run `sudo sh socks5.sh show` from a real terminal to display
@@ -188,17 +195,12 @@ closed instead of being guessed.
 | Unauthenticated connections | Rejected |
 | BIND | Rejected |
 | UDP ASSOCIATE | Rejected |
-| SOCKS4 / SOCKS4a / SOCKS4.5 | **not supported** — rejected |
 
 The generated config uses `auth strong`, `socks -u2`, a CONNECT-only allow rule,
-and a terminal `deny *`.
-
-- `-4` means **IPv4 destination resolution only**. It does *not* enable SOCKS4.
-- `-u2` means **require username/password** among the offered authentication methods.
-- 3proxy has no option to disable SOCKS4 parsing, so authentication and protocol tests enforce the boundary.
-- SOCKS4 carries only a user-ID and cannot complete RFC 1929 password authentication.
-- CI runs SOCKS4 and SOCKS4a rejection tests in every protocol matrix cell.
-- A SOCKS4-family success fails the job and blocks release.
+and a terminal `deny *`. The `-4` flag means **IPv4 destination resolution only**;
+`-u2` means **require username/password** among the offered authentication
+methods. CI rejection probes enforce that only the documented SOCKS5 surface can
+succeed; any legacy-family success fails the job and blocks release.
 
 Destination ACLs deny this-network, private, CGNAT, loopback, link-local
 (including `169.254.169.254`), multicast, and reserved IPv4 ranges before the
@@ -271,6 +273,9 @@ supported targets install curl only when it is genuinely absent. Runtime
 packages are intentionally left in place after uninstall because the script
 cannot know what else depends on them. Keeping the pinned engine updated is
 also your responsibility; it is not managed by the distro package manager.
+3proxy calls the 0.9 branch `lts` but documents no published support window for
+it. This project pins one commit, so do not assume upstream security backports automatically reach this installation; monitor upstream and move to a newly
+reviewed release when needed.
 
 The immutable engine release `engine-3proxy-0.9.9.0-r1` contains four binaries
 built from pinned commit `da99424eac4092e3722f1a5b1844cfe80478f580`:
@@ -310,8 +315,8 @@ an unrelated 3proxy installation, or files outside the project namespace.
 
 ### v1.0.0 — published
 
-The immutable `v1.0.0` tag points to closure commit `91fd13a`. Its own reachable-main
-run [`33282068288`](https://github.com/91sexboy/One-click-socks5-proxy-setup/actions/runs/33282068288)
+The immutable `v1.0.0` tag points to closure commit `91fd13a`. Its push run on
+the then-current `main`, [run `33282068288`](https://github.com/91sexboy/One-click-socks5-proxy-setup/actions/runs/33282068288),
 passed 45/45. The tagged script is available at
 `https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-setup/v1.0.0/socks5.sh`
 and has SHA-256:
@@ -324,32 +329,38 @@ acbfbfe3e6ba0f37f4e2a24ba8a6d68ec5a36513caae2e22e44a0ed28322e0b1
 
 The candidate adds transactional updates, bilingual lifecycle management,
 hardened credential cards, verified prebuilt engine assets, bounded downloads,
-and 128 MiB lifecycle gates. Current candidate `socks5.sh` SHA-256:
+128 MiB lifecycle gates, and fail-closed resource claiming. Current candidate
+`socks5.sh` SHA-256:
 
 ```text
-081fa3f37654c43c89e416c31843171e3aff6b53b70be77f734597f20c337478  socks5.sh
+858b89bc9713ec14a4864b928b1128ec96b794cf73a28dfbe3058a8acee823c9  socks5.sh
 ```
 
-Implementation commit `f508666e0b31512b32502a3bb1a85b9742671b52` passed
-[CI run 33355799664](https://github.com/91sexboy/One-click-socks5-proxy-setup/actions/runs/33355799664):
-**45 of 45 jobs passed**. This satisfies the repaired implementation checkpoint.
-The evidence-only checkpoint and exact reachable-main closure checkpoint are
-still pending; `v1.1.0` has not been tagged.
+Before the current safety repair, implementation commit
+`f508666e0b31512b32502a3bb1a85b9742671b52` passed
+[CI run 33355799664](https://github.com/91sexboy/One-click-socks5-proxy-setup/actions/runs/33355799664)
+and evidence commit `a7fbaeb2e9a6507fe45a502c65324c828d132fc8` passed
+[CI run 33376645854](https://github.com/91sexboy/One-click-socks5-proxy-setup/actions/runs/33376645854), both 45/45. Those runs are superseded by the current safety repair
+because `socks5.sh` changed again; they are historical evidence, not proof of the
+current candidate.
 
-The release chain is deliberate: the implementation commit must pass 45/45;
-the evidence-only commit must then pass 45/45 after recording that full SHA and
-run; the exact closure commit must pass 45/45 on `main`. Only then is the immutable
-`v1.1.0` tag created at that exact closure commit, and it is never moved.
+The release chain must restart: the repaired implementation commit must pass 45/45; an evidence-only commit must then pass 45/45 after recording that full
+SHA and run; the exact closure commit must pass 45/45 on `develop`. Only then is
+Only then is the immutable `v1.1.0` tag created at that exact closure commit,
+and it is never moved.
 
 After the tag exists, download and verify it with:
 
 ```sh
 wget -qO socks5.sh https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-setup/v1.1.0/socks5.sh
-printf '%s  %s\n' '081fa3f37654c43c89e416c31843171e3aff6b53b70be77f734597f20c337478' socks5.sh | sha256sum -c -
+printf '%s  %s\n' '858b89bc9713ec14a4864b928b1128ec96b794cf73a28dfbe3058a8acee823c9' socks5.sh | sha256sum -c -
 sudo sh socks5.sh
 ```
 
-Until then, the one-line `main` URL continues to fetch the released v1.0.0 tree.
+Until then, `/develop/socks5.sh` remains the moving development channel and
+serves the current v1.1 candidate. Use `/v1.0.0/socks5.sh` for immutable released
+v1.0 bytes; after publication, `/v1.1.0/socks5.sh` will identify immutable v1.1
+bytes.
 
 ## Verification and development
 
@@ -363,7 +374,8 @@ S5_TEST_SHELL='busybox sh' sh tests/run.sh
 sh -n socks5.sh
 ```
 
-The implementation checkpoint run `33355799664` covered 45 blocking jobs:
+The superseded pre-safety implementation run `33355799664` demonstrates the
+45-job workflow structure the repaired candidate must pass again:
 
 | Job | Cells | Evidence |
 |---|---:|---|

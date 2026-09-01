@@ -539,8 +539,8 @@ s5_msg() {
     install.warning_protocols)
         [ "$#" -eq 0 ] || { s5_msg_contract_error install.warning_protocols 0 "$#"; return 1; }
         case "$S5_LANG" in
-        zh) printf '仅启用带用户名/密码的 SOCKS5 和 CONNECT。不支持 SOCKS4、SOCKS4a、BIND 和 UDP ASSOCIATE。' ;;
-        en) printf 'Only SOCKS5 with username/password and CONNECT is enabled. SOCKS4, SOCKS4a,' ;;
+        zh) printf '仅启用带用户名/密码的 SOCKS5 和 CONNECT。其他代理协议、BIND 和 UDP ASSOCIATE 均不支持。' ;;
+        en) printf 'Only SOCKS5 with username/password and CONNECT is enabled. Other proxy protocols,' ;;
         *) s5_msg_locale_error; return 1 ;;
         esac
         ;;
@@ -1342,8 +1342,8 @@ s5_msg() {
     usage.line_protocol2)
         [ "$#" -eq 0 ] || { s5_msg_contract_error usage.line_protocol2 0 "$#"; return 1; }
         case "$S5_LANG" in
-        zh) printf 'SOCKS4/4a/4.5、未认证 SOCKS5、BIND 和 UDP ASSOCIATE 均被拒绝。' ;;
-        en) printf 'and CONNECT only. SOCKS4/4a/4.5, unauthenticated SOCKS5, BIND and UDP ASSOCIATE' ;;
+        zh) printf '其他代理协议、未认证 SOCKS5、BIND 和 UDP ASSOCIATE 均被拒绝。' ;;
+        en) printf 'and CONNECT only. Other proxy protocols, unauthenticated SOCKS5, BIND and UDP ASSOCIATE' ;;
         *) s5_msg_locale_error; return 1 ;;
         esac
         ;;
@@ -3788,7 +3788,23 @@ S5_RECONFIG_ARMED=0
 S5_INSTALL_COMPLETE=0
 S5_WORKDIR=''
 S5_FETCH_READER_PID=''
-S5_INSTALL_TMP=''
+S5_PENDING_CLAIM_PATH=''
+S5_PENDING_CLAIM_KIND=''
+S5_PENDING_CLAIM_ID=''
+S5_PENDING_CLAIM_TEMP=''
+S5_STATE_DIR_CLAIM_ID=''
+S5_STATE_FILE_CLAIM_ID=''
+S5_CREATED_ACCOUNT_UID=''
+S5_CREATED_ACCOUNT_GID=''
+S5_ACCOUNT_UID=''
+S5_ACCOUNT_GID=''
+S5_CLAIM_PREFIX_ID=''
+S5_CLAIM_BIN_ID=''
+S5_CLAIM_CONFDIR_ID=''
+S5_CLAIM_USERS_ID=''
+S5_CLAIM_CFG_ID=''
+S5_CLAIM_UNIT_ID=''
+S5_CLAIM_INITSCRIPT_ID=''
 S5_IN_CLEANUP=0
 S5_LOCK_HELD=0
 S5_LOCK_TOKEN=''
@@ -3823,19 +3839,12 @@ s5_cleanup() {
         fi
     fi
 
-    if [ -n "$S5_INSTALL_TMP" ]; then
-        case "$S5_INSTALL_TMP" in
-        "$S5_PREFIX"/.s5bin.??????)
-            rm -f "$S5_INSTALL_TMP" || _clbad=1
-            if [ ! -e "$S5_INSTALL_TMP" ] && [ ! -L "$S5_INSTALL_TMP" ]; then
-                S5_INSTALL_TMP=''
-            fi
-            ;;
-        *)
-            s5_warn_msg build.rm_unexpected "$S5_INSTALL_TMP"
-            _clbad=1
-            ;;
-        esac
+    if [ -n "$S5_PENDING_CLAIM_PATH" ]; then
+        s5_pending_claim_remove || _clbad=1
+    fi
+
+    if [ -n "$S5_CREATED_ACCOUNT_UID" ] || [ -n "$S5_CREATED_ACCOUNT_GID" ]; then
+        s5_pending_account_remove || _clbad=1
     fi
 
     if [ "$S5_RECONFIG_ARMED" = "1" ]; then
@@ -4096,8 +4105,9 @@ s5_runtime_deps() {
     printf '%s' "$_rt"
 }
 
-# Commands that must already exist before installation can start. The compiler,
-# make and git are installed later and are deliberately NOT listed here.
+# Commands that must already exist before installation can start. Compiler,
+# make and git are deliberately absent: target hosts never install or invoke
+# a source-build toolchain.
 #
 # Everything the script invokes at a site that hard-fails belongs here, so a
 # missing utility is named by this gate instead of surfacing as an obscure error
@@ -4105,7 +4115,36 @@ s5_runtime_deps() {
 # next line of s5_precheck, tail in the destination-deny ordering check, rmdir
 # during uninstall, cp for transactional backups, wc for response bounds, and
 # mkfifo for the bounded engine-download stream).
-S5_BASE_COMMANDS='sed awk grep tr head tail cut id chown chmod mkdir rmdir rm mv cp cat printf stat mktemp mkfifo dirname uname wc sha256sum'
+S5_BASE_COMMANDS='sed awk grep tr head tail cut id chown chmod mkdir rmdir rm mv cp cat printf stat ln mktemp mkfifo dirname uname wc sha256sum'
+
+s5_no_replace_supported() {
+    if [ "${S5_TEST_MODE:-0}" = 1 ]; then
+        _nrbase=$S5_TEST_ROOT
+    else
+        _nrbase=/var/tmp
+    fi
+    _nrdir=$(mktemp -d "$_nrbase/.s5-ln.XXXXXX") || return 1
+    chmod 0700 "$_nrdir" || { rmdir "$_nrdir" 2>/dev/null || true; return 1; }
+    printf 'probe\n' >"$_nrdir/source" || { rmdir "$_nrdir" 2>/dev/null || true; return 1; }
+    if ! ln -T "$_nrdir/source" "$_nrdir/link" 2>/dev/null ||
+        [ "$(stat -c '%d:%i' "$_nrdir/source" 2>/dev/null)" != \
+          "$(stat -c '%d:%i' "$_nrdir/link" 2>/dev/null)" ]; then
+        rm -f "$_nrdir/source" "$_nrdir/link" 2>/dev/null || true
+        rmdir "$_nrdir" 2>/dev/null || true
+        return 1
+    fi
+    rm -f "$_nrdir/link"
+    mkdir "$_nrdir/target-dir" || { rm -f "$_nrdir/source"; rmdir "$_nrdir" 2>/dev/null || true; return 1; }
+    if ln -T "$_nrdir/source" "$_nrdir/target-dir" 2>/dev/null; then
+        rm -f "$_nrdir/target-dir/source" "$_nrdir/source" 2>/dev/null || true
+        rmdir "$_nrdir/target-dir" "$_nrdir" 2>/dev/null || true
+        return 1
+    fi
+    _nrextra=$(s5_dir_extras "$_nrdir/target-dir")
+    rm -f "$_nrdir/source"
+    rmdir "$_nrdir/target-dir" "$_nrdir" 2>/dev/null || return 1
+    [ -z "$_nrextra" ]
+}
 
 s5_require_commands() {
     _miss=''
@@ -4687,6 +4726,52 @@ s5_mkdir_secure() {
     _s5_mkdir_component "$1" "$2" "$3" "$1"
 }
 
+# s5_claim_dir <dir> <owner:group> <final-mode>
+# Unlike s5_mkdir_secure, the final directory is project-owned and must not
+# already exist. Shared ancestors may exist, but the final mkdir is exclusive.
+s5_claim_dir() {
+    _cdp=$1
+    _cdo=$2
+    _cdm=$3
+    _cdparent=$(dirname "$_cdp")
+    if ! s5_mkdir_secure "$_cdparent" "root:root" 0755; then
+        return 1
+    fi
+    if [ -e "$_cdp" ] || [ -L "$_cdp" ]; then
+        s5_err_msg collision.path_exists "$_cdp"
+        s5_say_msg collision.refuse_overwrite
+        return 1
+    fi
+    if ! mkdir "$_cdp"; then
+        if [ -e "$_cdp" ] || [ -L "$_cdp" ]; then
+            s5_err_msg collision.path_exists "$_cdp"
+            s5_say_msg collision.refuse_overwrite
+        else
+            s5_err_msg fs.create_failed "$_cdp"
+        fi
+        return 1
+    fi
+    if ! chmod 0700 "$_cdp"; then
+        rmdir "$_cdp" 2>/dev/null || true
+        s5_err_msg fs.restrict_0700 "$_cdp"
+        return 1
+    fi
+    s5_modelog "dir-created:$_cdp" "$_cdp"
+    _cdid=$(stat -c '%d:%i' "$_cdp" 2>/dev/null)
+    if [ -z "$_cdid" ] || ! s5_apply_owner_mode "$_cdp" "$_cdo" "$_cdm" ||
+        [ "$(stat -c '%d:%i' "$_cdp" 2>/dev/null)" != "$_cdid" ]; then
+        if [ "$(stat -c '%d:%i' "$_cdp" 2>/dev/null)" = "$_cdid" ]; then
+            rmdir "$_cdp" 2>/dev/null || true
+        fi
+        return 1
+    fi
+    s5_modelog "dir-final:$_cdp" "$_cdp"
+    S5_PENDING_CLAIM_PATH=$_cdp
+    S5_PENDING_CLAIM_KIND=dir
+    S5_PENDING_CLAIM_ID=$_cdid
+    return 0
+}
+
 # s5_atomic_write <final-path> <owner:group> <final-mode>   (content on stdin)
 s5_atomic_write() {
     _awp=$1
@@ -4726,6 +4811,142 @@ s5_atomic_write() {
         return 1
     fi
     return 0
+}
+
+# _s5_publish_new <final-path> <owner:group> <final-mode> <text|file> <payload>
+# Publish a fully prepared file without replacing any path that appeared after
+# collision detection. The hard link and destination share a filesystem because
+# the temporary file is created beside the final path. Callers invoke this
+# directly, never in a pipeline, so the pending-claim fingerprint remains in the
+# managing shell for signal cleanup and state handoff.
+_s5_publish_new() {
+    _pnp=$1
+    _pno=$2
+    _pnm=$3
+    _pnkind=$4
+    _pnpayload=$5
+    _pnd=$(dirname "$_pnp")
+    if [ ! -d "$_pnd" ]; then
+        s5_err_msg fs.atomic_dir_missing "$_pnp" "$_pnd"
+        return 1
+    fi
+    if ! _pnt=$(mktemp "$_pnd/.s5new.XXXXXX"); then
+        s5_err_msg fs.atomic_mktemp_failed "$_pnd"
+        return 1
+    fi
+    if ! s5_secure_tmp "$_pnt"; then
+        rm -f "$_pnt"
+        return 1
+    fi
+    s5_modelog "tmp-created:$_pnp" "$_pnt"
+    case "$_pnkind" in
+    text) printf '%s\n' "$_pnpayload" >"$_pnt" ;;
+    file) cat <"$_pnpayload" >"$_pnt" ;;
+    *) rm -f "$_pnt"; return 1 ;;
+    esac
+    if [ "$?" -ne 0 ]; then
+        s5_err_msg fs.atomic_write_tmp "$_pnt"
+        rm -f "$_pnt"
+        return 1
+    fi
+    s5_modelog "tmp-written:$_pnp" "$_pnt"
+    if ! s5_apply_owner_mode "$_pnt" "$_pno" "$_pnm"; then
+        rm -f "$_pnt"
+        return 1
+    fi
+    _pnid=$(stat -c '%d:%i' "$_pnt" 2>/dev/null)
+    if [ -z "$_pnid" ]; then
+        s5_err_msg fs.atomic_install "$_pnp"
+        rm -f "$_pnt"
+        return 1
+    fi
+    if ! ln -T "$_pnt" "$_pnp" 2>/dev/null; then
+        if [ -e "$_pnp" ] || [ -L "$_pnp" ]; then
+            s5_err_msg collision.path_exists "$_pnp"
+            s5_say_msg collision.refuse_overwrite
+        else
+            s5_err_msg fs.atomic_install "$_pnp"
+        fi
+        rm -f "$_pnt"
+        return 1
+    fi
+    if [ "$(stat -c '%d:%i' "$_pnp" 2>/dev/null)" != "$_pnid" ]; then
+        s5_err_msg fs.atomic_install "$_pnp"
+        rm -f "$_pnt"
+        return 1
+    fi
+    S5_PENDING_CLAIM_PATH=$_pnp
+    S5_PENDING_CLAIM_KIND=file
+    S5_PENDING_CLAIM_ID=$_pnid
+    S5_PENDING_CLAIM_TEMP=$_pnt
+    return 0
+}
+
+s5_publish_new_text() {
+    _s5_publish_new "$1" "$2" "$3" text "$4"
+}
+
+s5_publish_new_file() {
+    _s5_publish_new "$1" "$2" "$3" file "$4"
+}
+
+s5_pending_claim_clear() {
+    if [ -n "$S5_PENDING_CLAIM_TEMP" ]; then
+        rm -f "$S5_PENDING_CLAIM_TEMP" || return 1
+    fi
+    S5_PENDING_CLAIM_PATH=''
+    S5_PENDING_CLAIM_KIND=''
+    S5_PENDING_CLAIM_ID=''
+    S5_PENDING_CLAIM_TEMP=''
+    return 0
+}
+
+s5_pending_claim_remove() {
+    if [ -z "$S5_PENDING_CLAIM_PATH" ]; then
+        return 0
+    fi
+    _pcrid=$(stat -c '%d:%i' "$S5_PENDING_CLAIM_PATH" 2>/dev/null)
+    if [ "$_pcrid" != "$S5_PENDING_CLAIM_ID" ]; then
+        s5_err_msg rollback.keep_foreign_files "$S5_PENDING_CLAIM_PATH"
+        s5_pending_claim_clear >/dev/null 2>&1 || true
+        return 1
+    fi
+    case "$S5_PENDING_CLAIM_KIND" in
+    file) rm -f "$S5_PENDING_CLAIM_PATH" || return 1 ;;
+    dir) rmdir "$S5_PENDING_CLAIM_PATH" || return 1 ;;
+    *) return 1 ;;
+    esac
+    s5_pending_claim_clear
+    return $?
+}
+
+s5_state_mark_claim() {
+    _smckey=$1
+    _smcid=$S5_PENDING_CLAIM_ID
+    if [ -z "$S5_PENDING_CLAIM_PATH" ] ||
+        [ "$(stat -c '%d:%i' "$S5_PENDING_CLAIM_PATH" 2>/dev/null)" != "$_smcid" ]; then
+        s5_err_msg rollback.keep_foreign_files "${S5_PENDING_CLAIM_PATH:-unknown}"
+        s5_pending_claim_clear >/dev/null 2>&1 || true
+        return 1
+    fi
+    if s5_state_mark "$_smckey"; then
+        case "$_smckey" in
+        created_prefix) S5_CLAIM_PREFIX_ID=$_smcid ;;
+        created_bin) S5_CLAIM_BIN_ID=$_smcid ;;
+        created_confdir) S5_CLAIM_CONFDIR_ID=$_smcid ;;
+        created_users) S5_CLAIM_USERS_ID=$_smcid ;;
+        created_cfg) S5_CLAIM_CFG_ID=$_smcid ;;
+        created_unit) S5_CLAIM_UNIT_ID=$_smcid ;;
+        created_initscript) S5_CLAIM_INITSCRIPT_ID=$_smcid ;;
+        esac
+        if ! s5_pending_claim_clear; then
+            s5_err_msg rollback.rm_file_failed "$S5_PENDING_CLAIM_TEMP"
+            return 1
+        fi
+        return 0
+    fi
+    s5_pending_claim_remove || true
+    return 1
 }
 
 # s5_apply_owner_mode <path> <owner:group> <mode>
@@ -5052,6 +5273,11 @@ EOF
 # s5_state_flush : atomic rewrite of the whole state file. Return value checked
 # by every caller.
 s5_state_flush() {
+    if [ -n "$S5_STATE_FILE_CLAIM_ID" ] &&
+        ! s5_runtime_claim_matches "$S5_STATE"; then
+        s5_err_msg rollback.keep_foreign_files "$S5_STATE"
+        return 1
+    fi
     if ! _sft=$(mktemp "$S5_STATEDIR/.s5state.XXXXXX"); then
         s5_err_msg state.mktemp_failed "$S5_STATEDIR"
         return 1
@@ -5076,6 +5302,13 @@ s5_state_flush() {
         rm -f "$_sft"
         return 1
     fi
+    if [ -n "$S5_STATE_FILE_CLAIM_ID" ]; then
+        S5_STATE_FILE_CLAIM_ID=$(stat -c '%d:%i' "$S5_STATE" 2>/dev/null)
+        if [ -z "$S5_STATE_FILE_CLAIM_ID" ]; then
+            s5_err_msg state.install_failed
+            return 1
+        fi
+    fi
     return 0
 }
 
@@ -5084,38 +5317,41 @@ s5_state_flush() {
 # removing the directory is complete; rmdir also refuses to remove anything a
 # concurrent foreign file landed in.
 _s5_state_begin_undo() {
-    rm -f "$S5_STATE" 2>/dev/null || true
-    rmdir "$S5_STATEDIR" 2>/dev/null || true
+    if [ -n "$S5_PENDING_CLAIM_PATH" ]; then
+        s5_pending_claim_remove >/dev/null 2>&1 || true
+    fi
+    if [ -n "$S5_STATE_FILE_CLAIM_ID" ] &&
+        [ "$(stat -c '%d:%i' "$S5_STATE" 2>/dev/null)" = "$S5_STATE_FILE_CLAIM_ID" ]; then
+        rm -f "$S5_STATE" 2>/dev/null || true
+    fi
+    if [ -n "$S5_STATE_DIR_CLAIM_ID" ] &&
+        [ "$(stat -c '%d:%i' "$S5_STATEDIR" 2>/dev/null)" = "$S5_STATE_DIR_CLAIM_ID" ]; then
+        rmdir "$S5_STATEDIR" 2>/dev/null || true
+    fi
+    S5_STATE_FILE_CLAIM_ID=''
+    S5_STATE_DIR_CLAIM_ID=''
     S5_STATE_BUF=''
     S5_STATE_LOADED=0
 }
 
 s5_state_begin() {
-    if ! s5_mkdir_secure "$S5_STATEDIR" "root:root" 0700; then
+    if ! s5_claim_dir "$S5_STATEDIR" "root:root" 0700; then
         return 1
     fi
-    S5_STATE_BUF=''
+    S5_STATE_DIR_CLAIM_ID=$S5_PENDING_CLAIM_ID
+    s5_pending_claim_clear
+    S5_STATE_BUF="tag	$S5_UPSTREAM_TAG
+commit	$S5_PINNED_COMMIT
+origin	release-asset
+asset	$S5_ASSET_NAME
+sha256	$S5_ASSET_SHA256"
     S5_STATE_LOADED=1
-    if ! s5_state_add tag "$S5_UPSTREAM_TAG"; then
+    if ! s5_publish_new_text "$S5_STATE" "root:root" 0600 "$S5_STATE_BUF"; then
         _s5_state_begin_undo
         return 1
     fi
-    if ! s5_state_add commit "$S5_PINNED_COMMIT"; then
-        _s5_state_begin_undo
-        return 1
-    fi
-    if ! s5_state_add origin "release-asset"; then
-        _s5_state_begin_undo
-        return 1
-    fi
-    if ! s5_state_add asset "$S5_ASSET_NAME"; then
-        _s5_state_begin_undo
-        return 1
-    fi
-    if ! s5_state_add sha256 "$S5_ASSET_SHA256"; then
-        _s5_state_begin_undo
-        return 1
-    fi
+    S5_STATE_FILE_CLAIM_ID=$S5_PENDING_CLAIM_ID
+    s5_pending_claim_clear
     return 0
 }
 
@@ -5128,6 +5364,7 @@ s5_state_add() {
     if ! s5_state_value_ok "$1" "$2"; then
         return 1
     fi
+    _saold=$S5_STATE_BUF
     if [ -n "$S5_STATE_BUF" ]; then
         S5_STATE_BUF="$S5_STATE_BUF
 $1	$2"
@@ -5135,9 +5372,12 @@ $1	$2"
         S5_STATE_BUF="$1	$2"
     fi
     if ! s5_state_flush; then
+        S5_STATE_BUF=$_saold
+        _saold=''
         s5_err_msg state.persist_failed "$1"
         return 1
     fi
+    _saold=''
     return 0
 }
 
@@ -5174,6 +5414,30 @@ s5_state_replace_identity() {
 # s5_state_mark <flag-key> : record that this run created a fixed resource.
 s5_state_mark() {
     s5_state_add "$1" 1
+}
+
+s5_state_claim_account() {
+    case "$S5_CREATED_ACCOUNT_UID:$S5_CREATED_ACCOUNT_GID" in
+    *[!0-9:]* | :* | *:) return 1 ;;
+    esac
+    _scaold=$S5_STATE_BUF
+    S5_STATE_BUF="$S5_STATE_BUF
+account_uid	$S5_CREATED_ACCOUNT_UID
+account_gid	$S5_CREATED_ACCOUNT_GID
+created_account	1
+created_group	1"
+    if ! s5_state_flush; then
+        S5_STATE_BUF=$_scaold
+        _scaold=''
+        s5_err_msg state.persist_failed created_account
+        return 1
+    fi
+    _scaold=''
+    S5_ACCOUNT_UID=$S5_CREATED_ACCOUNT_UID
+    S5_ACCOUNT_GID=$S5_CREATED_ACCOUNT_GID
+    S5_CREATED_ACCOUNT_UID=''
+    S5_CREATED_ACCOUNT_GID=''
+    return 0
 }
 
 s5_state_get() {
@@ -5498,12 +5762,11 @@ s5_release_workdir() {
 }
 
 s5_install_binary() {
-    # /usr/local/libexec may be absent on a clean host. Creating the complete
-    # prefix with one `mkdir -p` under umask 077 leaves newly-created parents at
-    # 0700, so the unprivileged service cannot traverse to the binary. Build the
-    # fixed prefix one component at a time and clamp each project-owned parent to
-    # its required traversable mode. Existing parents are left at their existing
-    # modes apart from the standard secure helper's explicit final mode.
+    _ibmode=${2:-managed}
+    case "$_ibmode" in managed | ephemeral) ;; *) return 1 ;; esac
+    # Shared ancestors may exist, but the project prefix and binary are claimed
+    # exclusively at their final paths. Managed installation hands those claims
+    # to state; the protocol harness uses an ephemeral private test root.
     if [ ! -d "$S5_ROOTDIR/usr" ]; then
         if ! s5_mkdir_secure "$S5_ROOTDIR/usr" "root:root" 0755; then return 1; fi
     fi
@@ -5513,40 +5776,30 @@ s5_install_binary() {
     if [ ! -d "$S5_ROOTDIR/usr/local/libexec" ]; then
         if ! s5_mkdir_secure "$S5_ROOTDIR/usr/local/libexec" "root:root" 0755; then return 1; fi
     fi
-    if ! s5_mkdir_secure "$S5_PREFIX" "root:root" 0755; then
+    if ! s5_claim_dir "$S5_PREFIX" "root:root" 0755; then
         return 1
     fi
-    if ! S5_INSTALL_TMP=$(mktemp "$S5_PREFIX/.s5bin.XXXXXX"); then
-        s5_err_msg build.tmp_in_prefix
+    if [ "$_ibmode" = managed ]; then
+        if ! s5_state_mark_claim created_prefix; then return 1; fi
+    else
+        S5_CLAIM_PREFIX_ID=$S5_PENDING_CLAIM_ID
+        if ! s5_pending_claim_clear; then return 1; fi
+    fi
+    if ! s5_publish_new_file "$S5_BIN" "root:root" 0755 "$1"; then
         return 1
     fi
-    if ! s5_secure_tmp "$S5_INSTALL_TMP"; then
-        rm -f "$S5_INSTALL_TMP"
-        S5_INSTALL_TMP=''
-        return 1
+    if [ "$_ibmode" = managed ]; then
+        if ! s5_state_mark_claim created_bin; then return 1; fi
+    else
+        S5_CLAIM_BIN_ID=$S5_PENDING_CLAIM_ID
+        if ! s5_pending_claim_clear; then return 1; fi
     fi
-    if ! cat <"$1" >"$S5_INSTALL_TMP"; then
-        s5_err_msg build.copy_failed
-        rm -f "$S5_INSTALL_TMP"
-        S5_INSTALL_TMP=''
-        return 1
-    fi
-    if ! s5_apply_owner_mode "$S5_INSTALL_TMP" "root:root" 0755; then
-        rm -f "$S5_INSTALL_TMP"
-        S5_INSTALL_TMP=''
-        return 1
-    fi
-    if ! mv "$S5_INSTALL_TMP" "$S5_BIN"; then
-        s5_err_msg build.install_failed "$S5_BIN"
-        rm -f "$S5_INSTALL_TMP"
-        S5_INSTALL_TMP=''
-        return 1
-    fi
-    S5_INSTALL_TMP=''
     return 0
 }
 
 s5_fetch_verified_engine() {
+    _fvemode=${1:-managed}
+    case "$_fvemode" in managed | ephemeral) ;; *) return 1 ;; esac
     if ! s5_select_engine_asset runtime; then
         return 1
     fi
@@ -5616,14 +5869,14 @@ s5_fetch_verified_engine() {
     fi
     s5_log_msg asset.verified "$S5_ASSET_NAME"
 
-    if ! s5_install_binary "$_asset_path"; then
+    if ! s5_install_binary "$_asset_path" "$_fvemode"; then
         s5_release_workdir
         return 1
     fi
     _installed_hash=$(sha256sum "$S5_BIN" 2>/dev/null | awk '{ print $1 }')
     if [ "$_installed_hash" != "$S5_ASSET_SHA256" ]; then
         s5_err_msg asset.installed_checksum_mismatch "$S5_BIN"
-        rm -f "$S5_BIN" || true
+        s5_rm_known_file created_bin "$S5_BIN" || true
         s5_release_workdir
         return 1
     fi
@@ -5829,9 +6082,42 @@ s5_current_gid() {
         *) return 2 ;;
         esac
     fi
-    _cgout=$(id -g "$S5_SERVICE_GROUP" 2>/dev/null) || return 2
-    printf '%s' "$_cgout"
+    _cgfile=${S5_ROOTDIR}/etc/group
+    _cgout=$(grep "^$S5_SERVICE_GROUP:" "$_cgfile" 2>/dev/null | head -n 1)
+    if [ -z "$_cgout" ]; then
+        return 1
+    fi
+    printf '%s' "$_cgout" | cut -d: -f3
     return 0
+}
+
+s5_current_user_gid() {
+    if command -v getent >/dev/null 2>&1; then
+        _cugout=$(getent passwd "$S5_SERVICE_USER" 2>/dev/null)
+        _cugrc=$?
+        case "$_cugrc" in
+        0)
+            printf '%s' "$_cugout" | head -n 1 | cut -d: -f4
+            return 0
+            ;;
+        2) return 1 ;;
+        *) return 2 ;;
+        esac
+    fi
+    _cugout=$(id -g "$S5_SERVICE_USER" 2>/dev/null) || return 2
+    printf '%s' "$_cugout"
+    return 0
+}
+
+s5_identity_matches() {
+    _imuid=$1
+    _imgid=$2
+    case "$_imuid:$_imgid" in
+    *[!0-9:]* | :* | *:) return 1 ;;
+    esac
+    [ "$(s5_current_uid 2>/dev/null)" = "$_imuid" ] &&
+        [ "$(s5_current_gid 2>/dev/null)" = "$_imgid" ] &&
+        [ "$(s5_current_user_gid 2>/dev/null)" = "$_imgid" ]
 }
 
 s5_group_exists() {
@@ -5855,12 +6141,17 @@ s5_group_exists() {
 
 s5_account_create() {
     _nl=$(s5_nologin_path)
+    S5_CREATED_ACCOUNT_UID=''
+    S5_CREATED_ACCOUNT_GID=''
     case "$S5_OS_FAMILY" in
     alpine)
         s5_group_exists
         _acger=$?
         case "$_acger" in
-        0) ;;
+        0)
+            s5_err_msg install.group_appeared "$S5_SERVICE_GROUP"
+            return 1
+            ;;
         1)
             if ! addgroup -S "$S5_SERVICE_GROUP"; then
                 s5_err_msg account.group_create_failed "$S5_SERVICE_GROUP"
@@ -5872,6 +6163,17 @@ s5_account_create() {
             return 1
             ;;
         esac
+        S5_CREATED_ACCOUNT_GID=$(s5_current_gid)
+        _acgidrc=$?
+        if [ "$_acgidrc" -ne 0 ] || [ -z "$S5_CREATED_ACCOUNT_GID" ]; then
+            s5_err_msg install.gid_unknown
+            return 1
+        fi
+        if [ "$(s5_current_gid)" != "$S5_CREATED_ACCOUNT_GID" ]; then
+            s5_err_msg account.remove_gid_reused "$S5_SERVICE_GROUP" \
+                "$(s5_current_gid 2>/dev/null || printf unknown)" "$S5_CREATED_ACCOUNT_GID"
+            return 1
+        fi
         if ! adduser -S -D -H -h /nonexistent -G "$S5_SERVICE_GROUP" -s "$_nl" "$S5_SERVICE_USER"; then
             s5_err_msg account.user_create_failed "$S5_SERVICE_USER"
             return 1
@@ -5881,7 +6183,10 @@ s5_account_create() {
         s5_group_exists
         _acger=$?
         case "$_acger" in
-        0) ;;
+        0)
+            s5_err_msg install.group_appeared "$S5_SERVICE_GROUP"
+            return 1
+            ;;
         1)
             if ! groupadd -r "$S5_SERVICE_GROUP"; then
                 s5_err_msg account.group_create_failed "$S5_SERVICE_GROUP"
@@ -5893,6 +6198,18 @@ s5_account_create() {
             return 1
             ;;
         esac
+        S5_CREATED_ACCOUNT_GID=$(s5_current_gid)
+        _acgidrc=$?
+        if [ "$_acgidrc" -ne 0 ] || [ -z "$S5_CREATED_ACCOUNT_GID" ]; then
+            s5_err_msg install.gid_unknown
+            return 1
+        fi
+        _acgidnow=$(s5_current_gid 2>/dev/null)
+        if [ "$_acgidnow" != "$S5_CREATED_ACCOUNT_GID" ]; then
+            s5_err_msg account.remove_gid_reused "$S5_SERVICE_GROUP" \
+                "${_acgidnow:-unknown}" "$S5_CREATED_ACCOUNT_GID"
+            return 1
+        fi
         if ! useradd -r -g "$S5_SERVICE_GROUP" -M -d /nonexistent \
             -s "$_nl" "$S5_SERVICE_USER"; then
             s5_err_msg account.user_create_failed "$S5_SERVICE_USER"
@@ -5900,6 +6217,23 @@ s5_account_create() {
         fi
         ;;
     esac
+    S5_CREATED_ACCOUNT_UID=$(s5_current_uid)
+    _acuidrc=$?
+    _acgidnow=$(s5_current_gid 2>/dev/null)
+    if [ "$_acuidrc" -ne 0 ] || [ -z "$S5_CREATED_ACCOUNT_UID" ]; then
+        s5_err_msg install.uid_unknown
+        return 1
+    fi
+    if [ "$_acgidnow" != "$S5_CREATED_ACCOUNT_GID" ]; then
+        s5_err_msg account.remove_gid_reused "$S5_SERVICE_GROUP" \
+            "${_acgidnow:-unknown}" "$S5_CREATED_ACCOUNT_GID"
+        return 1
+    fi
+    if ! s5_identity_matches "$S5_CREATED_ACCOUNT_UID" "$S5_CREATED_ACCOUNT_GID"; then
+        s5_err_msg account.remove_gid_reused "$S5_SERVICE_GROUP" \
+            "${_acgidnow:-unknown}" "$S5_CREATED_ACCOUNT_GID"
+        return 1
+    fi
     return 0
 }
 
@@ -5931,6 +6265,39 @@ s5_del_user() {
 
 s5_del_group() {
     _s5_del_principal delgroup groupdel "$S5_SERVICE_GROUP"
+}
+
+s5_pending_account_remove() {
+    if [ -n "$S5_CREATED_ACCOUNT_UID" ]; then
+        if s5_account_remove 1 "$S5_CREATED_ACCOUNT_UID" "$S5_CREATED_ACCOUNT_GID"; then
+            S5_CREATED_ACCOUNT_UID=''
+            S5_CREATED_ACCOUNT_GID=''
+            return 0
+        fi
+        return 1
+    fi
+    if [ -z "$S5_CREATED_ACCOUNT_GID" ]; then
+        return 0
+    fi
+    _pargid=$(s5_current_gid 2>/dev/null)
+    if [ "$_pargid" != "$S5_CREATED_ACCOUNT_GID" ]; then
+        s5_err_msg account.remove_gid_reused "$S5_SERVICE_GROUP" \
+            "${_pargid:-unknown}" "$S5_CREATED_ACCOUNT_GID"
+        return 1
+    fi
+    s5_account_exists
+    _paruser=$?
+    if [ "$_paruser" -ne 1 ]; then
+        s5_err_msg account.remove_user_unknown "$S5_SERVICE_USER"
+        return 1
+    fi
+    s5_del_group || true
+    if s5_group_exists; then
+        s5_err_msg account.remove_group_failed "$S5_SERVICE_GROUP"
+        return 1
+    fi
+    S5_CREATED_ACCOUNT_GID=''
+    return 0
 }
 
 # s5_account_remove <wantgroup> <recorded-uid> <recorded-gid> : returns
@@ -6190,7 +6557,7 @@ s5_static_check_cfg() {
         _scbad=1
     else
         _scm=$(stat -c '%a' "$_scu" 2>/dev/null || printf '')
-        _sco=$(stat -c '%U:%G' "$_scu" 2>/dev/null || printf '')
+        _sco=$(stat -c '%u:%g' "$_scu" 2>/dev/null || printf '')
         case "$_scm" in
         600 | 640) ;;
         *)
@@ -6198,7 +6565,7 @@ s5_static_check_cfg() {
             _scbad=1
             ;;
         esac
-        if [ "${S5_TEST_MODE:-0}" != 1 ] && [ "$_sco" != "root:$S5_SERVICE_GROUP" ]; then
+        if [ "${S5_TEST_MODE:-0}" != 1 ] && [ "$_sco" != "0:$S5_ACCOUNT_GID" ]; then
             s5_err_msg static.cred_owner "$S5_SERVICE_GROUP" "${_sco:-unknown}"
             _scbad=1
         fi
@@ -6344,10 +6711,10 @@ s5_service_install() {
             return 1
         fi
         _sut=$(s5_render_systemd_unit) || return 1
-        if ! s5_state_mark created_unit; then return 1; fi
-        if ! printf '%s\n' "$_sut" | s5_atomic_write "$S5_UNIT" "root:root" 0644; then
+        if ! s5_publish_new_text "$S5_UNIT" "root:root" 0644 "$_sut"; then
             return 1
         fi
+        if ! s5_state_mark_claim created_unit; then return 1; fi
         if ! systemctl daemon-reload >/dev/null 2>&1; then
             s5_err_msg service.reload_failed "$S5_UNIT"
             return 1
@@ -6362,10 +6729,10 @@ s5_service_install() {
             return 1
         fi
         _sot=$(s5_render_openrc) || return 1
-        if ! s5_state_mark created_initscript; then return 1; fi
-        if ! printf '%s\n' "$_sot" | s5_atomic_write "$S5_INITSCRIPT" "root:root" 0755; then
+        if ! s5_publish_new_text "$S5_INITSCRIPT" "root:root" 0755 "$_sot"; then
             return 1
         fi
+        if ! s5_state_mark_claim created_initscript; then return 1; fi
         if ! rc-update add "$S5_PROJECT" default >/dev/null 2>&1; then
             s5_err_msg service.rcupdate_failed "$S5_PROJECT"
             return 1
@@ -6732,6 +7099,12 @@ _s5_reconfigure_precheck() {
     S5_OS_FAMILY=$(s5_state_get family)
     S5_LISTEN=$(s5_state_get listen)
     S5_PORT=$(s5_state_get port)
+    S5_ACCOUNT_UID=$(s5_state_get account_uid)
+    S5_ACCOUNT_GID=$(s5_state_get account_gid)
+    if ! s5_identity_matches "$S5_ACCOUNT_UID" "$S5_ACCOUNT_GID"; then
+        s5_err_msg reconfigure.state_invalid
+        return 1
+    fi
     case "$S5_INIT" in
     systemd)
         s5_state_flagged created_unit || { s5_err_msg reconfigure.state_invalid; return 1; }
@@ -6758,9 +7131,9 @@ _s5_reconfigure_precheck() {
         return 1
     fi
     if [ "${S5_TEST_MODE:-0}" != 1 ]; then
-        if [ "$(stat -c '%U:%G' "$S5_CFG" 2>/dev/null)" != "root:$S5_SERVICE_GROUP" ] ||
-            [ "$(stat -c '%U:%G' "$S5_USERSCFG" 2>/dev/null)" != "root:$S5_SERVICE_GROUP" ] ||
-            [ "$(stat -c '%U:%G' "$S5_STATE" 2>/dev/null)" != root:root ]; then
+        if [ "$(stat -c '%u:%g' "$S5_CFG" 2>/dev/null)" != "0:$S5_ACCOUNT_GID" ] ||
+            [ "$(stat -c '%u:%g' "$S5_USERSCFG" 2>/dev/null)" != "0:$S5_ACCOUNT_GID" ] ||
+            [ "$(stat -c '%u:%g' "$S5_STATE" 2>/dev/null)" != 0:0 ]; then
             s5_err_msg reconfigure.files_invalid
             return 1
         fi
@@ -6815,7 +7188,7 @@ _s5_reconfigure_stage() {
         return 1
     }
     if ! printf '%s\n' "$_tx_users_body" |
-        s5_atomic_write "$S5_TXN_NEW_USERS" "root:$S5_SERVICE_GROUP" 0640; then
+        s5_atomic_write "$S5_TXN_NEW_USERS" "0:$S5_ACCOUNT_GID" 0640; then
         _tx_users_body=''
         s5_err_msg reconfigure.stage_failed
         _s5_txn_cleanup || true
@@ -6858,16 +7231,24 @@ _s5_reconfigure_restore() {
         fi
     done
     _rrinit=$(awk -F'\t' '$1=="init" { print $2 }' "$S5_TXN_OLD_STATE")
+    _rruid=$(awk -F'\t' '$1=="account_uid" { print $2 }' "$S5_TXN_OLD_STATE")
+    _rrgid=$(awk -F'\t' '$1=="account_gid" { print $2 }' "$S5_TXN_OLD_STATE")
     case "$_rrinit" in
     systemd | openrc) S5_INIT=$_rrinit ;;
     *) s5_err_msg reconfigure.restore_invalid; return 1 ;;
     esac
+    if ! s5_identity_matches "$_rruid" "$_rrgid"; then
+        s5_err_msg reconfigure.restore_invalid
+        return 1
+    fi
+    S5_ACCOUNT_UID=$_rruid
+    S5_ACCOUNT_GID=$_rrgid
     if ! s5_stop_and_confirm; then
         s5_err_msg reconfigure.restore_stop_failed
         return 1
     fi
-    if ! _s5_copy_file_secure "$S5_TXN_OLD_USERS" "$S5_USERSCFG" "root:$S5_SERVICE_GROUP" 0640 ||
-        ! _s5_copy_file_secure "$S5_TXN_OLD_CFG" "$S5_CFG" "root:$S5_SERVICE_GROUP" 0640 ||
+    if ! _s5_copy_file_secure "$S5_TXN_OLD_USERS" "$S5_USERSCFG" "0:$S5_ACCOUNT_GID" 0640 ||
+        ! _s5_copy_file_secure "$S5_TXN_OLD_CFG" "$S5_CFG" "0:$S5_ACCOUNT_GID" 0640 ||
         ! _s5_copy_file_secure "$S5_TXN_OLD_STATE" "$S5_STATE" "root:root" 0600; then
         s5_err_msg reconfigure.restore_files_failed "$S5_TXNDIR"
         return 1
@@ -6966,8 +7347,8 @@ s5_reconfigure_apply() {
         _s5_reconfigure_fail
         return 1
     fi
-    if ! _s5_copy_file_secure "$S5_TXN_NEW_USERS" "$S5_USERSCFG" "root:$S5_SERVICE_GROUP" 0640 ||
-        ! _s5_copy_file_secure "$S5_TXN_NEW_CFG" "$S5_CFG" "root:$S5_SERVICE_GROUP" 0640 ||
+    if ! _s5_copy_file_secure "$S5_TXN_NEW_USERS" "$S5_USERSCFG" "0:$S5_ACCOUNT_GID" 0640 ||
+        ! _s5_copy_file_secure "$S5_TXN_NEW_CFG" "$S5_CFG" "0:$S5_ACCOUNT_GID" 0640 ||
         ! s5_state_replace_identity "$S5_PORT" "$S5_USERNAME"; then
         _s5_reconfigure_fail
         return 1
@@ -7180,6 +7561,31 @@ s5_install_dependencies() {
 # says WHETHER we created a resource, never WHERE it is.
 # ---------------------------------------------------------------------------
 
+# s5_runtime_claim_id <fixed-path> : print the current-install inode claim when
+# one exists. Old installs and a later process have no runtime claim and retain
+# the validated legacy fixed-path behavior.
+s5_runtime_claim_id() {
+    case "$1" in
+    "$S5_PREFIX") printf '%s' "$S5_CLAIM_PREFIX_ID" ;;
+    "$S5_BIN") printf '%s' "$S5_CLAIM_BIN_ID" ;;
+    "$S5_SYSCONFDIR") printf '%s' "$S5_CLAIM_CONFDIR_ID" ;;
+    "$S5_USERSCFG") printf '%s' "$S5_CLAIM_USERS_ID" ;;
+    "$S5_CFG") printf '%s' "$S5_CLAIM_CFG_ID" ;;
+    "$S5_UNIT") printf '%s' "$S5_CLAIM_UNIT_ID" ;;
+    "$S5_INITSCRIPT") printf '%s' "$S5_CLAIM_INITSCRIPT_ID" ;;
+    "$S5_STATE") printf '%s' "$S5_STATE_FILE_CLAIM_ID" ;;
+    "$S5_STATEDIR") printf '%s' "$S5_STATE_DIR_CLAIM_ID" ;;
+    esac
+}
+
+s5_runtime_claim_matches() {
+    _rcmid=$(s5_runtime_claim_id "$1")
+    if [ -z "$_rcmid" ]; then
+        return 0
+    fi
+    [ "$(stat -c '%d:%i' "$1" 2>/dev/null)" = "$_rcmid" ]
+}
+
 # s5_rm_known_file <flag-key> <path> : remove one fixed project file.
 s5_rm_known_file() {
     if ! s5_state_flagged "$1"; then
@@ -7187,6 +7593,10 @@ s5_rm_known_file() {
     fi
     if [ ! -e "$2" ] && [ ! -L "$2" ]; then
         return 0
+    fi
+    if ! s5_runtime_claim_matches "$2"; then
+        s5_err_msg rollback.keep_foreign_files "$2"
+        return 1
     fi
     if ! rm -f "$2"; then
         s5_err_msg rollback.rm_file_failed "$2"
@@ -7236,6 +7646,10 @@ s5_rmdir_known() {
         s5_err_msg rollback.keep_symlink "$_rkdir"
         return 1
     fi
+    if ! s5_runtime_claim_matches "$_rkdir"; then
+        s5_err_msg rollback.keep_foreign_files "$_rkdir"
+        return 1
+    fi
     _rkextra=$(s5_dir_extras "$_rkdir" "$@")
     if [ -n "$_rkextra" ]; then
         s5_err_msg rollback.keep_foreign_files "$_rkdir"
@@ -7283,6 +7697,10 @@ s5_teardown() {
     _tdfilepresent=0
     if [ -e "$_tdunitfile" ] || [ -L "$_tdunitfile" ]; then
         _tdfilepresent=1
+    fi
+    if [ "$_tdfilepresent" -eq 1 ] && ! s5_runtime_claim_matches "$_tdunitfile"; then
+        s5_err_msg rollback.keep_foreign_files "$_tdunitfile"
+        return 1
     fi
     if [ "$_tdhasunit" -eq 1 ]; then
         if [ "$_tdfilepresent" -eq 1 ]; then
@@ -7358,6 +7776,9 @@ s5_teardown() {
 s5_rollback() {
     s5_warn_msg rollback.starting
     if ! s5_state_load; then
+        if [ -n "$S5_STATE_DIR_CLAIM_ID" ]; then
+            _s5_state_begin_undo
+        fi
         s5_warn_msg rollback.no_state
         return 1
     fi
@@ -7375,8 +7796,18 @@ s5_rollback() {
         done
         return 1
     fi
+    if [ -n "$S5_STATE_FILE_CLAIM_ID" ] &&
+        ! s5_runtime_claim_matches "$S5_STATE"; then
+        s5_err_msg rollback.keep_foreign_files "$S5_STATE"
+        return 1
+    fi
     if ! rm -f "$S5_STATE"; then
         s5_err_msg rollback.rm_state_failed "$S5_STATE"
+        return 1
+    fi
+    if [ -n "$S5_STATE_DIR_CLAIM_ID" ] &&
+        ! s5_runtime_claim_matches "$S5_STATEDIR"; then
+        s5_err_msg rollback.keep_foreign_files "$S5_STATEDIR"
         return 1
     fi
     if rmdir "$S5_STATEDIR" 2>/dev/null; then
@@ -7646,11 +8077,9 @@ s5_print_summary() {
 # Install
 # ---------------------------------------------------------------------------
 
-# Resources are RECORDED BEFORE they are created. If a state write fails the
-# install aborts, and rollback still knows about anything that may already have
-# been made; the teardown helpers treat a flagged-but-absent resource as
-# already gone. Recording afterwards would orphan a resource whenever the state
-# write itself failed.
+# Fresh resources are exclusively claimed at their final paths before their
+# ownership flags are persisted. Until that handoff succeeds, runtime inode or
+# UID/GID claims provide local compensation; rollback handles only durable flags.
 s5_install_steps() {
     # The collision check ran before the confirmation, the package
     # installation and the three value prompts -- a long window. Identities
@@ -7685,54 +8114,45 @@ s5_install_steps() {
         ;;
     esac
 
-    if ! s5_state_mark created_account; then return 1; fi
-    if ! s5_state_mark created_group; then return 1; fi
     if ! s5_account_create; then
+        s5_pending_account_remove >/dev/null 2>&1 || true
         return 1
     fi
-    # Record the numeric identity of what was just created. Removal verifies
-    # against these fingerprints: the fixed names can later be removed and
-    # recreated by an unrelated workload, and a name-only match would delete
-    # the replacement.
-    _isauid=$(s5_current_uid)
-    _isauis=$?
-    if [ "$_isauis" -ne 0 ]; then
-        s5_err_msg install.uid_unknown
+    if ! s5_state_claim_account; then
+        s5_pending_account_remove >/dev/null 2>&1 || true
         return 1
     fi
-    _isagid=$(s5_current_gid)
-    _isagis=$?
-    if [ "$_isagis" -ne 0 ]; then
-        s5_err_msg install.gid_unknown
-        return 1
-    fi
-    if ! s5_state_add account_uid "$_isauid"; then return 1; fi
-    if ! s5_state_add account_gid "$_isagid"; then return 1; fi
 
-    if ! s5_state_mark created_prefix; then return 1; fi
-    if ! s5_state_mark created_bin; then return 1; fi
     if ! s5_fetch_verified_engine; then
         return 1
     fi
 
-    if ! s5_state_mark created_confdir; then return 1; fi
-    if ! s5_mkdir_secure "$S5_SYSCONFDIR" "root:$S5_SERVICE_GROUP" 0750; then
+    if [ -z "$S5_ACCOUNT_GID" ] ||
+        ! s5_identity_matches "$S5_ACCOUNT_UID" "$S5_ACCOUNT_GID"; then
+        s5_err_msg reconfigure.state_invalid
         return 1
     fi
+    if ! s5_claim_dir "$S5_SYSCONFDIR" "0:$S5_ACCOUNT_GID" 0750; then
+        return 1
+    fi
+    if ! s5_state_mark_claim created_confdir; then return 1; fi
 
     _isu=$(s5_render_users) || return 1
-    if ! s5_state_mark created_users; then return 1; fi
-    if ! printf '%s\n' "$_isu" | s5_atomic_write "$S5_USERSCFG" "root:$S5_SERVICE_GROUP" 0640; then
+    if ! s5_publish_new_text "$S5_USERSCFG" "0:$S5_ACCOUNT_GID" 0640 "$_isu"; then
+        _isu=''
+        return 1
+    fi
+    if ! s5_state_mark_claim created_users; then
         _isu=''
         return 1
     fi
     _isu=''
 
     _isc=$(s5_render_cfg) || return 1
-    if ! s5_state_mark created_cfg; then return 1; fi
-    if ! printf '%s\n' "$_isc" | s5_atomic_write "$S5_CFG" "root:$S5_SERVICE_GROUP" 0640; then
+    if ! s5_publish_new_text "$S5_CFG" "0:$S5_ACCOUNT_GID" 0640 "$_isc"; then
         return 1
     fi
+    if ! s5_state_mark_claim created_cfg; then return 1; fi
 
     # Static check happens BEFORE anything is started.
     if ! s5_static_check_cfg "$S5_CFG"; then
@@ -7820,14 +8240,19 @@ _s5_cmd_install_locked() {
     # observable on a clean host, and no secret is collected before packages
     # have been installed and accepted.
     if ! s5_install_dependencies; then return "$EX_FAIL"; fi
+    if ! s5_no_replace_supported; then
+        s5_err_msg detect.no_base_utilities
+        return "$EX_FAIL"
+    fi
     if ! s5_prompt_port; then return "$EX_FAIL"; fi
     if ! s5_prompt_username; then return "$EX_FAIL"; fi
     if ! s5_prompt_password; then return "$EX_FAIL"; fi
 
+    S5_ROLLBACK_ARMED=1
     if ! s5_state_begin; then
+        S5_ROLLBACK_ARMED=0
         return "$EX_FAIL"
     fi
-    S5_ROLLBACK_ARMED=1
 
     if ! s5_state_add port "$S5_PORT"; then return "$EX_FAIL"; fi
     if ! s5_state_add username "$S5_USERNAME"; then return "$EX_FAIL"; fi

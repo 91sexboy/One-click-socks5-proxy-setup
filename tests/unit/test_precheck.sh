@@ -186,6 +186,21 @@ t_run s5_require_commands sed awk definitely-absent-cmd-xyz
 assert_ne "a missing base command fails" 0 "$T_STATUS"
 assert_contains "names the missing command" "definitely-absent-cmd-xyz" "$T_OUT"
 
+# The no-replace hard-link primitive is checked after confirmation and runtime
+# dependencies, but before any port, username or password is collected.
+reset_machine
+s5_no_replace_supported() { return 1; }
+s5env_install_answers y 31080 lnuser 'LnCapability_123~x'
+t_run s5_cmd_install <"$S5_TEST_ROOT/answers"
+assert_ne "install rejects an incompatible no-replace primitive" 0 "$T_STATUS"
+assert_contains "the operator saw the confirmation context first" "PLEASE READ" "$T_OUT"
+assert_not_contains "no port prompt follows a failed no-replace probe" "SOCKS5 port" "$T_OUT"
+assert_not_contains "no password prompt follows a failed no-replace probe" "SOCKS5 password" "$T_OUT"
+assert_file_absent "no state exists without no-replace support" "$S5_STATE"
+t_assert_never_called "no account is created without no-replace support" 'useradd'
+unset -f s5_no_replace_supported
+s5env_load
+
 # ==========================================================================
 # A clean host without ss/netstat must install its probe dependency before the
 # port prompt. The prompt itself checks an on-disk marker so this assertion

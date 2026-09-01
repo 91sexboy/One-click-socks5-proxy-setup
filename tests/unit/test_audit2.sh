@@ -1,8 +1,8 @@
 #!/bin/sh
 # tests/unit/test_audit2.sh - second-audit regressions:
 #   * every S5_* override the script reads is covered by the production guard
-#   * resources are RECORDED BEFORE they are created, so a state-write failure
-#     cannot orphan them
+#   * fresh resources are exclusively claimed before durable ownership handoff,
+#     with local compensation when state persistence fails
 #   * `status` never claims a firewall rule is gone when it simply could not
 #     check (a non-root query is not evidence of absence)
 #   * no dead variables
@@ -128,63 +128,46 @@ for forbidden in setenforce semanage '/etc/selinux' '/etc/ssh/sshd_config'; do
 done
 
 # ==========================================================================
-# Record-before-create: a state-write failure must never orphan a resource.
-# Structural: in s5_install_steps every s5_state_mark must appear BEFORE the
-# call that creates the thing it describes.
+# Fresh resources are claimed at their final path before state takes ownership.
+# No fresh-install writer may replace a path that appeared after collision
+# detection; state_mark_claim is the handoff from pending claim to rollback.
 # ==========================================================================
 steps=$(sed -n '/^s5_install_steps() {/,/^}/p' "${S5_SRC}")
-line_of() { printf '%s\n' "$steps" | grep -n -- "$1" | head -n 1 | cut -d: -f1; }
-
-mk_confdir=$(line_of 's5_mkdir_secure "\$S5_SYSCONFDIR"')
-mark_confdir=$(line_of 's5_state_mark created_confdir')
-if [ -n "$mark_confdir" ] && [ -n "$mk_confdir" ] && [ "$mark_confdir" -lt "$mk_confdir" ]; then
-    t_ok
-else
-    t_bad "created_confdir must be recorded before the directory is created"
-fi
-
-fetch=$(line_of 's5_fetch_verified_engine')
-mark_prefix=$(line_of 's5_state_mark created_prefix')
-mark_bin=$(line_of 's5_state_mark created_bin')
-if [ -n "$mark_prefix" ] && [ -n "$fetch" ] && [ "$mark_prefix" -lt "$fetch" ]; then
-    t_ok
-else
-    t_bad "created_prefix must be recorded before the asset install creates the binary"
-fi
-if [ -n "$mark_bin" ] && [ -n "$fetch" ] && [ "$mark_bin" -lt "$fetch" ]; then
-    t_ok
-else
-    t_bad "created_bin must be recorded before the asset install creates the binary"
-fi
-
-w_users=$(line_of 's5_atomic_write "\$S5_USERSCFG"')
-mark_users=$(line_of 's5_state_mark created_users')
-if [ -n "$mark_users" ] && [ -n "$w_users" ] && [ "$mark_users" -lt "$w_users" ]; then
-    t_ok
-else
-    t_bad "created_users must be recorded before users.cfg is written"
-fi
-
-w_cfg=$(line_of 's5_atomic_write "\$S5_CFG"')
-mark_cfg=$(line_of 's5_state_mark created_cfg')
-if [ -n "$mark_cfg" ] && [ -n "$w_cfg" ] && [ "$mark_cfg" -lt "$w_cfg" ]; then
-    t_ok
-else
-    t_bad "created_cfg must be recorded before 3proxy.cfg is written"
-fi
-
+install_bin=$(sed -n '/^s5_install_binary() {/,/^}/p' "${S5_SRC}")
 svc=$(sed -n '/^s5_service_install() {/,/^}/p' "${S5_SRC}")
-svcline() { printf '%s\n' "$svc" | grep -n -- "$1" | head -n 1 | cut -d: -f1; }
-if [ "$(svcline 's5_state_mark created_unit')" -lt "$(svcline 's5_atomic_write "\$S5_UNIT"')" ]; then
-    t_ok
-else
-    t_bad "created_unit must be recorded before the unit file is written"
-fi
-if [ "$(svcline 's5_state_mark created_initscript')" -lt "$(svcline 's5_atomic_write "\$S5_INITSCRIPT"')" ]; then
-    t_ok
-else
-    t_bad "created_initscript must be recorded before the init script is written"
-fi
+
+assert_contains "fresh config directory uses an exclusive claim" \
+    's5_claim_dir "$S5_SYSCONFDIR"' "$steps"
+assert_contains "fresh credentials use no-replace publication" \
+    's5_publish_new_text "$S5_USERSCFG"' "$steps"
+assert_contains "fresh config uses no-replace publication" \
+    's5_publish_new_text "$S5_CFG"' "$steps"
+assert_contains "credentials hand ownership to durable state" \
+    's5_state_mark_claim created_users' "$steps"
+assert_contains "config hands ownership to durable state" \
+    's5_state_mark_claim created_cfg' "$steps"
+assert_not_contains "fresh install never atomically replaces credentials" \
+    's5_atomic_write "$S5_USERSCFG"' "$steps"
+assert_not_contains "fresh install never atomically replaces config" \
+    's5_atomic_write "$S5_CFG"' "$steps"
+
+assert_contains "fresh prefix uses an exclusive claim" \
+    's5_claim_dir "$S5_PREFIX"' "$install_bin"
+assert_contains "fresh binary uses no-replace publication" \
+    's5_publish_new_file "$S5_BIN"' "$install_bin"
+assert_contains "prefix claim is persisted after creation" \
+    's5_state_mark_claim created_prefix' "$install_bin"
+assert_contains "binary claim is persisted after publication" \
+    's5_state_mark_claim created_bin' "$install_bin"
+
+assert_contains "systemd unit uses no-replace publication" \
+    's5_publish_new_text "$S5_UNIT"' "$svc"
+assert_contains "OpenRC script uses no-replace publication" \
+    's5_publish_new_text "$S5_INITSCRIPT"' "$svc"
+assert_contains "systemd ownership is handed to state" \
+    's5_state_mark_claim created_unit' "$svc"
+assert_contains "OpenRC ownership is handed to state" \
+    's5_state_mark_claim created_initscript' "$svc"
 
 # Functional: flags recorded for resources that were never created must make
 # teardown succeed, not fail.

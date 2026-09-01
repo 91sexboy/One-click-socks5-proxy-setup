@@ -69,6 +69,30 @@ assert_ne "write to a missing directory fails" 0 "$T_STATUS"
 assert_file_absent "no partial path created" "$S5_TEST_ROOT/nope"
 rm -rf "$S5_SYSCONFDIR"
 
+# A path can be rebound after no-replace publication but before the ownership
+# flag is persisted. Handoff must revalidate the pending inode and refuse to
+# record the replacement as project-owned.
+rm -rf "$S5_STATEDIR" "$S5_SYSCONFDIR"
+s5_state_begin >/dev/null 2>&1
+mkdir -p "$S5_SYSCONFDIR"
+s5_publish_new_text "$S5_CFG" "root:root" 0640 'ours' >/dev/null 2>&1
+rm -f "$S5_CFG"
+printf 'foreign replacement\n' >"$S5_CFG"
+_replacement_id=$(stat -c '%d:%i' "$S5_CFG")
+t_run s5_state_mark_claim created_cfg
+assert_ne "claim handoff rejects a path rebound after publication" 0 "$T_STATUS"
+if s5_state_flagged created_cfg; then
+    t_bad "a rebound path must not receive a durable ownership flag"
+else
+    t_ok
+fi
+assert_eq "the replacement survives rejected handoff" \
+    "foreign replacement" "$(cat "$S5_CFG")"
+assert_eq "the replacement inode is unchanged after rejected handoff" \
+    "$_replacement_id" "$(stat -c '%d:%i' "$S5_CFG")"
+s5_pending_claim_clear
+rm -rf "$S5_STATEDIR" "$S5_SYSCONFDIR"
+
 # ==========================================================================
 # Static configuration check
 # ==========================================================================
@@ -319,6 +343,88 @@ t_run s5_collision_check
 assert_ne "existing config dir with no state aborts" 0 "$T_STATUS"
 assert_contains "collision message explains itself" "not created by this script" "$T_OUT"
 t_assert_never_called "collision check writes nothing" 'useradd'
+
+# A foreign fixed resource can appear after the advisory collision check while
+# install waits for confirmation. The final create operation must claim the
+# path exclusively rather than accepting the directory and replacing the file.
+late_binary_race() (
+    s5_confirm_yes() {
+        read -r _late_answer || return 1
+        mkdir -p "$S5_PREFIX"
+        printf 'foreign binary\n' >"$S5_BIN"
+        stat -c '%d:%i' "$S5_BIN" >"$S5_TEST_ROOT/foreign_binary_inode"
+        return 0
+    }
+    s5_cmd_install <"$S5_TEST_ROOT/answers"
+)
+
+s5env_reset_transcript
+rm -rf "$S5_SYSCONFDIR" "$S5_STATEDIR" "$S5_PREFIX"
+rm -f "$S5_UNIT" "$S5_INITSCRIPT" "$S5_TEST_ROOT/svc_active"
+: >"$S5_TEST_ROOT/stub_passwd"
+: >"$S5_TEST_ROOT/stub_group"
+mkdir -p "$S5_UNITDIR"
+s5env_install_answers y 31086 raceuser 'RacePassword_123~x'
+t_run late_binary_race
+assert_ne "install rejects a binary appearing after the collision check" 0 "$T_STATUS"
+assert_contains "the late binary is reported as a collision" "not created by this script" "$T_OUT"
+assert_eq "the late binary content is unchanged" "foreign binary" "$(cat "$S5_BIN")"
+assert_eq "the late binary inode is unchanged" \
+    "$(cat "$S5_TEST_ROOT/foreign_binary_inode")" "$(stat -c '%d:%i' "$S5_BIN")"
+t_assert_never_called "the late binary never reaches systemd service start" \
+    'systemctl start'
+t_assert_never_called "the late binary never reaches OpenRC service start" \
+    'rc-service socks5-manager start'
+
+late_confdir_race() (
+    s5_confirm_yes() {
+        read -r _late_answer || return 1
+        mkdir -p "$S5_SYSCONFDIR"
+        stat -c '%d:%i' "$S5_SYSCONFDIR" >"$S5_TEST_ROOT/foreign_confdir_inode"
+        return 0
+    }
+    s5_cmd_install <"$S5_TEST_ROOT/answers"
+)
+
+s5env_reset_transcript
+rm -rf "$S5_SYSCONFDIR" "$S5_STATEDIR" "$S5_PREFIX"
+rm -f "$S5_UNIT" "$S5_INITSCRIPT" "$S5_TEST_ROOT/svc_active"
+: >"$S5_TEST_ROOT/stub_passwd"
+: >"$S5_TEST_ROOT/stub_group"
+mkdir -p "$S5_UNITDIR"
+s5env_install_answers y 31087 dirrace 'DirectoryRace_123~x'
+t_run late_confdir_race
+assert_ne "install rejects a config directory appearing after collision check" 0 "$T_STATUS"
+assert_eq "the late config directory inode is unchanged" \
+    "$(cat "$S5_TEST_ROOT/foreign_confdir_inode")" \
+    "$(stat -c '%d:%i' "$S5_SYSCONFDIR")"
+assert_file_absent "no credentials are written into the foreign directory" "$S5_USERSCFG"
+
+late_unit_race() (
+    s5_confirm_yes() {
+        read -r _late_answer || return 1
+        mkdir -p "$S5_UNITDIR"
+        printf 'foreign unit\n' >"$S5_UNIT"
+        stat -c '%d:%i' "$S5_UNIT" >"$S5_TEST_ROOT/foreign_unit_inode"
+        return 0
+    }
+    s5_cmd_install <"$S5_TEST_ROOT/answers"
+)
+
+s5env_reset_transcript
+rm -rf "$S5_SYSCONFDIR" "$S5_STATEDIR" "$S5_PREFIX"
+rm -f "$S5_UNIT" "$S5_INITSCRIPT" "$S5_TEST_ROOT/svc_active"
+: >"$S5_TEST_ROOT/stub_passwd"
+: >"$S5_TEST_ROOT/stub_group"
+mkdir -p "$S5_UNITDIR"
+s5env_install_answers y 31088 unitrace 'UnitRacePass_123~x'
+t_run late_unit_race
+assert_ne "install rejects a unit appearing after collision check" 0 "$T_STATUS"
+assert_eq "the late unit content is unchanged" "foreign unit" "$(cat "$S5_UNIT")"
+assert_eq "the late unit inode is unchanged" \
+    "$(cat "$S5_TEST_ROOT/foreign_unit_inode")" "$(stat -c '%d:%i' "$S5_UNIT")"
+t_assert_never_called "the late unit is never enabled" 'systemctl enable'
+t_assert_never_called "the late unit is never started" 'systemctl start'
 
 # ==========================================================================
 # Failure cleanup: service start fails -> this run's resources are removed,
@@ -689,11 +795,9 @@ assert_file_absent "no credentials are left behind" "$S5_USERSCFG"
 assert_file_absent "no binary is left behind" "$S5_BIN"
 
 # ==========================================================================
-# A failure while writing the FIRST state record used to leave an empty state
-# directory behind (rollback is armed only after s5_state_begin succeeds, and
-# s5_state_begin had already created the directory). The leftover then tripped
-# the collision guard on every retry -- "already exists and was not created by
-# this script" -- while there was no state file to uninstall or retry with.
+# A failure while creating the initial state used to leave an empty state
+# directory behind. Rollback is now armed before state_begin, while state_begin
+# itself compensates any partial directory/file claim.
 # ==========================================================================
 s5env_reset_transcript
 rm -rf "$S5_SYSCONFDIR" "$S5_STATEDIR" "$S5_PREFIX"
@@ -702,7 +806,7 @@ rm -f "$S5_UNIT" "$S5_INITSCRIPT" "$S5_TEST_ROOT/svc_active"
 : >"$S5_TEST_ROOT/stub_group"
 mktemp() {
     case "$1" in
-    *.s5state.*) return 1 ;;
+    *.s5state.* | "$S5_STATEDIR"/.s5new.*) return 1 ;;
     *) command mktemp "$@" ;;
     esac
 }

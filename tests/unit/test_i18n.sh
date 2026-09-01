@@ -227,6 +227,19 @@ S5_LANG=fr
 t_run s5_say_msg status.heading 'x'
 assert_ne "unsupported locale fails closed" 0 "$T_STATUS"
 
+# Operator-facing warnings and usage name only the supported SOCKS5 boundary.
+# Legacy protocol family names remain in developer specs and rejection probes,
+# but must never be displayed by the installer itself.
+for locale in en zh; do
+    S5_LANG=$locale
+    _op_protocols="$(s5_msg install.warning_protocols)$(s5_msg install.warning_protocols2)$(s5_msg usage.line_protocol2)"
+    if printf '%s' "$_op_protocols" | grep -qi 'socks4'; then
+        t_bad "$locale operator protocol text displays a legacy family name"
+    else
+        t_ok
+    fi
+done
+
 # S5_LANG must not leak into child environments from the script's own
 # initialization: the harness sources the script, so the variable exists in
 # this shell; verify the script unsets inherited EXPORT attributes at init

@@ -31,6 +31,8 @@ write_state() {
     mkdir -p "$S5_STATEDIR"
     printf '%s' "$1" >"$S5_STATE"
     chmod 0600 "$S5_STATE"
+    S5_STATE_DIR_CLAIM_ID=''
+    S5_STATE_FILE_CLAIM_ID=''
 }
 
 # ==========================================================================
@@ -216,6 +218,67 @@ created_confdir	1"
 s5_state_load >/dev/null 2>&1
 assert_eq "a partial install state still loads for rollback" 0 "$?"
 S5_STATE_LOADED=0
+
+# A state directory that appears after the initial collision check is foreign,
+# even when empty. State initialization must not adopt it or place a state file
+# inside it.
+rm -rf "$S5_STATEDIR"
+mkdir -p "$S5_STATEDIR"
+_late_state_dir_id=$(stat -c '%d:%i' "$S5_STATEDIR")
+t_run s5_state_begin
+assert_ne "state initialization rejects a late foreign state directory" 0 "$T_STATUS"
+assert_eq "the late state directory inode is unchanged" \
+    "$_late_state_dir_id" "$(stat -c '%d:%i' "$S5_STATEDIR")"
+assert_file_absent "no state is written into a late foreign directory" "$S5_STATE"
+
+# The directory may be ours while the state filename appears just before the
+# no-replace publish. Undo must retain that foreign file and the containing
+# directory rather than deleting both as if publication had succeeded.
+late_state_file_race() (
+    mktemp() {
+        _lsf_tmp=$(command mktemp "$@") || return 1
+        case "$1" in
+        "$S5_STATEDIR"/.s5new.*)
+            printf 'foreign state\n' >"$S5_STATE"
+            stat -c '%d:%i' "$S5_STATE" >"$S5_TEST_ROOT/late_state_inode"
+            ;;
+        esac
+        printf '%s\n' "$_lsf_tmp"
+    }
+    s5_state_begin
+)
+rm -rf "$S5_STATEDIR"
+t_run late_state_file_race
+assert_ne "state initialization rejects a late foreign state file" 0 "$T_STATUS"
+assert_eq "the late foreign state content survives undo" \
+    "foreign state" "$(cat "$S5_STATE")"
+assert_eq "the late foreign state inode survives undo" \
+    "$(cat "$S5_TEST_ROOT/late_state_inode")" "$(stat -c '%d:%i' "$S5_STATE")"
+
+# A failed atomic state rewrite must leave both the in-memory model and the
+# on-disk state at the last durable version. Otherwise cleanup can act on a
+# resource flag that was never persisted and cannot be recovered next process.
+rm -rf "$S5_STATEDIR"
+s5_state_begin >/dev/null 2>&1
+_state_before_buf=$S5_STATE_BUF
+_state_before_disk=$(cat "$S5_STATE")
+_state_after_failed_flush=$(
+    s5_state_flush() { return 1; }
+    s5_state_add created_cfg 1 >/dev/null 2>&1 || true
+    printf '%s' "$S5_STATE_BUF"
+)
+if (
+    s5_state_flush() { return 1; }
+    s5_state_add created_cfg 1 >/dev/null 2>&1
+); then
+    t_bad "a failed state flush must be reported"
+else
+    t_ok
+fi
+assert_eq "failed flush restores the prior in-memory state" \
+    "$_state_before_buf" "$_state_after_failed_flush"
+assert_eq "failed flush leaves the durable state unchanged" \
+    "$_state_before_disk" "$(cat "$S5_STATE")"
 
 rm -rf "$S5_STATEDIR"
 write_state "status	complete"

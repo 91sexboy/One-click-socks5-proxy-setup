@@ -1,14 +1,14 @@
 # Spec: socks5.sh — one-click SOCKS5 proxy installer
 
-> **Status: v1.0.0 RELEASED / v1.1.0 CANDIDATE.** Round 17 implementation
-> commit `3b58e194887bf91a06b789353c06033b70c49c59` passed run `33281392984` with
-> 45/45 jobs. Evidence-only commit `a8ed8255fba6c9bf9b8247582d6b77ebf65d8374`
-> passed run `33281724740`; closure commit `91fd13a` passed run `33282068288`,
-> and immutable tag `v1.0.0` was created there. The v1.1.0 implementation,
-> evidence-only and exact reachable-main closure checkpoints are pending. The implementation commit
-> must pass 45/45; an evidence-only commit must then pass 45/45; the exact closure commit must pass
-> 45/45 on `main` before the immutable tag is created. Protocol, authentication, ACL and firewall
-> boundaries remain unchanged.
+> **Status: v1.0.0 RELEASED / v1.1.0 CANDIDATE.** The released Round 17 chain remains:
+> implementation `3b58e194887bf91a06b789353c06033b70c49c59` / run `33281392984`,
+> evidence-only `a8ed8255fba6c9bf9b8247582d6b77ebf65d8374` / run `33281724740`, and
+> closure `91fd13a` / run `33282068288`, all 45/45 before immutable `v1.0.0` was created.
+> For v1.1, `f508666` / run `33355799664` and `a7fbaeb` / run `33376645854` are
+> superseded historical candidate evidence because the current safety repair changes `socks5.sh`
+> again. The repaired implementation must pass 45/45; an evidence-only commit must then record that
+> proof and pass 45/45; the exact closure commit must pass 45/45 on `develop`; only then may immutable
+> `v1.1.0` be created. Protocol, authentication, ACL and firewall boundaries remain unchanged.
 
 ## 1. Objective
 A single-file POSIX shell script (`socks5.sh`) that interactively installs, verifies, and manages a
@@ -88,6 +88,13 @@ group- or world-accessible regardless of the ambient umask.
 
 **Collision rule:** if any resource above already exists, consult the state file to confirm this
 script created it. If that cannot be confirmed, **stop with an error**. Never overwrite or adopt.
+Fresh installation enforces this again at each final use: project-owned directories are claimed by an
+exclusive final-path `mkdir`, and complete same-directory temporary files are published with a
+no-replace hard link. An object that appears after preflight is a collision, not permission to replace
+or remove it. Ownership enters state only after exclusive claim; if persisting that claim fails, local
+compensation removes only the still-matching inode. Account and group names are likewise never
+adopted: creation captures numeric UID/GID, revalidates name-to-ID and primary-group mappings before
+credentials are owned or services start, and deletion acts only on matching recorded identities.
 
 ## 5. Interactive install flow — implemented
 v1 is **interactive only** — there is no non-interactive or unattended mode.
@@ -304,20 +311,20 @@ Privilege drop is the init system's job — no `setuid`/`setgid` in the 3proxy c
 The primary Ubuntu/Debian/CentOS command (and the same command after entering Bash on Alpine) is:
 
 ```sh
-bash <(wget -qO- https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-setup/main/socks5.sh)
+bash <(wget -qO- https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-setup/develop/socks5.sh)
 ```
 
 Stock Alpine's default ash parses `<(...)` before Bash can run, so its one-line bootstrap is:
 
 ```sh
-apk add --no-cache bash wget && bash -c 'bash <(wget -qO- https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-setup/main/socks5.sh)'
+apk add --no-cache bash wget && bash -c 'bash <(wget -qO- https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-setup/develop/socks5.sh)'
 ```
 
 A `curl` form of the primary command is documented as an equivalent alternative for hosts that ship
 `curl` but not `wget`:
 
 ```sh
-bash <(curl -fsSL https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-setup/main/socks5.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-setup/develop/socks5.sh)
 ```
 
 Under process substitution `$0` is a transient `/dev/fd/*` descriptor: operator-facing messages
@@ -357,7 +364,10 @@ starting the process; this spec makes no such claim. Sequence:
 
 1. **Static check:** required directives present, §6 denylist absent, port and listen address
    well-formed, referenced `users.cfg` exists with the correct mode.
-2. **Atomic write:** write to a temp file in the same directory, `chown`/`chmod`, then `mv`.
+2. **Fresh publication:** fully prepare a same-directory temporary file, set ownership/mode, then
+   publish it with a no-replace hard link. A late path collision fails without replacing either a
+   file, directory or symlink. Atomic `mv` replacement is reserved for files already proven owned
+   during state rewrites and reconfiguration transactions.
 3. **Start the service.**
 4. **Verify**, each check reported independently: service active
    (`systemctl is-active` / `rc-service status`); the chosen port listening on the configured
@@ -508,8 +518,10 @@ example any SOCKS4-family protocol.
     exists there. Run `33245460710` / `33246222640` remains historical evidence for the previous
     bilingual state. Run `33324226518` at `bb338a4e2716d42e4394f4cc465f8e8ebe7db8f7` is preliminary
     v1.1 evidence only: it predates the bounded unknown-length download and shared-slice checks.
-    For v1.1.0, the implementation commit must pass 45/45; an evidence-only commit must then pass
-    45/45; the exact closure commit must pass 45/45 on `main`; only then may the immutable tag exist.
+    For the current safety-repaired v1.1.0 candidate, the implementation commit must pass 45/45; an
+    evidence-only commit must then pass 45/45; the exact closure commit must pass 45/45 on `develop`;
+    only then may the immutable tag exist. Earlier f508/a7 candidate runs remain historical evidence
+    but do not prove the repaired bytes.
 
 ## 16. Non-goals (v1.1)
 Non-interactive install; a separate public `reload` or `reconfigure` subcommand; BIND; UDP ASSOCIATE;
@@ -524,15 +536,15 @@ RHEL/Rocky/Alma.
   advertise, display, or provide a usage example for SOCKS4, SOCKS4a, or SOCKS4.5. State that
   CONNECT is the only supported command and that BIND and UDP ASSOCIATE are unsupported.
 - The primary Ubuntu/Debian/CentOS install form is the exact published
-  `bash <(wget -qO- …/main/socks5.sh)` command. Because stock Alpine ash parses `<(...)` before
+  `bash <(wget -qO- …/develop/socks5.sh)` command. Because stock Alpine ash parses `<(...)` before
   Bash executes, document its exact `apk add --no-cache bash wget && bash -c 'bash <(wget …)'`
   one-liner separately. Never use `wget … | sh` (it feeds source into prompt stdin) or a fixed
   `/tmp/socks5.sh` path.
-- Keep the convenient `main` commands but also document an immutable semantic-version tag and the
-  exact SHA-256 of its `socks5.sh`. The README must call it a candidate until an implementation
-  commit passes 45/45, an evidence-only commit records that proof and passes 45/45, and the exact
-  closure commit passes 45/45 on `main`; only then is the tag created at that closure commit and it
-  is never moved.
+- Keep the convenient moving `develop` commands but also document immutable semantic-version tags and
+  the exact SHA-256 of each tagged `socks5.sh`. The README must call v1.1 a candidate until the current
+  implementation commit passes 45/45, an evidence-only commit records that proof and passes 45/45,
+  and the exact closure commit passes 45/45 on `develop`; only then is the tag created at that closure
+  commit and it is never moved.
 - Document the exact `1 中文 / 2 English` selector, Enter=Chinese, invalid retry, per-invocation
   locale, the default-yes fresh-install confirmation, the default-no installed-update confirmation,
   dependencies before initial values, and one visible custom password read. State that
@@ -561,11 +573,12 @@ implementation `3b58e194887bf91a06b789353c06033b70c49c59` / run `33281392984`, e
 `a8ed8255fba6c9bf9b8247582d6b77ebf65d8374` / run `33281724740`, and closure `91fd13a` /
 run `33282068288`, all 45/45 before the immutable tag was created.
 
-The later release-asset candidate at `bb338a4e2716d42e4394f4cc465f8e8ebe7db8f7` passed run
-`33324226518` with 45/45 on `develop`, but that run predates the unknown-length streaming cap and
-the shared systemd-slice membership proof. It is preliminary evidence only. The replacement
-implementation, evidence-only and exact reachable-main closure runs remain pending and must follow
-the §15.17 sequence before `v1.1.0` is tagged. Environmental risks remain: package repositories,
+The later release-asset checkpoints `f508666e0b31512b32502a3bb1a85b9742671b52` /
+`33355799664` and `a7fbaeb2e9a6507fe45a502c65324c828d132fc8` / `33376645854` each passed
+45/45 on `develop`, but both precede the current fail-closed resource-claim and identity-race repair.
+They are superseded historical candidate evidence, not proof of the current bytes. The repaired
+implementation, evidence-only and exact `develop` closure runs remain pending and must follow the
+§15.17 sequence before `v1.1.0` is tagged. Environmental risks remain: package repositories,
 DNS and the fixed HTTPS self-test require egress; cloud images may differ from the tested base
 images; and the pinned 3proxy 0.9 branch has no published maintenance window, so the operator still
 owns updates (§17). Historical bilingual evidence remains in runs `33245460710` /

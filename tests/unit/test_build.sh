@@ -59,7 +59,7 @@ count_transfer_dirs() {
 }
 
 reset_case() {
-    rm -rf "${S5_TEST_ROOT:?}/build" "${S5_PREFIX:?}"
+    rm -rf "${S5_TEST_ROOT:?}/build" "${S5_PREFIX:?}" "${S5_STATEDIR:?}"
     rm -f "$S5_TEST_ROOT/stub_asset_download_fail" \
         "$S5_TEST_ROOT/stub_asset_truncated" "$S5_TEST_ROOT/stub_asset_corrupt" \
         "$S5_TEST_ROOT/stub_asset_oversized_unknown"
@@ -67,6 +67,7 @@ reset_case() {
     S5_OS_FAMILY=debian
     S5_ARCHNAME=amd64
     s5_select_engine_asset
+    s5_state_begin >/dev/null 2>&1 || return 1
 }
 
 # Happy path: one bounded HTTPS download, exact size/hash, one installed binary.
@@ -83,6 +84,16 @@ t_assert_called "download uses the immutable release asset" "$S5_ASSET_URL"
 t_assert_called "download follows HTTPS redirects only" "--proto-redir =https"
 t_assert_called "download caps response size" "--max-filesize $S5_ASSET_SIZE"
 t_assert_cmd_never_called "target host never invokes source-build tools" git make gcc cc
+
+# Protocol/ACL CI installs the same verified bytes in a private ephemeral root
+# without creating product state. The no-replace placement must therefore work
+# when S5_STATEDIR is absent, while managed installs retain durable flags.
+reset_case
+rm -rf "$S5_STATEDIR" "$S5_PREFIX"
+t_run s5_install_binary "$S5_TEST_ROOT/stub_engine_asset" ephemeral
+assert_eq "ephemeral verified binary placement needs no install state" 0 "$T_STATUS"
+assert_file_exists "ephemeral placement installs the binary" "$S5_BIN"
+assert_file_absent "ephemeral placement creates no product state" "$S5_STATE"
 
 # A transport/HTTP failure leaves no binary or transfer directory.
 reset_case
@@ -130,6 +141,7 @@ s5_install_binary() {
     cp "$1" "$S5_BIN"
     printf X >>"$S5_BIN"
     chmod 0755 "$S5_BIN"
+    s5_state_mark created_bin
 }
 t_run s5_fetch_verified_engine
 unset -f s5_install_binary
