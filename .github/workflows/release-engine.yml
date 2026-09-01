@@ -157,9 +157,11 @@ jobs:
           set -eu
           actual=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$ENGINE_TAG" --jq .object.sha)
           test "$actual" = "$GITHUB_SHA"
-          draft=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$ENGINE_TAG" --jq .draft)
+          release_id=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq '.[] | select(.tag_name==env.ENGINE_TAG and .draft==true) | .id')
+          case "$release_id" in '' | *[!0-9]*) echo "cannot locate draft release id" >&2; exit 1 ;; esac
+          draft=$(gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" --jq .draft)
           test "$draft" = true
-          release_id=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$ENGINE_TAG" --jq .id)
           gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" \
             -F draft=false -F prerelease=true >/dev/null
           actual=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$ENGINE_TAG" --jq .object.sha)

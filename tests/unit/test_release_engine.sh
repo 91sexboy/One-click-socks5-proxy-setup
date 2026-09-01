@@ -125,6 +125,10 @@ assert_contains "workflow atomically claims the tag ref" \
 assert_contains "workflow creates a draft before uploading" '--draft' "$workflow"
 assert_contains "workflow verifies the tag points at the dispatch SHA" \
     'test "$actual" = "$GITHUB_SHA"' "$workflow"
+assert_contains "workflow finds draft releases through the list endpoint" \
+    'releases?per_page=100' "$workflow"
+assert_contains "workflow filters the expected draft tag" \
+    'select(.tag_name==env.ENGINE_TAG and .draft==true)' "$workflow"
 assert_contains "workflow publishes the verified draft through Releases API" \
     '--method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id"' "$workflow"
 assert_contains "workflow marks the release as prerelease" \
