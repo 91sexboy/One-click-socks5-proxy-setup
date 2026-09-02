@@ -408,7 +408,7 @@ acbfbfe3e6ba0f37f4e2a24ba8a6d68ec5a36513caae2e22e44a0ed28322e0b1
 Current candidate `socks5.sh` SHA-256:
 
 ```text
-abdb4704710079c42ef7d6e342c2431fefcc9494f24521702cc456f3acf661d5  socks5.sh
+092ac729f4cfba096a7d6d1aaecf007e66110e08e9a1e2f04c6e50257f9447da  socks5.sh
 ```
 
 The previous bilingual checkpoint, commit
@@ -427,7 +427,7 @@ After the tag exists, verify it with:
 
 ```sh
 wget -qO socks5.sh https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-setup/v1.1.0/socks5.sh
-printf '%s  %s\n' 'abdb4704710079c42ef7d6e342c2431fefcc9494f24521702cc456f3acf661d5' socks5.sh | sha256sum -c -
+printf '%s  %s\n' '092ac729f4cfba096a7d6d1aaecf007e66110e08e9a1e2f04c6e50257f9447da' socks5.sh | sha256sum -c -
 sudo sh socks5.sh
 ```
 

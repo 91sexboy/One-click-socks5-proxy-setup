@@ -136,6 +136,38 @@ done
 assert_eq "s5_random_int stays within range" yes "$inrange"
 
 # --------------------------------------------------------------------------
+# A helper process that fails must not be mistaken for a legitimate draw.
+#
+# The leading-zero strip ran `printf | sed` in a command substitution, and the
+# [ -z ] arm below it treated an empty result as the integer 0. So any sed that
+# failed -- a fork refused under RLIMIT_NPROC, a shadowed or broken sed, any
+# nonzero exit -- made s5_random_int answer 0 with status 0, which pinned every
+# generated port to S5_RANDPORT_MIN while s5_prompt_port logged it as a real
+# selection. This is the same class the comment above s5_random_string
+# describes; the guard added there had no counterpart one function later.
+#
+# The strip needs no process at all, so the failure mode is removed rather than
+# guarded: assert the body spawns nothing, then prove a broken sed is harmless.
+_ri_code=$(sed -n '/^s5_random_int() {/,/^}/p' "${S5_SRC}" | grep -v '^[[:space:]]*#')
+assert_not_contains "s5_random_int strips leading zeros without a subprocess" \
+    'sed' "$_ri_code"
+assert_ne "the extracted s5_random_int body is not empty" "" "$_ri_code"
+
+sed() { return 1; }
+j=0
+nonzero=no
+while [ "$j" -lt 20 ]; do
+    t_run s5_random_int 40001
+    if [ "$T_STATUS" -ne 0 ]; then nonzero=failed; break; fi
+    if [ "$T_OUT" != 0 ]; then nonzero=yes; fi
+    j=$((j + 1))
+done
+unset -f sed
+assert_eq "a failing sed does not pin every draw to zero" yes "$nonzero"
+t_run s5_random_int 40001
+assert_eq "the generator still answers once sed is restored" 0 "$T_STATUS"
+
+# --------------------------------------------------------------------------
 # Port probing via an injected stub - nothing is ever bound
 # --------------------------------------------------------------------------
 printf '%s\n' 20001 20002 >"$S5_TEST_ROOT/occupied"

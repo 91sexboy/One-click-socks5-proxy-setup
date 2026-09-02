@@ -4363,7 +4363,16 @@ s5_random_int() {
     fi
     while :; do
         _rid=$(s5_random_string 5 '0123456789') || return 1
-        _riv=$(printf '%s' "$_rid" | sed 's/^0*//')
+        # Pure parameter expansion, no process. This strip used to run
+        # `printf | sed` in a command substitution, and the [ -z ] arm below
+        # turned an empty result into the integer 0 -- so a sed that failed for
+        # any reason (a fork refused under RLIMIT_NPROC, a shadowed or broken
+        # sed, any nonzero exit) made this function answer 0 with status 0.
+        # Every "random" port then became S5_RANDPORT_MIN while the caller
+        # logged it as a real selection. That is the same partial-draw class the
+        # comment above s5_random_string describes, and the guard added there
+        # had no counterpart here. Removing the process removes the failure.
+        _riv=${_rid#"${_rid%%[!0]*}"}
         if [ -z "$_riv" ]; then
             _riv=0
         fi
