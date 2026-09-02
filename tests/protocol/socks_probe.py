@@ -122,15 +122,27 @@ def _is_dotted_quad(host):
     return True
 
 
+def _is_ipv6_literal(host):
+    try:
+        socket.inet_pton(socket.AF_INET6, host)
+    except OSError:
+        return False
+    return True
+
+
 def socks5_request(sock, cmd, host, port):
     """Send a SOCKS5 request; return the reply code.
 
     A dotted-quad target is sent as ATYP=0x01 with four address octets -- the
-    literal-IPv4 path -- while a hostname is sent as ATYP=0x03. The two paths
-    are different code inside the proxy, so a regression affecting only one of
-    them is invisible to a probe that always uses the other. The ACL checks in
-    acl_resolution.sh rely on this distinction: their "by literal IP" cases
-    must exercise ATYP=0x01, not merely put digits inside a domain string.
+    literal-IPv4 path -- while an IPv6 literal is sent as ATYP=0x04 with its
+    sixteen packed address bytes. Other targets are sent as ATYP=0x03. The
+    literal and hostname paths are different code inside the proxy, so a
+    regression affecting only one of them is invisible to a probe that always
+    uses the other.
+
+    The ACL checks in acl_resolution.sh rely on the IPv4 distinction: their
+    "by literal IP" cases must exercise ATYP=0x01, not merely put digits inside
+    a domain string.
 
     Raises EOFError only if the connection closes before the 4-byte reply head
     (a hard refusal). If the head arrives but the address tail is truncated,
@@ -141,6 +153,9 @@ def socks5_request(sock, cmd, host, port):
         octets = [int(p) for p in host.split(".")]
         payload = (bytes([0x05, cmd, 0x00, 0x01]) +
                    bytes(octets) + struct.pack("!H", port))
+    elif _is_ipv6_literal(host):
+        payload = (bytes([0x05, cmd, 0x00, 0x04]) +
+                   socket.inet_pton(socket.AF_INET6, host) + struct.pack("!H", port))
     else:
         hb = host.encode("idna")
         payload = bytes([0x05, cmd, 0x00, 0x03, len(hb)]) + hb + struct.pack("!H", port)

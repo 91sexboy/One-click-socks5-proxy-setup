@@ -17,7 +17,7 @@
 # wrong account tested.
 #
 # Exit codes:
-#   0  all seven cases behaved correctly
+#   0  all seven cases behaved correctly, and the IPv6 observations were recorded
 #   1  a case failed
 #   3  RELEASE GATE: SOCKS4 or SOCKS4a established a proxy connection
 #
@@ -97,17 +97,19 @@ fi
 probe() {
     _mode=$1
     _creds=${2:-no}
+    _probe_target=${3:-$TARGET}
+    _probe_target_port=${4:-$TARGET_PORT}
     if [ "$_creds" = "with-creds" ]; then
         printf '%s\n%s\n' "$PROXY_USER" "$_ppass" |
             python3 "$PROBE" --host "$PROXY_HOST" --port "$PORT" --mode "$_mode" \
-                --target-host "$TARGET" --target-port "$TARGET_PORT"
+                --target-host "$_probe_target" --target-port "$_probe_target_port"
     elif [ "$_creds" = "wrong-creds" ]; then
         printf '%s\n%s\n' "$PROXY_USER" "$S5_WRONG_PASS" |
             python3 "$PROBE" --host "$PROXY_HOST" --port "$PORT" --mode "$_mode" \
-                --target-host "$TARGET" --target-port "$TARGET_PORT"
+                --target-host "$_probe_target" --target-port "$_probe_target_port"
     else
         python3 "$PROBE" --host "$PROXY_HOST" --port "$PORT" --mode "$_mode" \
-            --target-host "$TARGET" --target-port "$TARGET_PORT" </dev/null
+            --target-host "$_probe_target" --target-port "$_probe_target_port" </dev/null
     fi
 }
 
@@ -242,6 +244,28 @@ case $? in
 0) bad "7 probe: SOCKS5 UDP ASSOCIATE was granted" ;;
 *) bad "7 probe: inconclusive transport error" ;;
 esac
+
+# ---------------------------------------------------------------- case 8
+# IPv6 ATYP=0x04 is evidence-only in this round. The two literal forms are sent
+# deliberately to record the pinned engine's actual behaviour; neither success
+# nor refusal changes the release result yet, because SPEC §6 has not made an
+# IPv6 destination contract. A probe error is recorded separately as
+# inconclusive, not silently converted to either verdict.
+probe_ipv6() {
+    _ipv6_target=$1
+    probe socks5-connect with-creds "$_ipv6_target" "$TARGET_PORT"
+}
+for _ipv6_target in ::1 ::ffff:127.0.0.1; do
+    _ipv6_output=$(probe_ipv6 "$_ipv6_target" 2>&1)
+    _ipv6_rc=$?
+    case "$_ipv6_rc" in
+    0) printf 'evidence 8 %s: ATYP=0x04 CONNECT granted (evidence only)\n' "$_ipv6_target" ;;
+    1) printf 'evidence 8 %s: ATYP=0x04 CONNECT refused (evidence only)\n' "$_ipv6_target" ;;
+    *) printf 'evidence 8 %s: ATYP=0x04 result inconclusive (evidence only)\n' "$_ipv6_target" ;;
+    esac
+    printf '%s\n' "$_ipv6_output" >&2
+    _ipv6_output=''
+done
 
 printf -- '----\n%d passed, %d failed, %d inconclusive (not counted as passes)\n' \
     "$pass" "$fail" "$inconclusive"

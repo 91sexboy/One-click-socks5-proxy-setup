@@ -815,7 +815,8 @@ class FakeSock:
 
 TAIL = [0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0]
 
-for name, target in [("at_ipv4", "10.0.0.1"), ("at_name", "example.invalid")]:
+for name, target in [("at_ipv4", "10.0.0.1"), ("at_ipv6", "::1"),
+                     ("at_name", "example.invalid")]:
     f = FakeSock(TAIL)
     probe.connect = lambda h, p, f=f: f
     probe.socks5_request(f, 0x01, target, 80)
@@ -823,10 +824,13 @@ for name, target in [("at_ipv4", "10.0.0.1"), ("at_name", "example.invalid")]:
 PYEOF
 )
 at4=$(printf '%s\n' "$probe3" | sed -n 's/^at_ipv4=//p')
+at6=$(printf '%s\n' "$probe3" | sed -n 's/^at_ipv6=//p')
 atn=$(printf '%s\n' "$probe3" | sed -n 's/^at_name=//p')
 # VER CMD RSV ATYP then 0a 00 00 01 (10.0.0.1) and port 0050.
 assert_eq "a dotted-quad target is sent as ATYP=0x01 with four octets" \
     "050100010a0000010050" "$at4"
+assert_eq "an IPv6 literal is sent as ATYP=0x04 with sixteen packed octets" \
+    "05010004000000000000000000000000000000010050" "$at6"
 assert_eq "a hostname target keeps ATYP=0x03" "050100030f" "$(printf '%s' "$atn" | cut -c1-10)"
 assert_eq "and its domain payload is the encoded name" \
     "6578616d706c652e696e76616c6964" "$(printf '%s' "$atn" | cut -c11-40)"

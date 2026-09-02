@@ -226,7 +226,7 @@ assert_not_contains "public README does not expose internal task ledgers" "tasks
 assert_contains "README explains -4" "IPv4 destination resolution only" "$readme"
 assert_contains "README explains -u2" "require username/password" "$readme"
 
-# ---------------------------------------------- protocol suite covers 7 cases
+# --------------------------------------- protocol suite covers 7 + evidence cases
 proto=$(cat "$R/tests/protocol/run_protocol.sh")
 assert_contains "case 1 present" "socks5-connect" "$proto"
 assert_contains "case 2 present" "wrong password" "$proto"
@@ -235,6 +235,8 @@ assert_contains "case 4 present" "socks4-connect" "$proto"
 assert_contains "case 5 present" "socks4a-connect" "$proto"
 assert_contains "case 6 present" "socks5-bind" "$proto"
 assert_contains "case 7 present" "socks5-udpassoc" "$proto"
+assert_contains "IPv6 evidence cases present" "::ffff:127.0.0.1" "$proto"
+assert_contains "IPv6 evidence is not a contract verdict" "evidence only" "$proto"
 assert_contains "release gate present" "RELEASE GATE FAILURE" "$proto"
 assert_contains "release gate has a distinct exit code" "exit 3" "$proto"
 assert_not_contains "release gate has no skip flag" "SKIP_GATE" "$proto"
