@@ -55,6 +55,13 @@ if [ -z "${1:-}" ]; then
     printf 'portprobe: called with no port argument\n' >&2
     exit 2
 fi
+# An unobservable probe: neither "free" nor "in use", the third state every
+# caller must dispatch on. Nothing else in this stub can produce status 2, which
+# is why no test could previously drive a tri-state collapse.
+if [ -f "$S5_TEST_ROOT/probe_unobservable" ]; then
+    printf 'portprobe: the listen state cannot be observed\n' >&2
+    exit 2
+fi
 if [ -f "$S5_TEST_ROOT/port_probe_count" ]; then
     _n=$(cat "$S5_TEST_ROOT/port_probe_count" 2>/dev/null)
     case "$_n" in '' | *[!0-9]*) _n=0 ;; esac
@@ -105,7 +112,7 @@ PROBE
     S5_PROC_NET_TCP="$S5_TEST_ROOT/proc-net-tcp"
     S5_PROC_NET_TCP6="$S5_TEST_ROOT/proc-net-tcp6"
     printf '  sl  local_address rem_address   st\n' >"$S5_PROC_NET_TCP"
-    printf '  sl  local_address rem_address   st\n' >"$S5_PROC_NET_TCP6"
+    printf '  sl  local_address remote_address   st\n' >"$S5_PROC_NET_TCP6"
 
     S5_TEST_MODE=1
     S5_LIB_ONLY=1

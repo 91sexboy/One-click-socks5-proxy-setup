@@ -107,6 +107,22 @@ reject_case "port out of range" "port	70000
 status	complete"
 reject_case "port not numeric" "port	31080x
 status	complete"
+# `listen` was the one required key with no validator arm, so the charset filter
+# was the whole gate. Every consumer treats the value as a bind address:
+# s5_render_cfg interpolates it into the socks service line and s5_port_listening
+# hands it to the probe as the exact endpoint to match, so these all passed the
+# charset filter and then decided what the engine binds and what "listening"
+# means for it.
+reject_case "listen carrying a CIDR suffix" "listen	0.0.0.0/8
+status	complete"
+reject_case "listen with an out-of-range octet" "listen	0.0.0.256
+status	complete"
+reject_case "listen with a leading-zero octet" "listen	010.0.0.1
+status	complete"
+reject_case "listen with too few octets" "listen	0.0.0
+status	complete"
+reject_case "listen naming a hostname" "listen	localhost
+status	complete"
 # Integer-width and octal traps. A 1000-digit decimal makes POSIX test
 # arithmetic emit a diagnostic and return false on BOTH comparisons, so the
 # old validator fell through to success. Leading zeros are valid octal to the

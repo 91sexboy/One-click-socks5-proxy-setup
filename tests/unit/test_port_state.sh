@@ -63,7 +63,7 @@ assert_eq "an observably occupied port is status 0 (listening)" 0 "$T_STATUS"
 
 # The production-first /proc adapter needs no iproute package.
 printf '  sl  local_address rem_address   st\n   0: 00000000:9C40 00000000:0000 0A\n   1: 0100007F:A078 00000000:0000 0A\n' >"$S5_PROC_NET_TCP"
-printf '  sl  local_address rem_address   st\n' >"$S5_PROC_NET_TCP6"
+printf '  sl  local_address remote_address   st\n' >"$S5_PROC_NET_TCP6"
 t_run s5_proc_port_free 40000
 assert_eq "/proc adapter finds a wildcard listener" 1 "$T_STATUS"
 t_run s5_proc_port_free 41080 127.0.0.1
@@ -86,7 +86,54 @@ printf '  sl  local_address rem_address   st\n' >"$S5_PROC_NET_TCP"
 printf 'bad header\n' >"$S5_PROC_NET_TCP6"
 t_run s5_proc_port_free 41081
 assert_eq "malformed tcp6 table also fails closed" 2 "$T_STATUS"
-printf '  sl  local_address rem_address   st\n' >"$S5_PROC_NET_TCP6"
+printf '  sl  local_address remote_address   st\n' >"$S5_PROC_NET_TCP6"
+
+# ==========================================================================
+# The adapter must validate the tables the KERNEL writes, not the ones this
+# suite fabricates.
+#
+# net/ipv4/tcp_ipv4.c prints the third header column as "rem_address";
+# net/ipv6/tcp_ipv6.c prints it as "remote_address". Requiring the IPv4
+# spelling of both made s5_proc_net_available answer "unobservable" on every
+# host where /proc/net/tcp6 exists -- i.e. everything but ipv6.disable=1 -- so
+# the adapter that exists precisely so no iproute package is needed never ran
+# in production, and s5_runtime_deps planned iproute2 on hosts that did not
+# need it. Every tcp6 fixture in this suite wrote the IPv4 spelling, so no
+# fixture could ever have caught this; only the real table can.
+# ==========================================================================
+if [ -r /proc/net/tcp ] && [ -r /proc/net/tcp6 ]; then
+    t_run s5_proc_table_valid /proc/net/tcp
+    assert_eq "the kernel's own IPv4 socket table validates" 0 "$T_STATUS"
+    t_run s5_proc_table_valid /proc/net/tcp6
+    assert_eq "the kernel's own IPv6 socket table validates" 0 "$T_STATUS"
+    _pps_tcp=$S5_PROC_NET_TCP
+    _pps_tcp6=$S5_PROC_NET_TCP6
+    S5_PROC_NET_TCP=/proc/net/tcp
+    S5_PROC_NET_TCP6=/proc/net/tcp6
+    t_run s5_proc_net_available
+    assert_eq "the kernel's socket tables are observable" 0 "$T_STATUS"
+    assert_eq "proc stays the preferred probe against the real tables" proc \
+        "$(s5_probe_cmd)"
+    S5_PROC_NET_TCP=$_pps_tcp
+    S5_PROC_NET_TCP6=$_pps_tcp6
+else
+    t_skip "the kernel's own socket tables validate" \
+        "/proc/net/tcp6 is not readable on this host"
+fi
+
+# Both backends must answer the SAME way about an address they cannot parse. The
+# proc backend refuses it through s5_ipv4_to_proc_hex and returns 2; the
+# ss/netstat backend skipped validation entirely and fell through its non-match
+# path to "free", so a malformed listen address made `status` confidently report
+# a running proxy as not listening. The test-mode probe short-circuits ahead of
+# both backends, so only the source can witness the ss half.
+_pf_body=$(sed -n '/^s5_port_free() {/,/^}/p' "${S5_SRC}")
+assert_contains "the ss backend validates the address it was given" \
+    "s5_ipv4_is_canonical" "$_pf_body"
+t_run s5_proc_port_free 41081 0.0.0.0/8
+assert_eq "the proc backend calls a malformed address unobservable" 2 "$T_STATUS"
+t_run s5_proc_port_free 41081 999.0.0.1
+assert_eq "the proc backend refuses an out-of-range octet" 2 "$T_STATUS"
 
 # ==========================================================================
 # The answer must be about the port asked for, not about the service.

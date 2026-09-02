@@ -1035,6 +1035,15 @@ s5_msg() {
         *) s5_msg_locale_error; return 1 ;;
         esac
         ;;
+    # @s5-msg reconfigure.port_unverified 1
+    reconfigure.port_unverified)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error reconfigure.port_unverified 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '停止旧代理后无法确定端口 %s 是否可用：监听状态探测失败' "${1}" ;;
+        en) printf 'could not determine whether port %s is free after stopping the old proxy: the listen-state probe failed' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
     # @s5-msg reconfigure.apply_failed 0
     reconfigure.apply_failed)
         [ "$#" -eq 0 ] || { s5_msg_contract_error reconfigure.apply_failed 0 "$#"; return 1; }
@@ -3275,6 +3284,15 @@ s5_msg() {
         *) s5_msg_locale_error; return 1 ;;
         esac
         ;;
+    # @s5-msg state.listen_invalid 0
+    state.listen_invalid)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error state.listen_invalid 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf 'state：监听地址无效' ;;
+        en) printf 'state: listen address is not valid' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
     # @s5-msg state.origin_invalid 0
     state.origin_invalid)
         [ "$#" -eq 0 ] || { s5_msg_contract_error state.origin_invalid 0 "$#"; return 1; }
@@ -4358,12 +4376,20 @@ s5_random_int() {
 
 # Prefer the Linux kernel socket table, which needs no extra package. Fall back
 # to ss/netstat when /proc is unavailable; every candidate must actually work.
+#
+# The two tables disagree on the third column's name: net/ipv4/tcp_ipv4.c prints
+# "rem_address" and net/ipv6/tcp_ipv6.c prints "remote_address". Accepting only
+# the IPv4 spelling rejected /proc/net/tcp6 on every IPv6-enabled host, which
+# demoted this adapter to ss/netstat everywhere and made s5_runtime_deps plan an
+# iproute package the host did not need. The column is a header sanity check
+# only -- no row rule reads $3 -- so both spellings are accepted.
 s5_proc_table_valid() {
     _ptv=$1
     [ -r "$_ptv" ] || return 1
     awk '
         NR == 1 {
-            if ($1 != "sl" || $2 != "local_address" || $3 != "rem_address" || $4 != "st") exit 2
+            if ($1 != "sl" || $2 != "local_address" || $4 != "st") exit 2
+            if ($3 != "rem_address" && $3 != "remote_address") exit 2
             header=1
             next
         }
@@ -4474,6 +4500,14 @@ s5_port_free() {
         return 2
     fi
     if [ -n "$_pfaddr" ]; then
+        # The proc backend answers 2 for an address it cannot parse, because
+        # s5_ipv4_to_proc_hex refuses it. This branch used to skip validation
+        # entirely and fall through its non-match path to "free", so the two
+        # backends gave opposite answers for the same unobservable input -- the
+        # asymmetry s5_port_probe_available's comment says cannot exist.
+        if ! s5_ipv4_is_canonical "$_pfaddr"; then
+            return 2
+        fi
         if printf '%s\n' "$_pfout" |
             awk -v endpoint="$_pfaddr:$1" '$4 == endpoint { found=1 } END { exit found ? 0 : 1 }'; then
             return 1
@@ -5096,6 +5130,18 @@ s5_state_value_ok() {
     username)
         if ! s5_valid_username "$2" >/dev/null 2>&1; then
             s5_err_msg state.username_invalid
+            return 1
+        fi
+        ;;
+    listen)
+        # The only required key that had no validator arm. Every consumer treats
+        # this value as a bind address: s5_render_cfg interpolates it into the
+        # socks service line and s5_port_listening hands it to the probe as the
+        # exact endpoint to match, so an unvalidated value from a hand-edited
+        # state file decided both what the engine binds and what "listening"
+        # means for it.
+        if ! s5_ipv4_is_canonical "$2"; then
+            s5_err_msg state.listen_invalid
             return 1
         fi
         ;;
@@ -7391,13 +7437,25 @@ s5_reconfigure_apply() {
         _s5_reconfigure_fail
         return 1
     fi
+    # Three-valued like every other listen observation. Folding status 2 into
+    # "in use" reported a collision the probe had never seen -- one line after
+    # the probe itself said it could not tell -- and rolled back a healthy
+    # install for it.
     s5_port_free "$S5_PORT"
     _rapf=$?
-    if [ "$_rapf" -ne 0 ]; then
+    case "$_rapf" in
+    0) ;;
+    1)
         s5_err_msg reconfigure.port_not_free "$S5_PORT"
         _s5_reconfigure_fail
         return 1
-    fi
+        ;;
+    *)
+        s5_err_msg reconfigure.port_unverified "$S5_PORT"
+        _s5_reconfigure_fail
+        return 1
+        ;;
+    esac
     if ! _s5_copy_file_secure "$S5_TXN_NEW_USERS" "$S5_USERSCFG" "0:$S5_ACCOUNT_GID" 0640 ||
         ! _s5_copy_file_secure "$S5_TXN_NEW_CFG" "$S5_CFG" "0:$S5_ACCOUNT_GID" 0640 ||
         ! s5_state_replace_identity "$S5_PORT" "$S5_USERNAME"; then

@@ -16,7 +16,7 @@ export S5_LIB_ONLY
 S5_PROC_NET_TCP="$S5_TEST_ROOT/proc-net-tcp"
 S5_PROC_NET_TCP6="$S5_TEST_ROOT/proc-net-tcp6"
 printf '  sl  local_address rem_address   st\n' >"$S5_PROC_NET_TCP"
-printf '  sl  local_address rem_address   st\n' >"$S5_PROC_NET_TCP6"
+printf '  sl  local_address remote_address   st\n' >"$S5_PROC_NET_TCP6"
 
 # --------------------------------------------------------------------------
 # Port validation
@@ -184,7 +184,7 @@ assert_eq "netstat is selected when proc is unavailable" "netstat" "$(s5_probe_c
 S5_PROC_NET_TCP=$_saved_proc
 S5_PROC_NET_TCP6=$_saved_proc6
 printf '  sl  local_address rem_address   st\n' >"$S5_PROC_NET_TCP"
-printf '  sl  local_address rem_address   st\n' >"$S5_PROC_NET_TCP6"
+printf '  sl  local_address remote_address   st\n' >"$S5_PROC_NET_TCP6"
 unset -f ss netstat s5_ca_bundle_available
 assert_eq "proc table is normally the preferred probe" proc "$(s5_probe_cmd)"
 
