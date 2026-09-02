@@ -3827,6 +3827,12 @@ S5_STATE_DIR_CLAIM_ID=''
 S5_STATE_FILE_CLAIM_ID=''
 S5_CREATED_ACCOUNT_UID=''
 S5_CREATED_ACCOUNT_GID=''
+# Set the instant a principal exists, before its numeric id is read. The id is
+# the fingerprint that makes removal safe against name reuse, but it is read
+# AFTER the create tool returns, so a failed read used to leave a principal on
+# the host with nothing at all recording that this run made it.
+S5_CREATED_USER_NAMED=0
+S5_CREATED_GROUP_NAMED=0
 S5_ACCOUNT_UID=''
 S5_ACCOUNT_GID=''
 S5_CLAIM_PREFIX_ID=''
@@ -3874,7 +3880,8 @@ s5_cleanup() {
         s5_pending_claim_remove || _clbad=1
     fi
 
-    if [ -n "$S5_CREATED_ACCOUNT_UID" ] || [ -n "$S5_CREATED_ACCOUNT_GID" ]; then
+    if [ -n "$S5_CREATED_ACCOUNT_UID" ] || [ -n "$S5_CREATED_ACCOUNT_GID" ] ||
+        [ "$S5_CREATED_USER_NAMED" = "1" ] || [ "$S5_CREATED_GROUP_NAMED" = "1" ]; then
         s5_pending_account_remove || _clbad=1
     fi
 
@@ -5532,9 +5539,18 @@ s5_state_mark() {
 }
 
 s5_state_claim_account() {
-    case "$S5_CREATED_ACCOUNT_UID:$S5_CREATED_ACCOUNT_GID" in
-    *[!0-9:]* | :* | *:) return 1 ;;
-    esac
+    # The writer must accept exactly what the loader accepts. The inline pattern
+    # this replaced tested both ids as one colon-joined string, so a value that
+    # itself contained a colon passed: "1:2" and "900" join to "1:2:900", which
+    # has no disallowed character, no leading colon and no trailing colon. The
+    # loader's account_uid arm rejects it, so the state file this wrote could
+    # never be read back -- and with state unloadable, uninstall and rollback
+    # both refuse to act, orphaning the account, the directories and the
+    # cleartext credential file with no supported way to remove them.
+    if ! s5_state_value_ok account_uid "$S5_CREATED_ACCOUNT_UID" ||
+        ! s5_state_value_ok account_gid "$S5_CREATED_ACCOUNT_GID"; then
+        return 1
+    fi
     _scaold=$S5_STATE_BUF
     S5_STATE_BUF="$S5_STATE_BUF
 account_uid	$S5_CREATED_ACCOUNT_UID
@@ -5552,6 +5568,8 @@ created_group	1"
     S5_ACCOUNT_GID=$S5_CREATED_ACCOUNT_GID
     S5_CREATED_ACCOUNT_UID=''
     S5_CREATED_ACCOUNT_GID=''
+    S5_CREATED_USER_NAMED=0
+    S5_CREATED_GROUP_NAMED=0
     return 0
 }
 
@@ -6319,6 +6337,8 @@ s5_account_create() {
     _nl=$(s5_nologin_path)
     S5_CREATED_ACCOUNT_UID=''
     S5_CREATED_ACCOUNT_GID=''
+    S5_CREATED_USER_NAMED=0
+    S5_CREATED_GROUP_NAMED=0
     case "$S5_OS_FAMILY" in
     alpine)
         s5_group_exists
@@ -6333,6 +6353,7 @@ s5_account_create() {
                 s5_err_msg account.group_create_failed "$S5_SERVICE_GROUP"
                 return 1
             fi
+            S5_CREATED_GROUP_NAMED=1
             ;;
         *)
             s5_err_msg account.group_exists_unknown "$S5_SERVICE_GROUP"
@@ -6354,6 +6375,7 @@ s5_account_create() {
             s5_err_msg account.user_create_failed "$S5_SERVICE_USER"
             return 1
         fi
+        S5_CREATED_USER_NAMED=1
         ;;
     *)
         s5_group_exists
@@ -6368,6 +6390,7 @@ s5_account_create() {
                 s5_err_msg account.group_create_failed "$S5_SERVICE_GROUP"
                 return 1
             fi
+            S5_CREATED_GROUP_NAMED=1
             ;;
         *)
             s5_err_msg account.group_exists_unknown "$S5_SERVICE_GROUP"
@@ -6391,6 +6414,7 @@ s5_account_create() {
             s5_err_msg account.user_create_failed "$S5_SERVICE_USER"
             return 1
         fi
+        S5_CREATED_USER_NAMED=1
         ;;
     esac
     S5_CREATED_ACCOUNT_UID=$(s5_current_uid)
@@ -6448,18 +6472,39 @@ s5_pending_account_remove() {
         if s5_account_remove 1 "$S5_CREATED_ACCOUNT_UID" "$S5_CREATED_ACCOUNT_GID"; then
             S5_CREATED_ACCOUNT_UID=''
             S5_CREATED_ACCOUNT_GID=''
+            S5_CREATED_USER_NAMED=0
+            S5_CREATED_GROUP_NAMED=0
             return 0
         fi
         return 1
     fi
-    if [ -z "$S5_CREATED_ACCOUNT_GID" ]; then
+    # A principal created moments ago whose id was never readable. The recorded
+    # id is what normally licenses the delete, because the fixed names can have
+    # been removed and recreated by an unrelated workload since; inside this
+    # window there has been no such opportunity, so the name is a sound handle
+    # and the only one left. Removal still has to be PROVEN: a database that
+    # cannot be queried afterwards is a failed rollback that keeps its record.
+    if [ "$S5_CREATED_USER_NAMED" = "1" ]; then
+        s5_del_user || true
+        s5_account_exists
+        _parnu=$?
+        case "$_parnu" in
+        1) ;;
+        0) s5_err_msg account.remove_user_failed "$S5_SERVICE_USER"; return 1 ;;
+        *) s5_err_msg account.remove_user_unknown "$S5_SERVICE_USER"; return 1 ;;
+        esac
+        S5_CREATED_USER_NAMED=0
+    fi
+    if [ -z "$S5_CREATED_ACCOUNT_GID" ] && [ "$S5_CREATED_GROUP_NAMED" != "1" ]; then
         return 0
     fi
-    _pargid=$(s5_current_gid 2>/dev/null)
-    if [ "$_pargid" != "$S5_CREATED_ACCOUNT_GID" ]; then
-        s5_err_msg account.remove_gid_reused "$S5_SERVICE_GROUP" \
-            "${_pargid:-unknown}" "$S5_CREATED_ACCOUNT_GID"
-        return 1
+    if [ -n "$S5_CREATED_ACCOUNT_GID" ]; then
+        _pargid=$(s5_current_gid 2>/dev/null)
+        if [ "$_pargid" != "$S5_CREATED_ACCOUNT_GID" ]; then
+            s5_err_msg account.remove_gid_reused "$S5_SERVICE_GROUP" \
+                "${_pargid:-unknown}" "$S5_CREATED_ACCOUNT_GID"
+            return 1
+        fi
     fi
     s5_account_exists
     _paruser=$?
@@ -6488,6 +6533,7 @@ s5_pending_account_remove() {
         ;;
     esac
     S5_CREATED_ACCOUNT_GID=''
+    S5_CREATED_GROUP_NAMED=0
     return 0
 }
 

@@ -614,4 +614,54 @@ assert_ne "a state file that fails its claim is still refused" 0 "$T_STATUS"
 assert_contains "the refusal names the foreign file" "did not create" "$T_OUT"
 S5_STATE_FILE_CLAIM_ID=''
 
+# ==========================================================================
+# The account claim must accept exactly what the loader accepts.
+#
+# s5_state_claim_account tested both ids as a single colon-joined string --
+# `*[!0-9:]* | :* | *:` -- so a value that itself contained a colon passed:
+# "1:2" and "900" join to "1:2:900", which has no disallowed character, no
+# leading colon and no trailing colon. s5_state_value_ok's account_uid arm
+# rejects that on load, so this writer could produce a state file that could
+# never be read back -- and with state unloadable, uninstall and rollback both
+# refuse to act, leaving the account, the directories and the cleartext
+# credential file in place with no supported way to remove them.
+# ==========================================================================
+claim_reset() {
+    rm -rf "$S5_STATEDIR"
+    mkdir -p "$S5_STATEDIR"
+    S5_STATE_BUF="port	31080"
+    S5_STATE_LOADED=1
+    S5_STATE_DIR_CLAIM_ID=''
+    S5_STATE_FILE_CLAIM_ID=''
+    S5_CREATED_ACCOUNT_UID=$1
+    S5_CREATED_ACCOUNT_GID=$2
+}
+
+claimed_id() {
+    awk -F'\t' -v k="$1" '$1==k { print $2 }' "$S5_STATE" 2>/dev/null
+}
+
+# The positive control runs first, so a writer that refuses everything cannot
+# pass the refusals below. The recorded ids are checked against the format the
+# loader documents -- decimal digits only -- not against the writer's own idea
+# of validity.
+claim_reset 900 901
+t_run s5_state_claim_account
+assert_eq "an ordinary numeric account claim is accepted" 0 "$T_STATUS"
+assert_eq "the recorded uid is the one claimed" 900 "$(claimed_id account_uid)"
+assert_eq "the recorded gid is the one claimed" 901 "$(claimed_id account_gid)"
+
+for _badid in '1:2' '' '90a'; do
+    claim_reset "$_badid" 901
+    t_run s5_state_claim_account
+    assert_ne "a uid of [$_badid] is refused" 0 "$T_STATUS"
+    assert_eq "and no uid is recorded for [$_badid]" "" "$(claimed_id account_uid)"
+    claim_reset 900 "$_badid"
+    t_run s5_state_claim_account
+    assert_ne "a gid of [$_badid] is refused" 0 "$T_STATUS"
+    assert_eq "and no gid is recorded for [$_badid]" "" "$(claimed_id account_gid)"
+done
+
+if sentinel_intact; then t_ok; else t_bad "sentinel deleted by the claim cases"; fi
+
 t_summary

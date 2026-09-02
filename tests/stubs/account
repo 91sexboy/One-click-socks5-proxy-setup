@@ -12,6 +12,10 @@
 #   stub_groupdel_fail  -> groupdel/delgroup exit non-zero and change nothing
 #   stub_no_userdel     -> pretend the tool exits 0 but the user survives
 #   stub_no_deluser     -> deluser is absent (simulated by exiting 127)
+#   stub_group_gid_blank  -> `getent group` finds the group but its gid field is
+#                            empty, so existence is observable and the numeric id
+#                            is not. Models NSS returning a truncated record.
+#   stub_passwd_uid_blank -> the same for `getent passwd` and the uid field.
 
 T="$S5_TEST_ROOT/transcript"
 PW="$S5_TEST_ROOT/stub_passwd"
@@ -85,13 +89,22 @@ getent)
             fi
         fi
         if has_group "${2:-}"; then
-            printf '%s:x:%s:\n' "${2:-}" "$(getent_gid "${2:-}")"
+            if [ -f "$S5_TEST_ROOT/stub_group_gid_blank" ]; then
+                printf '%s:x::\n' "${2:-}"
+            else
+                printf '%s:x:%s:\n' "${2:-}" "$(getent_gid "${2:-}")"
+            fi
             exit 0
         fi
         exit 2
     fi
     if [ "${1:-}" = "passwd" ]; then
         if has_user "${2:-}"; then
+            if [ -f "$S5_TEST_ROOT/stub_passwd_uid_blank" ]; then
+                printf '%s:x::%s::/nonexistent:/usr/sbin/nologin\n' \
+                    "$2" "$(getent_gid "${2:-}")"
+                exit 0
+            fi
             printf '%s:x:%s:%s::/nonexistent:/usr/sbin/nologin\n' \
                 "$2" "$(getent_uid "$2")" "$(getent_gid "${2:-}")"
             exit 0

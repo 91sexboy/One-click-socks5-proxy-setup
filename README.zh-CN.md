@@ -364,7 +364,7 @@ acbfbfe3e6ba0f37f4e2a24ba8a6d68ec5a36513caae2e22e44a0ed28322e0b1
 当前候选 `socks5.sh` SHA-256：
 
 ```text
-81c4e2238371bb1e7b6dd5395f27b173397dc19c6203387bced43541de73dd96  socks5.sh
+fc8fe8741db4309d3459c3f383e262064928e60e4382b9d762f3903a72590942  socks5.sh
 ```
 
 上一份双语 checkpoint commit
@@ -382,7 +382,7 @@ Tag 存在后，使用以下方式验证：
 
 ```sh
 wget -qO socks5.sh https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-setup/v1.1.0/socks5.sh
-printf '%s  %s\n' '81c4e2238371bb1e7b6dd5395f27b173397dc19c6203387bced43541de73dd96' socks5.sh | sha256sum -c -
+printf '%s  %s\n' 'fc8fe8741db4309d3459c3f383e262064928e60e4382b9d762f3903a72590942' socks5.sh | sha256sum -c -
 sudo sh socks5.sh
 ```
 
