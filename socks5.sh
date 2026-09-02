@@ -791,6 +791,15 @@ s5_msg() {
         *) s5_msg_locale_error; return 1 ;;
         esac
         ;;
+    # @s5-msg lock.parent_denied 1
+    lock.parent_denied)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error lock.parent_denied 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '没有权限在 %s 中创建操作锁；此命令需要 root' "${1}" ;;
+        en) printf 'no permission to create the operation lock in %s; this command requires root' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
     # @s5-msg lock.parent_invalid 1
     lock.parent_invalid)
         [ "$#" -eq 1 ] || { s5_msg_contract_error lock.parent_invalid 1 "$#"; return 1; }
@@ -5595,6 +5604,68 @@ s5_boot_id() {
     printf '%s' "$_sbid"
 }
 
+# _s5_lock_claim : atomically claim the operation lock for this process.
+# 0 = claimed and S5_LOCK_TOKEN is set, 1 = someone else already owns it,
+# 2 = the attempt could not be made at all.
+#
+# The claim is the OWNER FILE, not the directory. mkdir used to be the claim,
+# which left the lock present but unidentifiable for the several forks it took to
+# read the boot id and this process's start time -- and the contention path
+# treated an owner-less lock directory as garbage to rmdir, so a competitor
+# caught inside that window had its live lock destroyed and taken. Verified:
+# against a bare `mkdir $S5_LOCKDIR`, s5_lock_acquire returned 0 and wrote its
+# own PID. `ln -T` is the same atomic no-replace primitive _s5_publish_new uses
+# and s5_no_replace_supported already gates on, so the owner either appears whole
+# or the link fails. There is no unowned instant to steal.
+_s5_lock_claim() {
+    if [ -L "$S5_LOCKDIR" ]; then
+        return 2
+    fi
+    if [ ! -d "$S5_LOCKDIR" ]; then
+        mkdir "$S5_LOCKDIR" 2>/dev/null || true
+    fi
+    if [ -L "$S5_LOCKDIR" ] || [ ! -d "$S5_LOCKDIR" ]; then
+        return 2
+    fi
+    # umask 077 already makes a fresh mkdir 0700; this only narrows a directory
+    # that survived from an earlier run.
+    chmod 0700 "$S5_LOCKDIR" 2>/dev/null || true
+    _lcboot=$(s5_boot_id) || return 2
+    _lcstart=$(s5_process_start_id "$$") || return 2
+    _lctmp=$(mktemp "$S5_LOCKDIR/.owner.XXXXXX" 2>/dev/null) || return 2
+    S5_LOCK_TOKEN="$$
+$_lcboot
+$_lcstart"
+    if ! printf '%s\n' "$S5_LOCK_TOKEN" >"$_lctmp" || ! chmod 0600 "$_lctmp"; then
+        rm -f "$_lctmp" 2>/dev/null || true
+        _lctmp=''
+        S5_LOCK_TOKEN=''
+        return 2
+    fi
+    if ln -T "$_lctmp" "$S5_LOCK_OWNER" 2>/dev/null; then
+        rm -f "$_lctmp" 2>/dev/null || true
+        _lctmp=''
+        return 0
+    fi
+    rm -f "$_lctmp" 2>/dev/null || true
+    _lctmp=''
+    S5_LOCK_TOKEN=''
+    return 1
+}
+
+# _s5_lock_break <owner-bytes-that-were-judged> : drop an owner record judged
+# stale, but only while it is still byte-for-byte the record that was judged.
+# Two processes can reach the same stale verdict; without the re-read the second
+# would delete the fresh owner the first had already installed. Mutual exclusion
+# no longer rests on this -- only one _s5_lock_claim can win afterwards -- but a
+# fresh holder should not lose its lock to a straggler's stale verdict either.
+_s5_lock_break() {
+    if [ "$(cat "$S5_LOCK_OWNER" 2>/dev/null)" != "$1" ]; then
+        return 1
+    fi
+    rm -f "$S5_LOCK_OWNER" 2>/dev/null
+}
+
 s5_lock_acquire() {
     if [ "$S5_LOCK_HELD" = "1" ]; then
         return 0
@@ -5612,62 +5683,40 @@ s5_lock_acquire() {
         s5_err_msg lock.parent_invalid "$_lap"
         return 1
     fi
+    if [ ! -w "$_lap" ]; then
+        s5_err_msg lock.parent_denied "$_lap"
+        return 1
+    fi
     _latry=0
     while [ "$_latry" -lt 2 ]; do
         _latry=$((_latry + 1))
-        if mkdir "$S5_LOCKDIR" 2>/dev/null; then
-            chmod 0700 "$S5_LOCKDIR" || {
-                rmdir "$S5_LOCKDIR" 2>/dev/null || true
-                s5_err_msg lock.create_failed "$S5_LOCKDIR"
-                return 1
-            }
-            _laboot=$(s5_boot_id) || {
-                rmdir "$S5_LOCKDIR" 2>/dev/null || true
-                s5_err_msg lock.identity_failed
-                return 1
-            }
-            _lastart=$(s5_process_start_id "$$") || {
-                rmdir "$S5_LOCKDIR" 2>/dev/null || true
-                s5_err_msg lock.identity_failed
-                return 1
-            }
-            S5_LOCK_TOKEN="$$
-$_laboot
-$_lastart"
-            if ! printf '%s\n' "$S5_LOCK_TOKEN" >"$S5_LOCK_OWNER" ||
-                ! chmod 0600 "$S5_LOCK_OWNER"; then
-                rm -f "$S5_LOCK_OWNER" 2>/dev/null || true
-                rmdir "$S5_LOCKDIR" 2>/dev/null || true
-                S5_LOCK_TOKEN=''
-                s5_err_msg lock.owner_failed "$S5_LOCK_OWNER"
-                return 1
-            fi
+        _s5_lock_claim
+        _lacl=$?
+        case "$_lacl" in
+        0)
             S5_LOCK_HELD=1
             return 0
-        fi
+            ;;
+        2)
+            s5_err_msg lock.create_failed "$S5_LOCKDIR"
+            return 1
+            ;;
+        esac
 
-        if [ -L "$S5_LOCKDIR" ] || [ ! -d "$S5_LOCKDIR" ]; then
-            s5_err_msg lock.invalid "$S5_LOCKDIR"
-            return 1
-        fi
-        if [ ! -e "$S5_LOCK_OWNER" ] && [ ! -L "$S5_LOCK_OWNER" ]; then
-            if rmdir "$S5_LOCKDIR" 2>/dev/null; then
-                continue
-            fi
-            s5_err_msg lock.invalid "$S5_LOCKDIR"
-            return 1
-        fi
         if [ -L "$S5_LOCK_OWNER" ] || [ ! -f "$S5_LOCK_OWNER" ]; then
             s5_err_msg lock.invalid "$S5_LOCKDIR"
             return 1
         fi
+        # Read the record once. Every staleness verdict below is about THESE
+        # bytes, and _s5_lock_break refuses to remove anything else.
+        _laowner=$(cat "$S5_LOCK_OWNER" 2>/dev/null)
         _lapid=$(sed -n '1p' "$S5_LOCK_OWNER" 2>/dev/null)
         _laboot=$(sed -n '2p' "$S5_LOCK_OWNER" 2>/dev/null)
         _lastart=$(sed -n '3p' "$S5_LOCK_OWNER" 2>/dev/null)
         _lalines=$(wc -l <"$S5_LOCK_OWNER" 2>/dev/null | tr -d '[:space:]')
         case "$_lapid:$_lastart:$_lalines" in
         *[!0-9:]* | *::* | :* | *:)
-            if rm -f "$S5_LOCK_OWNER" 2>/dev/null && rmdir "$S5_LOCKDIR" 2>/dev/null; then
+            if _s5_lock_break "$_laowner"; then
                 continue
             fi
             s5_err_msg lock.invalid "$S5_LOCKDIR"
@@ -5675,7 +5724,7 @@ $_lastart"
             ;;
         esac
         if [ "$_lalines" -ne 3 ]; then
-            if rm -f "$S5_LOCK_OWNER" 2>/dev/null && rmdir "$S5_LOCKDIR" 2>/dev/null; then
+            if _s5_lock_break "$_laowner"; then
                 continue
             fi
             s5_err_msg lock.invalid "$S5_LOCKDIR"
@@ -5691,8 +5740,7 @@ $_lastart"
         if [ "$_laboot" = "$_lacurrentboot" ] && [ -d "/proc/$_lapid" ]; then
             if ! _laprocessstate=$(s5_process_state "$_lapid"); then
                 if [ ! -d "/proc/$_lapid" ]; then
-                    if rm -f "$S5_LOCK_OWNER" 2>/dev/null &&
-                        rmdir "$S5_LOCKDIR" 2>/dev/null; then
+                    if _s5_lock_break "$_laowner"; then
                         continue
                     fi
                 fi
@@ -5704,8 +5752,7 @@ $_lastart"
             *)
                 if ! _lacurrentstart=$(s5_process_start_id "$_lapid"); then
                     if [ ! -d "/proc/$_lapid" ]; then
-                        if rm -f "$S5_LOCK_OWNER" 2>/dev/null &&
-                            rmdir "$S5_LOCKDIR" 2>/dev/null; then
+                        if _s5_lock_break "$_laowner"; then
                             continue
                         fi
                     fi
@@ -5719,7 +5766,7 @@ $_lastart"
                 ;;
             esac
         fi
-        if ! rm -f "$S5_LOCK_OWNER" || ! rmdir "$S5_LOCKDIR"; then
+        if ! _s5_lock_break "$_laowner"; then
             s5_err_msg lock.stale_remove_failed "$S5_LOCKDIR"
             return 1
         fi
@@ -5739,8 +5786,19 @@ s5_lock_release() {
         return 1
     fi
     if ! rm -f "$S5_LOCK_OWNER" || ! rmdir "$S5_LOCKDIR"; then
-        s5_err_msg lock.release_failed "$S5_LOCKDIR"
-        return 1
+        # _s5_lock_claim stages its owner record as .owner.XXXXXX inside the lock
+        # directory, so a claimant killed between mktemp and its own unlink leaves
+        # one behind and rmdir answers ENOTEMPTY. That prefix is ours; sweep it
+        # and retry rather than reporting the holder's release as a failure.
+        for _lrt in "$S5_LOCKDIR"/.owner.*; do
+            if [ -e "$_lrt" ] || [ -L "$_lrt" ]; then
+                rm -f "$_lrt" || true
+            fi
+        done
+        if ! rmdir "$S5_LOCKDIR"; then
+            s5_err_msg lock.release_failed "$S5_LOCKDIR"
+            return 1
+        fi
     fi
     S5_LOCK_HELD=0
     S5_LOCK_TOKEN=''
@@ -8698,10 +8756,18 @@ _s5_cmd_uninstall_locked() {
 }
 
 s5_cmd_uninstall() {
+    # The unlocked fast path answers "nothing is installed" and nothing else.
+    # It used to call the whole locked body without the lock, re-testing only
+    # $S5_STATE on entry, so a concurrent install that created the state file
+    # between the two tests got its resources torn down by a teardown running
+    # outside the mutex -- the one mutating path in this script not serialised
+    # by it. The window was two `[` builtins wide; the fix is to not have one.
     if [ ! -e "$S5_STATE" ] && [ ! -L "$S5_STATE" ] &&
         [ ! -e "$S5_TXNDIR" ] && [ ! -L "$S5_TXNDIR" ]; then
-        _s5_cmd_uninstall_locked
-        return $?
+        _un=$(s5_msg cmd.uninstall.nothing "$S5_PROJECT")
+        s5_say "$_un"
+        _un=''
+        return "$EX_OK"
     fi
     if ! s5_is_root; then
         s5_err_msg uninstall.requires_root

@@ -258,17 +258,92 @@ assert_file_absent "released stale lock leaves no directory" "$S5_LOCKDIR"
 mkdir "$S5_LOCKDIR"
 s5_lock_acquire >"$S5_TEST_ROOT/lock.out" 2>&1
 _lock_rc=$?
-assert_eq "an ownerless interrupted lock self-heals" 0 "$_lock_rc"
+assert_eq "an unclaimed lock directory is claimable" 0 "$_lock_rc"
 s5_lock_release >/dev/null 2>&1
-assert_file_absent "ownerless lock recovery leaves no directory" "$S5_LOCKDIR"
+assert_file_absent "claiming then releasing leaves no directory" "$S5_LOCKDIR"
 
 mkdir "$S5_LOCKDIR"
 printf 'partial\n' >"$S5_LOCK_OWNER"
 s5_lock_acquire >"$S5_TEST_ROOT/lock.out" 2>&1
 _lock_rc=$?
-assert_eq "a partial owner record self-heals" 0 "$_lock_rc"
+assert_eq "a truncated owner record is broken and reclaimed" 0 "$_lock_rc"
 s5_lock_release >/dev/null 2>&1
-assert_file_absent "partial lock recovery leaves no directory" "$S5_LOCKDIR"
+assert_file_absent "reclaiming a truncated record leaves no directory" "$S5_LOCKDIR"
+
+# ==========================================================================
+# The claim is the OWNER RECORD, not the directory.
+#
+# mkdir used to be the claim, so between it and the owner write -- several forks,
+# for the boot id and this process's start time -- the lock existed but named
+# nobody, and the contention path rmdir'd an owner-less lock as garbage. A
+# competitor caught in that window had its live lock destroyed and taken:
+# verified before the fix, where s5_lock_acquire answered 0 against a bare
+# `mkdir $S5_LOCKDIR` and wrote its own PID.
+#
+# A sentinel inside the directory decides which mechanism is in play. The old
+# code had to rmdir to proceed and cannot remove a non-empty directory, so it
+# refused; the claim-based code links its owner in beside the sentinel.
+# ==========================================================================
+mkdir "$S5_LOCKDIR"
+: >"$S5_LOCKDIR/keepme"
+s5_lock_acquire >"$S5_TEST_ROOT/lock.out" 2>&1
+_lock_rc=$?
+assert_eq "an unclaimed lock directory is claimed, not destroyed" 0 "$_lock_rc"
+assert_file_exists "claiming the lock disturbs nothing already inside it" \
+    "$S5_LOCKDIR/keepme"
+assert_file_exists "the claim leaves an owner record" "$S5_LOCK_OWNER"
+rm -f "$S5_LOCKDIR/keepme"
+s5_lock_release >/dev/null 2>&1
+assert_file_absent "the claimed lock is still fully released" "$S5_LOCKDIR"
+
+# A claimant killed between its mktemp and its own unlink leaves a .owner.XXXXXX
+# behind. That prefix belongs to this script, so release sweeps it instead of
+# reporting the holder's own release as a failure.
+s5_lock_acquire >/dev/null 2>&1
+: >"$S5_LOCKDIR/.owner.straggler"
+s5_lock_release >"$S5_TEST_ROOT/unlock.out" 2>&1
+_unlock_rc=$?
+assert_eq "a stranded staging record does not block release" 0 "$_unlock_rc"
+assert_file_absent "release still removes the lock directory" "$S5_LOCKDIR"
+
+# A second REAL process must be refused while the lock is held. The case above
+# at line ~236 uses this shell's own PID as the owner, which cannot distinguish
+# "refuses a live owner" from "refuses itself".
+s5_lock_acquire >/dev/null 2>&1
+assert_eq "this process holds the lock" 1 "$S5_LOCK_HELD"
+cat >"$S5_TEST_ROOT/contend.sh" <<'CONTEND'
+#!/bin/sh
+S5_LIB_ONLY=1
+export S5_LIB_ONLY
+. "$S5_SRC"
+s5_lock_acquire >"$S5_TEST_ROOT/contend.out" 2>&1
+printf '%s\n' "$?" >"$S5_TEST_ROOT/contend.rc"
+CONTEND
+chmod 0700 "$S5_TEST_ROOT/contend.sh"
+sh "$S5_TEST_ROOT/contend.sh" >/dev/null 2>&1 || true
+assert_eq "a second process cannot take a held lock" 1 \
+    "$(cat "$S5_TEST_ROOT/contend.rc" 2>/dev/null)"
+assert_contains "the refused process is told who holds it" "PID $$" \
+    "$(cat "$S5_TEST_ROOT/contend.out" 2>/dev/null)"
+assert_eq "the holder's own record is untouched" "$S5_LOCK_TOKEN" \
+    "$(cat "$S5_LOCK_OWNER" 2>/dev/null)"
+s5_lock_release >/dev/null 2>&1
+assert_file_absent "the contended lock is released cleanly" "$S5_LOCKDIR"
+
+# A parent directory this process cannot write is a permission problem, and
+# saying "the operation lock is invalid; inspect it manually" sent an
+# unprivileged reader to inspect a lock that was never there. In production the
+# parent is /run, so every non-root `status` hit exactly this.
+_lock_parent=${S5_LOCKDIR%/*}
+chmod 0500 "$_lock_parent"
+s5_lock_acquire >"$S5_TEST_ROOT/lock.out" 2>&1
+_lock_rc=$?
+chmod 0700 "$_lock_parent"
+assert_ne "an unwritable lock parent refuses the lock" 0 "$_lock_rc"
+assert_contains "the refusal names the permission, not a corrupt lock" \
+    "$(s5_msg lock.parent_denied "$_lock_parent")" "$(cat "$S5_TEST_ROOT/lock.out")"
+assert_not_contains "the refusal does not blame the lock's integrity" \
+    "$(s5_msg lock.invalid "$S5_LOCKDIR")" "$(cat "$S5_TEST_ROOT/lock.out")"
 
 S5_PASSWORD=''
 S5_SECRET=''
