@@ -234,7 +234,7 @@ honoured only under `S5_TEST_MODE=1` and causes an immediate refusal otherwise.
 
 **Denylist — must not appear, asserted by test:** `proxy`, `admin`, `ftppr`, `smtpp`, `pop3p`,
 `imapp`, `tlspr`, `tcppm`, `udppm`, `dnspr`, `writable`, `system`, `plugin`, `parent`, `authcache`,
-`chroot`, `setuid`, `setgid`, `BIND`, `UDPASSOC`, `auth none`, `auth iponly`.
+`chroot`, `setuid`, `setgid`, `include`, `BIND`, `UDPASSOC`, `auth none`, `auth iponly`.
 
 ### 6.1 How SOCKS4 is excluded
 3proxy's `socks` gateway is documented at the pinned ref as a "SOCKS 4/4.5/5 proxy", so it parses all

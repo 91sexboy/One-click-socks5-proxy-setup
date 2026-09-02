@@ -605,6 +605,34 @@ assert_not_contains "zh: port rejection is not English" \
 t_run s5_say_msg install.warning_cleartext
 assert_not_contains "zh: security warning is not English" 'CLEARTEXT' "$T_OUT"
 assert_contains "zh: security warning keeps the protocol token" 'SOCKS5' "$T_OUT"
+t_run s5_say_msg install.warning_cleartext2
+assert_not_contains "zh cleartext continuation does not repeat a fragment" "在网络上。" "$T_OUT"
+assert_contains "zh cleartext continuation keeps the VPN warning" "不是 VPN" "$T_OUT"
+
+# s5_load_credentials is the boundary that reads plaintext back into memory;
+# it must arm redaction itself so every caller receives the invariant.
+S5_LANG=en
+S5_SECRET=''
+S5_USERSCFG="$S5_TEST_ROOT/credentials"
+printf 'gooduser:CL:LoadedSecret_123~x\n' >"$S5_USERSCFG"
+s5_load_credentials >/dev/null 2>&1
+assert_eq "loading credentials arms redaction" 'LoadedSecret_123~x' "$S5_SECRET"
+S5_SECRET=''
+
+# help has the same single-command grammar as the lifecycle commands; extra
+# arguments must not be silently discarded.
+printf '2\n' >"$S5_TEST_ROOT/help-lang"
+t_run s5_main help unexpected <"$S5_TEST_ROOT/help-lang"
+assert_ne "help rejects extra arguments" 0 "$T_STATUS"
+assert_contains "help extra-argument error is explicit" "takes no arguments" "$T_OUT"
+
+# Shell basenames are interpreters, not saved scripts. Source the real file with
+# $0 set to `sh`, as happens when an operator runs `sh socks5.sh`.
+t_run sh -c '. "$1"; S5_LANG=en; s5_cmd_hint uninstall' sh "$SRC"
+assert_contains "bare shell self-hint points at re-running the installer" \
+    "re-run the install command" "$T_OUT"
+assert_not_contains "bare shell self-hint is not a false direct path" \
+    "run 'sh uninstall'" "$T_OUT"
 
 S5_LANG=en
 t_run s5_say_msg detect.unsupported 'funny-os' '9' 'amd64'

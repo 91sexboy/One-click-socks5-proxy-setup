@@ -281,8 +281,13 @@ s5_guard_environment
 # mode opens the management menu, which reaches every subcommand.
 # ---------------------------------------------------------------------------
 S5_SELF=$0
+case "${S5_SELF##*/}" in
+bash | sh | dash | ash | busybox | ksh | zsh)
+    S5_SELF=''
+    ;;
+esac
 case "$S5_SELF" in
-/dev/fd/* | /proc/self/fd/* | bash | sh | -bash | -sh) S5_SELF='' ;;
+/dev/fd/* | /proc/self/fd/* | -bash | -sh) S5_SELF='' ;;
 esac
 
 # s5_cmd_hint <subcommand>: phrase describing how the operator runs it.
@@ -489,7 +494,7 @@ s5_msg() {
     install.warning_cleartext2)
         [ "$#" -eq 0 ] || { s5_msg_contract_error install.warning_cleartext2 0 "$#"; return 1; }
         case "$S5_LANG" in
-        zh) printf '    在网络上。SOCKS5 不提供传输加密，也不提供完整性保护。它不是 VPN。' ;;
+        zh) printf '    SOCKS5 不提供传输加密，也不提供完整性保护。它不是 VPN。' ;;
         en) printf '    on the wire. SOCKS5 provides NO transport encryption and NO integrity' ;;
         *) s5_msg_locale_error; return 1 ;;
         esac
@@ -1310,8 +1315,8 @@ s5_msg() {
     usage.cmd_status)
         [ "$#" -eq 0 ] || { s5_msg_contract_error usage.cmd_status 0 "$#"; return 1; }
         case "$S5_LANG" in
-        zh) printf '  status       查看服务、端口和版本信息' ;;
-        en) printf '  status       Show service, port and version information' ;;
+        zh) printf '  status       查看服务、端口和版本信息（仅限 root）' ;;
+        en) printf '  status       Show service, port and version information (root only)' ;;
         *) s5_msg_locale_error; return 1 ;;
         esac
         ;;
@@ -6179,6 +6184,10 @@ s5_render_cfg() {
         s5_err_msg render.cfg_bad_username
         return 1
     fi
+    if ! s5_ipv4_is_canonical "$S5_LISTEN"; then
+        s5_err_msg state.listen_invalid
+        return 1
+    fi
     printf 'log\n'
     printf 'users $%s\n' "$S5_USERSCFG"
     printf 'auth strong\n'
@@ -6720,7 +6729,7 @@ s5_account_remove() {
 # only; it does not prove the daemon will accept the file.
 # ---------------------------------------------------------------------------
 
-S5_FORBIDDEN_DIRECTIVES='proxy admin ftppr smtpp pop3p imapp tlspr tcppm udppm dnspr writable system plugin parent authcache chroot setuid setgid'
+S5_FORBIDDEN_DIRECTIVES='proxy admin ftppr smtpp pop3p imapp tlspr tcppm udppm dnspr writable system plugin parent authcache chroot setuid setgid include'
 
 # s5_static_check_cfg <config-path> [credentials-path]
 s5_static_check_cfg() {
@@ -8653,6 +8662,7 @@ s5_load_credentials() {
     fi
     S5_USERNAME=$_lcu
     S5_PASSWORD=$_lcp
+    S5_SECRET=$_lcp
     _lcline=''; _lcu=''; _lcp=''
     return 0
 }
@@ -8926,8 +8936,8 @@ s5_cmd_auto() {
     s5_say_msg menu.option_show
     s5_say_msg menu.option_restart
     s5_say_msg menu.option_uninstall
-    s5_say_msg menu.option_quit
     s5_say_msg menu.option_reconfigure
+    s5_say_msg menu.option_quit
     _mcp=$(s5_msg menu.choice_prompt)
     printf '%s' "$_mcp" >&2
     _mcp=''
@@ -8942,10 +8952,12 @@ s5_cmd_auto() {
     3) s5_cmd_restart ;;
     4) s5_cmd_uninstall ;;
     5)
+        s5_cmd_install
+        ;;
+    6)
         s5_say_msg menu.nothing_to_do
         return "$EX_OK"
         ;;
-    6) s5_cmd_install ;;
     *)
         s5_err_msg menu.invalid_choice "$_cha"
         return "$EX_USAGE"
@@ -8973,7 +8985,7 @@ s5_main() {
     # interactive install with nothing to say that the option was meaningless.
     if [ "$#" -gt 0 ]; then
         case "$_cmd" in
-        install | status | show | restart | uninstall)
+        install | status | show | restart | uninstall | help)
             _ea=$(s5_msg usage.extra_args "$_cmd" "$*")
             s5_err "$_ea"
             _ea=''

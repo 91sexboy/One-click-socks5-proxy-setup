@@ -123,7 +123,7 @@ Alpine 会安装 `/etc/init.d/socks5-manager`，加入 default runlevel，并通
 ```sh
 sh socks5.sh             # 未安装时安装；已健康安装时打开菜单
 sh socks5.sh install     # 全新安装或原地更新端口/凭据
-sh socks5.sh status      # 服务、监听、用户、engine 和安装来源
+sh socks5.sh status      # 服务、监听、用户、engine 和安装来源（仅限 root）
 sh socks5.sh show        # 显示包含密码的凭据卡；仅 TTY
 sh socks5.sh restart     # 重启并等待配置端口恢复监听
 sh socks5.sh uninstall   # 默认 no 确认后安全卸载
@@ -205,13 +205,13 @@ Alpine root-shell 示例之外，保存脚本后可使用：
 ```sh
 sudo sh socks5.sh
 sudo sh socks5.sh install
-sudo sh socks5.sh status
+sudo sh socks5.sh status      # 仅限 root：服务、监听、用户、engine 和安装来源
 sudo sh socks5.sh show
 sudo sh socks5.sh restart
 sudo sh socks5.sh uninstall
 ```
 
-每次运行都会重新选择语言。`status` 不显示密码。健康安装上确认的 `install` 会
+每次运行都会重新选择语言。`status` 仅限 root 且不显示密码。健康安装上确认的 `install` 会
 原地更新配置，并事务式验证新凭据和监听状态。
 
 <!-- section: supported-systems -->
@@ -364,7 +364,7 @@ acbfbfe3e6ba0f37f4e2a24ba8a6d68ec5a36513caae2e22e44a0ed28322e0b1
 当前候选 `socks5.sh` SHA-256：
 
 ```text
-ee08b099f07296499ec62552ad13dd8627e5fbe62a4d53f4d09581e1ee5331ea  socks5.sh
+2da8d4a522533a8775805d54bd051b63d6fd73e3426e932e036a6b1868892ffd  socks5.sh
 ```
 
 上一份双语 checkpoint commit
@@ -382,7 +382,7 @@ Tag 存在后，使用以下方式验证：
 
 ```sh
 wget -qO socks5.sh https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-setup/v1.1.0/socks5.sh
-printf '%s  %s\n' 'ee08b099f07296499ec62552ad13dd8627e5fbe62a4d53f4d09581e1ee5331ea' socks5.sh | sha256sum -c -
+printf '%s  %s\n' '2da8d4a522533a8775805d54bd051b63d6fd73e3426e932e036a6b1868892ffd' socks5.sh | sha256sum -c -
 sudo sh socks5.sh
 ```
 

@@ -141,7 +141,7 @@ If you saved the script, use POSIX `sh`; do not assume `sudo` is installed:
 ```sh
 sh socks5.sh             # install if absent; otherwise open the menu
 sh socks5.sh install     # fresh install or in-place credential/port update
-sh socks5.sh status      # service, listener, user, engine and install origin
+sh socks5.sh status      # service, listener, user, engine and install origin (root only)
 sh socks5.sh show        # credential card, including the password; TTY only
 sh socks5.sh restart     # restart and wait for the configured port
 sh socks5.sh uninstall   # default-no confirmation, then safe removal
@@ -236,7 +236,7 @@ sudo sh socks5.sh restart
 sudo sh socks5.sh uninstall
 ```
 
-Every invocation starts with language selection again. `status` never prints the
+Every invocation starts with language selection again. `status` is root-only and never prints the
 password. A confirmed `install` on a healthy existing installation updates the configuration in place and verifies the new credentials/listener transactionally.
 
 <!-- section: supported-systems -->
@@ -408,7 +408,7 @@ acbfbfe3e6ba0f37f4e2a24ba8a6d68ec5a36513caae2e22e44a0ed28322e0b1
 Current candidate `socks5.sh` SHA-256:
 
 ```text
-ee08b099f07296499ec62552ad13dd8627e5fbe62a4d53f4d09581e1ee5331ea  socks5.sh
+2da8d4a522533a8775805d54bd051b63d6fd73e3426e932e036a6b1868892ffd  socks5.sh
 ```
 
 The previous bilingual checkpoint, commit
@@ -427,7 +427,7 @@ After the tag exists, verify it with:
 
 ```sh
 wget -qO socks5.sh https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-setup/v1.1.0/socks5.sh
-printf '%s  %s\n' 'ee08b099f07296499ec62552ad13dd8627e5fbe62a4d53f4d09581e1ee5331ea' socks5.sh | sha256sum -c -
+printf '%s  %s\n' '2da8d4a522533a8775805d54bd051b63d6fd73e3426e932e036a6b1868892ffd' socks5.sh | sha256sum -c -
 sudo sh socks5.sh
 ```
 

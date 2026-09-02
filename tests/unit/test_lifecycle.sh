@@ -248,6 +248,15 @@ unset -f sleep
 
 # ==========================================================================
 # no-argument menu
+# The menu keeps the documented order: update is choice 5 and quit is choice 6.
+menu_body=$(sed -n '/^s5_cmd_auto() {/,/^}/p' "$S5_SRC")
+menu_update=$(printf '%s\n' "$menu_body" | grep -n '  5)' | head -n 1 | cut -d: -f1)
+menu_quit=$(printf '%s\n' "$menu_body" | grep -n '  6)' | head -n 1 | cut -d: -f1)
+if [ -n "$menu_update" ] && [ -n "$menu_quit" ] && [ "$menu_update" -lt "$menu_quit" ]; then
+    t_ok
+else
+    t_bad "menu must list update before quit"
+fi
 # ==========================================================================
 s5env_reset_transcript
 # Handwritten on purpose: menu choices are single-answer streams, not
@@ -261,17 +270,17 @@ assert_contains "menu showed the options" "restart" "$T_OUT"
 assert_contains "menu ran status" "41080" "$T_OUT"
 
 s5env_answers '5
-'
-t_run s5_cmd_auto <"$S5_TEST_ROOT/answers"
-assert_eq "menu quit exits 0" 0 "$T_STATUS"
-
-s5env_answers '6
 
 '
 t_run s5_cmd_auto <"$S5_TEST_ROOT/answers"
 assert_eq "menu update can be cancelled with Enter" 0 "$T_STATUS"
 assert_contains "menu exposes the update action" "update" "$T_OUT"
 assert_contains "cancelled menu update preserves the proxy" "unchanged" "$T_OUT"
+
+s5env_answers '6
+'
+t_run s5_cmd_auto <"$S5_TEST_ROOT/answers"
+assert_eq "menu quit exits 0" 0 "$T_STATUS"
 
 s5env_answers '99
 '

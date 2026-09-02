@@ -53,6 +53,12 @@ assert_contains "the listen override is honoured in test mode" \
     "socks -4 -u2 -p31080 -i127.0.0.1" "$(s5_render_cfg)"
 S5_LISTEN=0.0.0.0
 assert_contains "default restored" "socks -4 -u2 -p31080 -i0.0.0.0" "$(s5_render_cfg)"
+S5_LISTEN='127.0.0.1
+include /tmp/evil.cfg'
+t_run s5_render_cfg
+assert_ne "a multiline listen address is rejected" 0 "$T_STATUS"
+assert_not_contains "an invalid listen address is not rendered" "evil.cfg" "$T_OUT"
+S5_LISTEN=0.0.0.0
 
 # ------------------------- private / loopback / metadata destination rejection
 for cidr in 0.0.0.0/8 10.0.0.0/8 100.64.0.0/10 127.0.0.0/8 169.254.0.0/16 \
@@ -76,7 +82,7 @@ fi
 # forbidden directive. A bracketed-class anchor for the directive-with-arguments
 # form, `-x -F` for a bare directive line; neither uses an extension.
 for d in proxy admin ftppr smtpp pop3p imapp tlspr tcppm udppm dnspr \
-    writable system plugin parent authcache chroot setuid setgid; do
+    writable system plugin parent authcache chroot setuid setgid include; do
     if printf '%s\n' "$cfg" | grep -q "^${d}[[:space:]]" ||
         printf '%s\n' "$cfg" | grep -qxF "$d"; then
         t_bad "forbidden directive present: $d"
@@ -88,7 +94,14 @@ assert_not_contains "no auth none" "auth none" "$cfg"
 assert_not_contains "no auth iponly" "auth iponly" "$cfg"
 assert_not_contains "no BIND operation" "BIND" "$cfg"
 assert_not_contains "no UDPASSOC operation" "UDPASSOC" "$cfg"
-assert_not_contains "no include of an unapproved file" "\$/etc/3proxy" "$cfg"
+
+# The static checker must also reject an include directive in a hand-edited
+# configuration, which could otherwise import arbitrary extra directives.
+fresh_static_cfg=$(printf '%s\n' "$cfg"; printf 'include /tmp/extra.cfg\n')
+printf '%s\n' "$fresh_static_cfg" >"$S5_TEST_ROOT/include.cfg"
+t_run s5_static_check_cfg "$S5_TEST_ROOT/include.cfg"
+assert_ne "static check rejects include" 0 "$T_STATUS"
+assert_contains "include rejection is named" "include" "$T_OUT"
 
 # ------------------------------------------------------------- users.cfg golden
 uactual=$(s5_render_users | norm)
