@@ -3207,7 +3207,7 @@ s5_msg() {
     fs.atomic_mode)
         [ "$#" -eq 2 ] || { s5_msg_contract_error fs.atomic_mode 2 "$#"; return 1; }
         case "$S5_LANG" in
-        zh) printf '无法对 %s 设置模式 %s' "${1}" "${2}" ;;
+        zh) printf '无法对 %s 设置模式 %s' "${2}" "${1}" ;;
         en) printf 'cannot set mode %s on %s' "${1}" "${2}" ;;
         *) s5_msg_locale_error; return 1 ;;
         esac
@@ -3216,7 +3216,7 @@ s5_msg() {
     fs.atomic_owner)
         [ "$#" -eq 2 ] || { s5_msg_contract_error fs.atomic_owner 2 "$#"; return 1; }
         case "$S5_LANG" in
-        zh) printf '无法对 %s 设置属主 %s' "${1}" "${2}" ;;
+        zh) printf '无法对 %s 设置属主 %s' "${2}" "${1}" ;;
         en) printf 'cannot set ownership %s on %s' "${1}" "${2}" ;;
         *) s5_msg_locale_error; return 1 ;;
         esac
@@ -3225,7 +3225,7 @@ s5_msg() {
     state.disallowed_char)
         [ "$#" -eq 1 ] || { s5_msg_contract_error state.disallowed_char 1 "$#"; return 1; }
         case "$S5_LANG" in
-        zh) printf 'state：'%s' 的值包含不允许的字符' "${1}" ;;
+        zh) printf "state：'%s' 的值包含不允许的字符" "${1}" ;;
         en) printf "state: value for '%s' contains a disallowed character" "${1}" ;;
         *) s5_msg_locale_error; return 1 ;;
         esac
@@ -3234,7 +3234,7 @@ s5_msg() {
     state.flag_not_1)
         [ "$#" -eq 1 ] || { s5_msg_contract_error state.flag_not_1 1 "$#"; return 1; }
         case "$S5_LANG" in
-        zh) printf 'state：标志 '%s' 必须恰好为 1' "${1}" ;;
+        zh) printf "state：标志 '%s' 必须恰好为 1" "${1}" ;;
         en) printf "state: flag '%s' must be exactly 1" "${1}" ;;
         *) s5_msg_locale_error; return 1 ;;
         esac
@@ -3333,7 +3333,7 @@ s5_msg() {
     state.unknown_init)
         [ "$#" -eq 1 ] || { s5_msg_contract_error state.unknown_init 1 "$#"; return 1; }
         case "$S5_LANG" in
-        zh) printf 'state：未知的 init 系统 '%s'' "${1}" ;;
+        zh) printf "state：未知的 init 系统 '%s'" "${1}" ;;
         en) printf "state: unknown init system '%s'" "${1}" ;;
         *) s5_msg_locale_error; return 1 ;;
         esac
@@ -3351,7 +3351,7 @@ s5_msg() {
     state.unknown_status)
         [ "$#" -eq 1 ] || { s5_msg_contract_error state.unknown_status 1 "$#"; return 1; }
         case "$S5_LANG" in
-        zh) printf 'state：未知状态 '%s'' "${1}" ;;
+        zh) printf "state：未知状态 '%s'" "${1}" ;;
         en) printf "state: unknown status '%s'" "${1}" ;;
         *) s5_msg_locale_error; return 1 ;;
         esac
@@ -3414,7 +3414,7 @@ s5_msg() {
     state.unknown_key)
         [ "$#" -eq 2 ] || { s5_msg_contract_error state.unknown_key 2 "$#"; return 1; }
         case "$S5_LANG" in
-        zh) printf 'state：第 %s 行出现未知键 '%s'' "${1}" "${2}" ;;
+        zh) printf "state：第 %s 行出现未知键 '%s'" "${2}" "${1}" ;;
         en) printf "state: unknown key '%s' on line %s" "${1}" "${2}" ;;
         *) s5_msg_locale_error; return 1 ;;
         esac
@@ -3423,7 +3423,7 @@ s5_msg() {
     state.duplicate_key)
         [ "$#" -eq 2 ] || { s5_msg_contract_error state.duplicate_key 2 "$#"; return 1; }
         case "$S5_LANG" in
-        zh) printf 'state：第 %s 行出现重复键 '%s'' "${1}" "${2}" ;;
+        zh) printf "state：第 %s 行出现重复键 '%s'" "${2}" "${1}" ;;
         en) printf "state: duplicate key '%s' on line %s" "${1}" "${2}" ;;
         *) s5_msg_locale_error; return 1 ;;
         esac
@@ -3477,7 +3477,7 @@ s5_msg() {
     state.record_unknown_key)
         [ "$#" -eq 1 ] || { s5_msg_contract_error state.record_unknown_key 1 "$#"; return 1; }
         case "$S5_LANG" in
-        zh) printf 'state：拒绝记录未知键 '%s'' "${1}" ;;
+        zh) printf "state：拒绝记录未知键 '%s'" "${1}" ;;
         en) printf "state: refusing to record unknown key '%s'" "${1}" ;;
         *) s5_msg_locale_error; return 1 ;;
         esac
@@ -3486,7 +3486,7 @@ s5_msg() {
     state.persist_failed)
         [ "$#" -eq 1 ] || { s5_msg_contract_error state.persist_failed 1 "$#"; return 1; }
         case "$S5_LANG" in
-        zh) printf 'state：无法持久化 '%s'；中止以避免产生孤立资源' "${1}" ;;
+        zh) printf "state：无法持久化 '%s'；中止以避免产生孤立资源" "${1}" ;;
         en) printf "state: could not persist '%s'; aborting to avoid orphaned resources" "${1}" ;;
         *) s5_msg_locale_error; return 1 ;;
         esac

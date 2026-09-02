@@ -645,8 +645,12 @@ assert_contains "Chinese is selected before dispatch" "未知子命令" "$T_OUT"
 # BF-03: catalog semantic parity. Every key's zh and en arms must consume the
 # SAME number of %s placeholders as the declared arity -- a structural arm
 # count proves nothing about content. card.cloud_provider's zh arm dropped
-# the port this way; asset.fetching, fs.atomic_mode/owner and
-# state.unknown_key/duplicate_key swap argument semantics between locales.
+# the port this way.
+#
+# Counting placeholders is necessary but not sufficient: it cannot see an arm
+# that consumes the right NUMBER of arguments in the wrong ROLE. The role check
+# below covers that, and an earlier revision of this comment named
+# asset.fetching among the drifting keys when its two arms in fact agree.
 # ---------------------------------------------------------------------------
 _parity_bad=''
 while IFS=' ' read -r _pk _pa; do
@@ -668,43 +672,92 @@ PARITYEOF
 assert_eq "every key consumes its declared arity of placeholders in both locales" \
     "" "$_parity_bad"
 
-# Sentinel runtime check for the four known semantic-drift keys: each argument
-# must arrive in BOTH locales, and must not be swapped with its neighbor.
-S5_LANG=en
-_s1=SNT-ARG-ONE
-_s2=SNT-ARG-TWO
-_o=$(s5_msg asset.fetching "$_s1" "$_s2")
-assert_contains "en asset.fetching carries arg1" "$_s1" "$_o"
-assert_contains "en asset.fetching carries arg2" "$_s2" "$_o"
-S5_LANG=zh
-_o=$(s5_msg asset.fetching "$_s1" "$_s2")
-assert_contains "zh asset.fetching carries arg1" "$_s1" "$_o"
-assert_contains "zh asset.fetching carries arg2" "$_s2" "$_o"
+# BF-19: argument ROLE parity. The placeholder count above proves each arm
+# consumes the declared NUMBER of arguments; it cannot see an arm that consumes
+# them in the wrong ROLE. fs.atomic_mode's zh arm rendered "cannot set mode
+# <path> on <mode>" for exactly that reason, and the count check stayed green
+# because both arms still held two %s.
+#
+# Surface order legitimately differs between languages -- Chinese names the
+# target before the attribute where English does the reverse -- so the invariant
+# is NOT "both locales agree". It is "each locale places the caller's arguments
+# where this table says they belong". Columns:
+#   <key> <arity> <en-sequence> <zh-sequence>
+# where a sequence is the caller argument indices in the order they must APPEAR
+# in the rendered line. A wrong arity in the table renders an empty sequence and
+# fails too, so the table cannot drift silently.
+_i18n_seq() {
+    _isa=$2
+    set -- "$1" SNTQ1
+    if [ "$_isa" -ge 2 ]; then set -- "$@" SNTQ2; fi
+    if [ "$_isa" -ge 3 ]; then set -- "$@" SNTQ3; fi
+    if [ "$_isa" -ge 4 ]; then set -- "$@" SNTQ4; fi
+    s5_msg "$@" 2>/dev/null | grep -o 'SNTQ[1-4]' | sed 's/SNTQ//' | tr -d '\n'
+}
 
+_role_bad=''
+_role_keys=''
+while read -r _rk _ra _ren _rzh; do
+    if [ -z "$_rk" ]; then continue; fi
+    _role_keys="$_role_keys $_rk"
+    S5_LANG=en
+    _rgot_en=$(_i18n_seq "$_rk" "$_ra")
+    S5_LANG=zh
+    _rgot_zh=$(_i18n_seq "$_rk" "$_ra")
+    if [ "$_rgot_en" != "$_ren" ] || [ "$_rgot_zh" != "$_rzh" ]; then
+        _role_bad="$_role_bad $_rk(en:${_rgot_en:-none}want$_ren/zh:${_rgot_zh:-none}want$_rzh)"
+    fi
+done <<'ROLEEOF'
+account.remove_gid_reused 3 123 123
+account.remove_uid_reused 3 123 123
+asset.fetching 2 12 12
+asset.size_mismatch 2 12 12
+asset.unsupported 2 12 12
+cmd.hint.file 2 12 12
+detect.likely_compatible 3 123 123
+detect.unsupported 3 123 123
+fs.atomic_dir_missing 2 12 12
+fs.atomic_mode 2 12 21
+fs.atomic_owner 2 12 21
+input.port_prompt 2 12 12
+input.port_range 2 12 12
+input.random_chars_failed 2 12 12
+install.warning_detected 4 1234 1234
+network.no_free_port 2 12 12
+network.port_probe_cmd_failed 2 12 12
+selftest.inconclusive 2 12 12
+state.duplicate_key 2 12 21
+state.read_mode 2 12 12
+state.unknown_key 2 12 21
+static.cred_owner 2 12 12
+static.deny_count 2 12 12
+static.one_socks_line 2 12 12
+status.engine_value 2 12 12
+status.listening 2 12 12
+usage.extra_args 2 12 12
+validation.password_len 3 123 123
+validation.username_len 3 123 123
+ROLEEOF
 S5_LANG=en
-_o=$(s5_msg fs.atomic_mode "$_s1" "$_s2")
-assert_contains "en atomic_mode carries both args" "$_s1" "$_o"
-assert_contains "en atomic_mode arg2" "$_s2" "$_o"
-S5_LANG=zh
-_o=$(s5_msg fs.atomic_mode "$_s1" "$_s2")
-assert_contains "zh atomic_mode carries both args" "$_s1" "$_o"
-assert_contains "zh atomic_mode arg2" "$_s2" "$_o"
+assert_eq "every multi-argument key places its arguments in the declared role order" \
+    "" "$_role_bad"
 
-S5_LANG=en
-_o=$(s5_msg state.unknown_key "$_s1" "$_s2")
-assert_contains "en unknown_key arg1" "$_s1" "$_o"
-assert_contains "en unknown_key arg2" "$_s2" "$_o"
-S5_LANG=zh
-_o=$(s5_msg state.unknown_key "$_s1" "$_s2")
-assert_contains "zh unknown_key arg1" "$_s1" "$_o"
-assert_contains "zh unknown_key arg2" "$_s2" "$_o"
+# The table must cover every multi-argument key, so a new one cannot be added
+# without declaring the role order it promises in both locales.
+_role_declared=$(printf '%s' "$_role_keys" | tr ' ' '\n' | grep -v '^$' | sort)
+_role_actual=$(grep -E '^[[:space:]]*# @s5-msg ' "$SRC" | awk '$4 >= 2 {print $3}' | sort)
+assert_eq "the role table covers exactly the multi-argument keys" \
+    "$_role_actual" "$_role_declared"
 
+# card.cloud_provider is arity 1: the only role question is whether the port
+# arrives at all, which the placeholder count cannot answer for a dropped arm.
 S5_LANG=en
-_o=$(s5_msg card.cloud_provider "$_s1")
-assert_contains "en cloud_provider carries the port" "$_s1" "$_o"
+_o=$(s5_msg card.cloud_provider SNTQ1)
+assert_contains "en cloud_provider carries the port" SNTQ1 "$_o"
 S5_LANG=zh
-_o=$(s5_msg card.cloud_provider "$_s1")
-assert_contains "zh cloud_provider carries the port" "$_s1" "$_o"
+_o=$(s5_msg card.cloud_provider SNTQ1)
+assert_contains "zh cloud_provider carries the port" SNTQ1 "$_o"
+S5_LANG=en
 
 # BF-03: computed keys are banned at call sites. The existing scanner strips a
 # non-literal first token and DISCARDS it; a computed key must be a hard
