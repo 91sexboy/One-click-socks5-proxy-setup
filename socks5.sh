@@ -3573,6 +3573,24 @@ s5_msg() {
         *) s5_msg_locale_error; return 1 ;;
         esac
         ;;
+    # @s5-msg detect.account_tools_missing 1
+    detect.account_tools_missing)
+        [ "$#" -eq 1 ] || { s5_msg_contract_error detect.account_tools_missing 1 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '缺少账户管理工具（%s 系列）；请安装后重试' "${1}" ;;
+        en) printf 'account-management tools for %s are missing; install them and retry' "${1}" ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
+    # @s5-msg detect.no_replace_primitive 0
+    detect.no_replace_primitive)
+        [ "$#" -eq 0 ] || { s5_msg_contract_error detect.no_replace_primitive 0 "$#"; return 1; }
+        case "$S5_LANG" in
+        zh) printf '此主机或目标文件系统不支持使用 ln -T 的免替换创建' ;;
+        en) printf 'this host or target filesystem does not support no-replace creation with ln -T' ;;
+        *) s5_msg_locale_error; return 1 ;;
+        esac
+        ;;
     # @s5-msg detect.pkgmgr_missing 1
     detect.pkgmgr_missing)
         [ "$#" -eq 1 ] || { s5_msg_contract_error detect.pkgmgr_missing 1 "$#"; return 1; }
@@ -3946,7 +3964,8 @@ s5_osrel_get() {
     if [ ! -r "$1" ]; then
         return 1
     fi
-    sed -n "s/^$2=//p" "$1" | head -n 1 | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'\$/\1/"
+    sed -n "s/^$2=//p" "$1" | tail -n 1 | tr -d '\r' | \
+        sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'\$/\1/"
 }
 
 # s5_ver_ge <a> <b> : true when dotted-numeric version a >= b.
@@ -3954,20 +3973,53 @@ s5_ver_ge() {
     _va=$1
     _vb=$2
     while [ -n "$_va" ] || [ -n "$_vb" ]; do
-        _ca=${_va%%.*}
-        _cb=${_vb%%.*}
-        _ca=$(printf '%s' "$_ca" | tr -cd '0-9')
-        _cb=$(printf '%s' "$_cb" | tr -cd '0-9')
+        if [ -n "$_va" ]; then
+            _ca=${_va%%.*}
+            case "$_ca" in
+            '' | *[!0-9]*) return 2 ;;
+            esac
+        else
+            _ca=0
+        fi
+        if [ -n "$_vb" ]; then
+            _cb=${_vb%%.*}
+            case "$_cb" in
+            '' | *[!0-9]*) return 2 ;;
+            esac
+        else
+            _cb=0
+        fi
+        _ca=${_ca#"${_ca%%[!0]*}"}
+        _cb=${_cb#"${_cb%%[!0]*}"}
         if [ -z "$_ca" ]; then _ca=0; fi
         if [ -z "$_cb" ]; then _cb=0; fi
-        if [ "$_ca" -gt "$_cb" ]; then return 0; fi
-        if [ "$_ca" -lt "$_cb" ]; then return 1; fi
+        if [ "${#_ca}" -gt 18 ] || [ "${#_cb}" -gt 18 ]; then
+            return 2
+        fi
+        if [ "${#_ca}" -gt "${#_cb}" ]; then return 0; fi
+        if [ "${#_ca}" -lt "${#_cb}" ]; then return 1; fi
+        if [ "$_ca" != "$_cb" ]; then
+            awk -v a="x$_ca" -v b="x$_cb" \
+                'BEGIN { if (a == b) exit 0; if (a > b) exit 1; exit 2 }'
+            _vcrc=$?
+            case "$_vcrc" in
+            1) return 0 ;;
+            2) return 1 ;;
+            *) ;;
+            esac
+        fi
         case "$_va" in
-        *.*) _va=${_va#*.} ;;
+        *.*)
+            _va=${_va#*.}
+            [ -n "$_va" ] || return 2
+            ;;
         *) _va='' ;;
         esac
         case "$_vb" in
-        *.*) _vb=${_vb#*.} ;;
+        *.*)
+            _vb=${_vb#*.}
+            [ -n "$_vb" ] || return 2
+            ;;
         *) _vb='' ;;
         esac
     done
@@ -4103,6 +4155,7 @@ s5_detect_platform() {
             S5_INIT=systemd
             return 0
         fi
+        S5_OS_ID_LIKE=''
         ;;
     rhel | rocky | almalinux)
         s5_err_msg detect.likely_compatible "$S5_OS_ID" "$S5_OS_VERSION_ID" "$_dparch"
@@ -4173,14 +4226,13 @@ s5_runtime_deps() {
 S5_BASE_COMMANDS='sed awk grep tr head tail cut id chown chmod mkdir rmdir rm mv cp cat printf stat ln mktemp mkfifo dirname uname wc sha256sum'
 
 s5_no_replace_supported() {
-    if [ "${S5_TEST_MODE:-0}" = 1 ]; then
-        _nrbase=$S5_TEST_ROOT
-    else
-        _nrbase=/var/tmp
+    _nrdir=$(s5_make_workdir) || return 1
+    if ! chmod 0700 "$_nrdir" ||
+        ! printf 'probe\n' >"$_nrdir/source"; then
+        rm -f "$_nrdir/source" "$_nrdir/link" 2>/dev/null || true
+        rmdir "$_nrdir" 2>/dev/null || true
+        return 1
     fi
-    _nrdir=$(mktemp -d "$_nrbase/.s5-ln.XXXXXX") || return 1
-    chmod 0700 "$_nrdir" || { rmdir "$_nrdir" 2>/dev/null || true; return 1; }
-    printf 'probe\n' >"$_nrdir/source" || { rmdir "$_nrdir" 2>/dev/null || true; return 1; }
     if ! ln -T "$_nrdir/source" "$_nrdir/link" 2>/dev/null ||
         [ "$(stat -c '%d:%i' "$_nrdir/source" 2>/dev/null)" != \
           "$(stat -c '%d:%i' "$_nrdir/link" 2>/dev/null)" ]; then
@@ -4224,6 +4276,17 @@ s5_pkgmgr_available() {
     esac
 }
 
+s5_account_tools_available() {
+    case "$S5_OS_FAMILY" in
+    alpine)
+        command -v adduser >/dev/null 2>&1 && command -v addgroup >/dev/null 2>&1
+        ;;
+    *)
+        command -v useradd >/dev/null 2>&1 && command -v groupadd >/dev/null 2>&1
+        ;;
+    esac
+}
+
 # s5_is_root : privilege check. Reports only; it never escalates or calls sudo.
 s5_is_root() {
     if [ "${S5_TEST_MODE:-0}" = "1" ] && [ -n "${S5_ASSUME_ROOT:-}" ]; then
@@ -4257,6 +4320,10 @@ s5_precheck() {
     if ! s5_pkgmgr_available; then
         s5_err_msg detect.pkgmgr_missing "$S5_PKGMGR"
         s5_err_msg detect.pkgmgr_missing_hint
+        return "$EX_FAIL"
+    fi
+    if ! s5_account_tools_available; then
+        s5_err_msg detect.account_tools_missing "$S5_OS_FAMILY"
         return "$EX_FAIL"
     fi
     return 0
@@ -8507,7 +8574,7 @@ _s5_cmd_install_locked() {
     # have been installed and accepted.
     if ! s5_install_dependencies; then return "$EX_FAIL"; fi
     if ! s5_no_replace_supported; then
-        s5_err_msg detect.no_base_utilities
+        s5_err_msg detect.no_replace_primitive
         return "$EX_FAIL"
     fi
     if ! s5_prompt_port; then return "$EX_FAIL"; fi

@@ -38,6 +38,29 @@ assert_eq "parse ID_LIKE" "rhel centos fedora" "$(s5_osrel_get "$FIX/rocky-9" ID
 assert_eq "parse alpine version" 3.24.1 "$(s5_osrel_get "$FIX/alpine-3.24" VERSION_ID)"
 assert_eq "absent key yields empty" "" "$(s5_osrel_get "$FIX/alpine-3.24" ID_LIKE)"
 
+# os-release has shell-like last-assignment-wins semantics, and files copied from
+# Windows can carry CRLF. Both properties must hold without sourcing the file.
+cat >"$S5_TEST_ROOT/os-release-crlf" <<'EOF'
+ID=ubuntu
+ID=debian
+VERSION_ID="12"
+EOF
+assert_eq "os-release uses the last duplicate key" debian \
+    "$(s5_osrel_get "$S5_TEST_ROOT/os-release-crlf" ID)"
+assert_eq "os-release strips CRLF from an unquoted value" 12 \
+    "$(s5_osrel_get "$S5_TEST_ROOT/os-release-crlf" VERSION_ID)"
+
+# A version segment that is not a bounded decimal must fail closed without
+# leaking test's raw `Illegal number` diagnostic to the caller.
+t_run s5_ver_ge 22.bad 22
+assert_ne "non-numeric version segments are rejected" 0 "$T_STATUS"
+assert_not_contains "invalid version emits no raw shell arithmetic error" \
+    "Illegal number" "$T_OUT"
+t_run s5_ver_ge 999999999999999999999 1
+assert_ne "oversized version segments are rejected" 0 "$T_STATUS"
+assert_not_contains "oversized version emits no raw shell arithmetic error" \
+    "Illegal number" "$T_OUT"
+
 # --- supported platforms map to the right package manager and init ---
 check_supported() {
     # <fixture> <arch> <expected-pkgmgr> <expected-init>
@@ -113,6 +136,15 @@ check_unsupported ubuntu-20.04 ubuntu 20.04 arm64
 check_unsupported debian-11 debian 11 amd64
 check_unsupported alpine-3.19 alpine 3.19.9 amd64
 check_unsupported centos-stream-8 centos 8 amd64
+
+# A recognised CentOS id below its floor is generic unsupported, not an
+# ID_LIKE-derived "likely compatible" platform. The latter path is reserved for
+# unrecognised RHEL derivatives.
+S5_OSRELEASE="$FIX/centos-stream-8"
+t_run s5_detect_platform amd64
+assert_not_contains "old CentOS does not claim likely compatibility" \
+    "likely compatible" "$T_OUT"
+assert_contains "old CentOS remains unsupported" "unsupported system" "$T_OUT"
 
 t_run s5_detect_platform
 assert_eq "detector without normalized architecture fails closed" "$EX_UNSUPPORTED" "$T_STATUS"

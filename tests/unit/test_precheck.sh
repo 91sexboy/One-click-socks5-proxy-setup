@@ -100,6 +100,25 @@ for base in chown uname tail rmdir cp wc mkfifo; do
         t_bad "$base is used at a hard-failure site and must be a required base command"
     fi
 done
+# Account creation is platform-specific, so these tools are checked only after
+# s5_detect_platform has selected the family and package manager. They must still
+# be preflight gates, not an obscure 127 after interactive prompts.
+for account_tool in useradd groupadd adduser addgroup; do
+    if printf '%s' "$S5_BASE_COMMANDS" | grep -qw "$account_tool"; then
+        t_bad "$account_tool must be checked after platform detection, not globally"
+    else
+        t_ok
+    fi
+done
+precheck_account_body=$(sed -n '/^s5_precheck() {/,/^}/p' "$S5_SRC")
+account_gate_line=$(printf '%s\n' "$precheck_account_body" | grep -n 's5_account_tools_available' | head -n 1 | cut -d: -f1)
+platform_gate_line=$(printf '%s\n' "$precheck_account_body" | grep -n 's5_detect_platform' | head -n 1 | cut -d: -f1)
+if [ -n "$account_gate_line" ] && [ -n "$platform_gate_line" ] &&
+    [ "$platform_gate_line" -lt "$account_gate_line" ]; then
+    t_ok
+else
+    t_bad "account-tool availability must be checked after platform detection"
+fi
 # Visible password input never calls stty, so it is neither a runtime dependency
 # nor a permitted terminal-state mutation.
 if printf '%s' "$S5_BASE_COMMANDS" | grep -qw stty || grep -q 'stty' "$S5_SRC"; then
@@ -206,6 +225,27 @@ t_run s5_require_commands sed awk definitely-absent-cmd-xyz
 assert_ne "a missing base command fails" 0 "$T_STATUS"
 assert_contains "names the missing command" "definitely-absent-cmd-xyz" "$T_OUT"
 
+# A platform's account-management tools are required before interactive input,
+# but only after platform detection selected the family-specific tool names.
+reset_machine
+rm -f "$S5_TEST_ROOT/bin/useradd" "$S5_TEST_ROOT/bin/groupadd"
+S5_OS_FAMILY=debian
+OLDPATH=$PATH
+PATH="$S5_TEST_ROOT/bin"
+export PATH
+if s5_account_tools_available; then
+    t_bad "missing account tools report as available"
+else
+    t_ok
+fi
+PATH=$OLDPATH
+export PATH
+assert_contains "missing account tools have a precheck gate" \
+    "s5_account_tools_available" "$precheck_account_body"
+assert_not_contains "missing account tools stop before prompts" \
+    "s5_prompt_port" "$precheck_account_body"
+s5env_load
+
 # The no-replace hard-link primitive is checked after confirmation and runtime
 # dependencies, but before any port, username or password is collected.
 reset_machine
@@ -213,7 +253,8 @@ s5_no_replace_supported() { return 1; }
 s5env_install_answers y 31080 lnuser 'LnCapability_123~x'
 t_run s5_cmd_install <"$S5_TEST_ROOT/answers"
 assert_ne "install rejects an incompatible no-replace primitive" 0 "$T_STATUS"
-assert_contains "the operator saw the confirmation context first" "PLEASE READ" "$T_OUT"
+assert_contains "no-replace failure has its own diagnosis" \
+    "no-replace" "$T_OUT"
 assert_not_contains "no port prompt follows a failed no-replace probe" "SOCKS5 port" "$T_OUT"
 assert_not_contains "no password prompt follows a failed no-replace probe" "SOCKS5 password" "$T_OUT"
 assert_file_absent "no state exists without no-replace support" "$S5_STATE"
