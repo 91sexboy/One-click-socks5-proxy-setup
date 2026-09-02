@@ -6219,7 +6219,12 @@ s5_group_exists() {
         *) return 2 ;;
         esac
     fi
-    grep -q "^$S5_SERVICE_GROUP:" /etc/group 2>/dev/null
+    # Same rooted database its sibling s5_current_gid reads. Reading the absolute
+    # path here made the two disagree on the getent-less path they both exist to
+    # serve: s5_current_gid answered from the rooted file while this answered from
+    # the host's, so the collision check and the create/rollback paths could
+    # disagree about whether the group exists.
+    grep -q "^$S5_SERVICE_GROUP:" "${S5_ROOTDIR}/etc/group" 2>/dev/null
     _ger=$?
     case "$_ger" in
     0) return 0 ;;
@@ -6381,10 +6386,25 @@ s5_pending_account_remove() {
         return 1
     fi
     s5_del_group || true
-    if s5_group_exists; then
+    # Tri-state, like every other identity query. A bare `if` here read status 2
+    # ("the identity database could not be queried") as "absent", so an NSS error
+    # made this report a clean rollback, clear the only fingerprint of the group
+    # it had created, and leave that group on the host with nothing recording it
+    # -- after which every later install refused at the collision check forever.
+    # s5_account_remove dispatches the identical query correctly.
+    s5_group_exists
+    _pargr=$?
+    case "$_pargr" in
+    1) ;;
+    0)
         s5_err_msg account.remove_group_failed "$S5_SERVICE_GROUP"
         return 1
-    fi
+        ;;
+    *)
+        s5_err_msg account.remove_group_unknown "$S5_SERVICE_GROUP"
+        return 1
+        ;;
+    esac
     S5_CREATED_ACCOUNT_GID=''
     return 0
 }

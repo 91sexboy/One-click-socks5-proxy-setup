@@ -88,7 +88,7 @@ done
 # survive removing the test that fails. Only meaningful for a full run; a FILTER
 # is expected to select a subset. Bumping this number must be a deliberate act.
 # 24 since the release-engine workflow has its own pinned artifact contract.
-EXPECTED_UNIT_FILES=25
+EXPECTED_UNIT_FILES=26
 if [ -z "$FILTER" ] && [ "$files" -ne "$EXPECTED_UNIT_FILES" ]; then
     bad_files=$((bad_files + 1))
     printf 'FAIL unit file count is %d, expected %d\n' \
