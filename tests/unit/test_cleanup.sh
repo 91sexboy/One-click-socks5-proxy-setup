@@ -392,4 +392,28 @@ if grep -q "s5_on_signal HUP 129" "${S5_SRC}"; then t_ok; else t_bad "HUP must e
 if grep -q "s5_on_signal INT 130" "${S5_SRC}"; then t_ok; else t_bad "INT must exit 130"; fi
 if grep -q "s5_on_signal TERM 143" "${S5_SRC}"; then t_ok; else t_bad "TERM must exit 143"; fi
 
+# ==========================================================================
+# A second signal must not cut cleanup short.
+#
+# s5_cleanup's re-entrancy guard makes a nested call return immediately, and
+# s5_on_signal then runs `trap - EXIT; exit` -- from inside the still-executing
+# first cleanup. A second Ctrl-C during a multi-second rollback (systemctl stop,
+# userdel, several rm) therefore abandoned it half-done, left the /var/tmp
+# download tree in place, and left the lock directory behind. Idempotence is what
+# the guard is for; not being interrupted is what the handler is for.
+#
+# Ordering is the invariant, not mere presence: the mask has to be installed
+# BEFORE control reaches s5_cleanup.
+_sig_body=$(sed -n '/^s5_on_signal() {/,/^}/p' "${S5_SRC}" | grep -v '^[[:space:]]*#')
+assert_ne "s5_on_signal has a body to inspect" "" "$_sig_body"
+_sig_mask=$(printf '%s\n' "$_sig_body" | grep -n "trap '' HUP INT TERM" | head -n 1 | cut -d: -f1)
+_sig_clean=$(printf '%s\n' "$_sig_body" | grep -n 's5_cleanup' | head -n 1 | cut -d: -f1)
+assert_ne "the signal handler masks further signals" "" "$_sig_mask"
+assert_ne "the signal handler still runs cleanup" "" "$_sig_clean"
+if [ -n "$_sig_mask" ] && [ -n "$_sig_clean" ] && [ "$_sig_mask" -lt "$_sig_clean" ]; then
+    t_ok
+else
+    t_bad "s5_on_signal must mask HUP/INT/TERM before entering cleanup"
+fi
+
 t_summary

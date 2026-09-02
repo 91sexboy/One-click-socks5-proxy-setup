@@ -3897,6 +3897,14 @@ s5_cleanup() {
 }
 
 s5_on_signal() {
+    # Block further HUP/INT/TERM for the duration of cleanup. s5_cleanup's
+    # re-entrancy guard makes a nested call return immediately, and this handler
+    # then runs `trap - EXIT; exit` -- from inside the still-executing first
+    # cleanup. A second Ctrl-C during a multi-second rollback therefore abandoned
+    # it half-done, left the /var/tmp download tree in place, and left the lock
+    # directory behind. Idempotence is what the guard is for; not being
+    # interrupted is what this trap is for.
+    trap '' HUP INT TERM
     s5_warn_msg selftest.interrupted "$1"
     s5_cleanup
     trap - EXIT
@@ -5371,7 +5379,16 @@ EOF
 # s5_state_flush : atomic rewrite of the whole state file. Return value checked
 # by every caller.
 s5_state_flush() {
+    # The guard exists to refuse a state file some other process swapped out from
+    # under this run. An ABSENT path is not that: s5_rollback removes the state
+    # file and then, if the final rmdir fails, writes it back as the retry
+    # handle -- and the inode of a deleted path never matches, so that restore
+    # was unreachable and reported "keeping ...: it contains files this script
+    # did not create" about a file the script itself had just deleted. The
+    # identical sequence in _s5_cmd_uninstall_locked worked only because its
+    # claim id happens to be empty.
     if [ -n "$S5_STATE_FILE_CLAIM_ID" ] &&
+        { [ -e "$S5_STATE" ] || [ -L "$S5_STATE" ]; } &&
         ! s5_runtime_claim_matches "$S5_STATE"; then
         s5_err_msg rollback.keep_foreign_files "$S5_STATE"
         return 1
@@ -6023,7 +6040,14 @@ s5_fetch_verified_engine() {
     _installed_hash=$(sha256sum "$S5_BIN" 2>/dev/null | awk '{ print $1 }')
     if [ "$_installed_hash" != "$S5_ASSET_SHA256" ]; then
         s5_err_msg asset.installed_checksum_mismatch "$S5_BIN"
-        s5_rm_known_file created_bin "$S5_BIN" || true
+        # Remove it through the runtime inode claim, which BOTH placement modes
+        # record. s5_rm_known_file is gated on the state flag, and the ephemeral
+        # mode deliberately writes no state, so it returned 0 without removing
+        # anything -- leaving an executable whose bytes failed verification
+        # installed at $S5_BIN.
+        if s5_runtime_claim_matches "$S5_BIN"; then
+            rm -f "$S5_BIN" || true
+        fi
         s5_release_workdir
         return 1
     fi

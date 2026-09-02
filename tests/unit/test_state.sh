@@ -574,4 +574,44 @@ assert_contains "explains the refusal" "unknown key" "$T_OUT"
 
 if sentinel_intact; then t_ok; else t_bad "sentinel deleted at end of run"; fi
 
+# ==========================================================================
+# The claim guard must not refuse a path that is not there.
+#
+# s5_state_flush refuses to overwrite a state file some other process swapped out
+# from under this run, by comparing its recorded inode. An ABSENT path is not
+# that case, and s5_rollback depends on the difference: it removes the state file
+# and then, if the final rmdir fails, writes it back as the retry handle. The
+# inode of a deleted path never matches, so that restore always failed and
+# reported "keeping ...: it contains files this script did not create" about a
+# file the script itself had just deleted. The same sequence in uninstall worked
+# only because its claim id happens to be empty, which makes the asymmetry
+# accidental rather than intended.
+# ==========================================================================
+rm -rf "$S5_STATEDIR"
+mkdir -p "$S5_STATEDIR"
+S5_STATE_BUF="port	31080
+status	complete"
+S5_STATE_LOADED=1
+printf '%s\n' "$S5_STATE_BUF" >"$S5_STATE"
+chmod 0600 "$S5_STATE"
+S5_STATE_FILE_CLAIM_ID=$(stat -c '%d:%i' "$S5_STATE" 2>/dev/null)
+assert_ne "the fixture recorded a state claim" "" "$S5_STATE_FILE_CLAIM_ID"
+rm -f "$S5_STATE"
+t_run s5_state_flush
+assert_eq "an absent state file can be restored by its claim holder" 0 "$T_STATUS"
+assert_file_exists "the restored state file is back on disk" "$S5_STATE"
+
+# A path that IS present but does not match the recorded claim is still refused,
+# so the relaxation above did not remove the guard it relaxed. The claim id is
+# set explicitly rather than by deleting and recreating the file: the identity is
+# only dev:inode, and the kernel hands a freed inode straight back, so a
+# recreated file frequently matches by luck.
+printf 'foreign\n' >"$S5_STATE"
+chmod 0600 "$S5_STATE"
+S5_STATE_FILE_CLAIM_ID='0:0'
+t_run s5_state_flush
+assert_ne "a state file that fails its claim is still refused" 0 "$T_STATUS"
+assert_contains "the refusal names the foreign file" "did not create" "$T_OUT"
+S5_STATE_FILE_CLAIM_ID=''
+
 t_summary
