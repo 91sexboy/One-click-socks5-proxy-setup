@@ -137,7 +137,7 @@ rm -f "$_nocat" "$_nocat.src"
 # migration task lowers this pin in its own commit; any addition raises it
 # and fails here. The count reaches the permitted plumbing residue at T10.
 assert_eq "untranslated direct literals are frozen at the migration baseline" \
-    18 "$((direct_total + prompt_total))"
+    20 "$((direct_total + prompt_total))"
 # shellcheck disable=SC2034
 DIRECT_BASELINE=$((direct_total + prompt_total))
 

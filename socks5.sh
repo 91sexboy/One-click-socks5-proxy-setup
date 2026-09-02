@@ -7387,11 +7387,10 @@ _s5_txn_cleanup() {
         s5_err_msg reconfigure.transaction_invalid "$S5_TXNDIR"
         return 1
     fi
-    for _tcf in "$S5_TXNDIR"/.s5tmp.* "$S5_TXNDIR"/.s5copy.*; do
-        if [ -e "$_tcf" ] || [ -L "$_tcf" ]; then
-            rm -f "$_tcf" || return 1
-        fi
-    done
+    if ! _s5_cleanup_own_temps "$S5_TXNDIR"; then
+        s5_err_msg reconfigure.transaction_cleanup_failed "$S5_TXNDIR"
+        return 1
+    fi
     _tcextra=$(s5_dir_extras "$S5_TXNDIR" phase new.users.cfg new.3proxy.cfg \
         old.users.cfg old.3proxy.cfg old.state)
     if [ -n "$_tcextra" ]; then
@@ -7971,6 +7970,23 @@ s5_dir_extras() {
     done
 }
 
+# Remove temporary files whose names are reserved for this script. Callers do
+# this before asking whether a managed directory contains foreign entries.
+_s5_cleanup_own_temps() {
+    _cotdir=$1
+    if [ ! -d "$_cotdir" ]; then
+        return 0
+    fi
+    for _cotprefix in .s5tmp.* .s5new.* .s5state.* .s5copy.*; do
+        for _cotpath in "$_cotdir"/$_cotprefix; do
+            if [ -e "$_cotpath" ] || [ -L "$_cotpath" ]; then
+                rm -f "$_cotpath" || return 1
+            fi
+        done
+    done
+    return 0
+}
+
 # s5_rmdir_known <flag-key> <dir> <known-basenames...>
 # Never recursive. Keeps the directory and reports an error when it still
 # contains anything this script did not create.
@@ -7992,6 +8008,10 @@ s5_rmdir_known() {
         s5_err_msg rollback.keep_foreign_files "$_rkdir"
         return 1
     fi
+    if ! _s5_cleanup_own_temps "$_rkdir"; then
+        s5_err_msg rollback.rm_file_failed "$_rkdir"
+        return 1
+    fi
     _rkextra=$(s5_dir_extras "$_rkdir" "$@")
     if [ -n "$_rkextra" ]; then
         s5_err_msg rollback.keep_foreign_files "$_rkdir"
@@ -8002,6 +8022,10 @@ s5_rmdir_known() {
     fi
     if ! rmdir "$_rkdir"; then
         s5_err_msg rollback.rm_dir_failed "$_rkdir"
+        _rkremaining=$(s5_dir_extras "$_rkdir")
+        printf '%s\n' "$_rkremaining" | while IFS= read -r _rkl; do
+            if [ -n "$_rkl" ]; then s5_err "    $_rkl"; fi
+        done
         return 1
     fi
     return 0
@@ -8130,6 +8154,10 @@ s5_rollback() {
         return 1
     fi
     _rbstbuf=$S5_STATE_BUF
+    if ! _s5_cleanup_own_temps "$S5_STATEDIR"; then
+        s5_err_msg rollback.rm_file_failed "$S5_STATEDIR"
+        return 1
+    fi
     _rbextra=$(s5_dir_extras "$S5_STATEDIR" state)
     if [ -n "$_rbextra" ]; then
         s5_err_msg rollback.state_dir_foreign "$S5_STATEDIR"
@@ -8871,6 +8899,10 @@ _s5_cmd_uninstall_locked() {
         return "$EX_FAIL"
     fi
 
+    if ! _s5_cleanup_own_temps "$S5_STATEDIR"; then
+        s5_err_msg rollback.rm_file_failed "$S5_STATEDIR"
+        return "$EX_FAIL"
+    fi
     _unextra=$(s5_dir_extras "$S5_STATEDIR" state)
     if [ -n "$_unextra" ]; then
         s5_err_msg uninstall.keep_state_foreign "$S5_STATEDIR"
@@ -8899,6 +8931,10 @@ _s5_cmd_uninstall_locked() {
         return "$EX_FAIL"
     fi
     s5_err_msg uninstall.rm_dir_retained "$S5_STATEDIR"
+    _unremaining=$(s5_dir_extras "$S5_STATEDIR")
+    printf '%s\n' "$_unremaining" | while IFS= read -r _unline; do
+        if [ -n "$_unline" ]; then s5_err "    $_unline"; fi
+    done
     return "$EX_FAIL"
 }
 

@@ -423,6 +423,131 @@ assert_eq "the broken project-directory symlink remains visible" yes \
     "$([ -L "$S5_SYSCONFDIR" ] && printf yes || printf no)"
 rm -f "$S5_SYSCONFDIR"
 
+# A stale temporary file with one of the script's own prefixes is recoverable.
+# It may be left by an interrupted atomic publish, but it is not operator data.
+rm -rf "$S5_SYSCONFDIR" "$S5_STATEDIR"
+mkdir -p "$S5_SYSCONFDIR"
+printf 'ours\n' >"$S5_CFG"
+printf 'ours\n' >"$S5_USERSCFG"
+printf 'interrupted publish\n' >"$S5_SYSCONFDIR/.s5new.leftover"
+write_state "tag	0.9.9.0
+commit	da99424eac4092e3722f1a5b1844cfe80478f580
+origin	source-build
+port	31080
+username	gooduser
+family	debian
+init	systemd
+listen	0.0.0.0
+arch	amd64
+os	debian-12
+account_uid	900
+account_gid	900
+created_confdir	1
+created_cfg	1
+created_users	1
+status	complete"
+s5env_answers 'y
+'
+t_run s5_cmd_uninstall <"$S5_TEST_ROOT/answers"
+assert_eq "uninstall removes its stale publish temporary" 0 "$T_STATUS"
+assert_file_absent "stale publish temporary is removed" "$S5_SYSCONFDIR/.s5new.leftover"
+assert_file_absent "uninstall removes the now-clean config directory" "$S5_SYSCONFDIR"
+
+# A stale state temporary is likewise recoverable through the rollback entry.
+rm -rf "$S5_SYSCONFDIR" "$S5_STATEDIR"
+mkdir -p "$S5_STATEDIR"
+write_state "created_confdir	1"
+printf 'interrupted state flush\n' >"$S5_STATEDIR/.s5state.leftover"
+S5_STATE_LOADED=1
+S5_ROLLBACK_ARMED=1
+S5_INSTALL_COMPLETE=0
+s5env_reset_transcript
+t_run s5_rollback
+assert_file_absent "rollback removes its stale state temporary" "$S5_STATEDIR/.s5state.leftover"
+
+# Unknown operator data remains foreign even when own temporary files are present.
+rm -rf "$S5_SYSCONFDIR" "$S5_STATEDIR"
+mkdir -p "$S5_SYSCONFDIR"
+printf 'ours\n' >"$S5_CFG"
+printf 'ours\n' >"$S5_USERSCFG"
+printf 'operator data\n' >"$S5_SYSCONFDIR/operator-notes.txt"
+printf 'interrupted publish\n' >"$S5_SYSCONFDIR/.s5new.leftover"
+write_state "tag	0.9.9.0
+commit	da99424eac4092e3722f1a5b1844cfe80478f580
+origin	source-build
+port	31080
+username	gooduser
+family	debian
+init	systemd
+listen	0.0.0.0
+arch	amd64
+os	debian-12
+account_uid	900
+account_gid	900
+created_confdir	1
+created_cfg	1
+created_users	1
+status	complete"
+s5env_answers 'y
+'
+t_run s5_cmd_uninstall <"$S5_TEST_ROOT/answers"
+assert_ne "uninstall still rejects real operator data" 0 "$T_STATUS"
+assert_file_absent "own temporary is removed before the foreign-data refusal" \
+    "$S5_SYSCONFDIR/.s5new.leftover"
+assert_file_exists "operator data survives the refusal" "$S5_SYSCONFDIR/operator-notes.txt"
+rm -rf "$S5_SYSCONFDIR" "$S5_STATEDIR"
+
+# rmdir failure must name even the entries that were expected, so an operator
+# can see what remains rather than only the directory path.
+rm -rf "$S5_SYSCONFDIR"
+mkdir -p "$S5_SYSCONFDIR"
+printf 'ours\n' >"$S5_CFG"
+printf 'ours\n' >"$S5_USERSCFG"
+S5_STATE_BUF="created_confdir	1"
+S5_STATE_LOADED=1
+rmdir() {
+    if [ "$1" = "$S5_SYSCONFDIR" ]; then
+        return 1
+    fi
+    command rmdir "$@"
+}
+t_run s5_rmdir_known created_confdir "$S5_SYSCONFDIR" 3proxy.cfg users.cfg
+unset -f rmdir
+assert_ne "directory removal failure is reported" 0 "$T_STATUS"
+assert_contains "directory removal failure names residual known files" \
+    "    3proxy.cfg" "$T_OUT"
+rm -rf "$S5_SYSCONFDIR"
+
+# A state-directory removal failure must name the restored retry state too.
+rm -rf "$S5_STATEDIR"
+write_state "tag	0.9.9.0
+commit	da99424eac4092e3722f1a5b1844cfe80478f580
+origin	source-build
+port	31080
+username	stateuser
+family	debian
+init	systemd
+listen	0.0.0.0
+arch	amd64
+os	debian-12
+account_uid	900
+account_gid	900
+status	complete"
+s5env_answers 'y
+'
+rmdir() {
+    if [ "$1" = "$S5_STATEDIR" ]; then
+        return 1
+    fi
+    command rmdir "$@"
+}
+t_run s5_cmd_uninstall <"$S5_TEST_ROOT/answers"
+unset -f rmdir
+assert_ne "state-directory removal failure is reported" 0 "$T_STATUS"
+assert_contains "state-directory failure names the residual state file" \
+    "    state" "$T_OUT"
+rm -rf "$S5_STATEDIR"
+
 # An untracked file in the state directory must prevent uninstall from deleting
 # the state record and claiming completion.
 rm -rf "$S5_STATEDIR" "$S5_SYSCONFDIR"
