@@ -227,11 +227,11 @@ jobs:
             -maxdepth 2 -printf '%M %u:%g %p\n' 2>&1 || true
           test -e /etc/xray-socks5
           printf 'lifecycle: config-dir-entry-ok\n'
-          test -f /etc/xray-socks5/config.json
+          sudo test -f /etc/xray-socks5/config.json
           printf 'lifecycle: config-file-ok\n'
-          test -f /var/lib/xray-socks5/state
+          sudo test -f /var/lib/xray-socks5/state
           printf 'lifecycle: state-file-ok\n'
-          test -x /usr/local/libexec/xray-socks5/xray
+          sudo test -x /usr/local/libexec/xray-socks5/xray
           printf 'lifecycle: binary-file-ok\n'
           printf 'lifecycle: files-ok\n'
           test "$(sudo stat -c '%a' /etc/xray-socks5/config.json)" = 640
