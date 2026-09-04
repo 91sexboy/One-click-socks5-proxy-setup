@@ -200,7 +200,9 @@ jobs:
       - name: Run real systemd lifecycle
         run: |
           set -eu
+          printf 'lifecycle: start\n'
           work=$(mktemp -d)
+          printf 'lifecycle: workdir-ready\n'
           cleanup() {
             rm -f "$work/pass" "$work/answers" "$work/target.log" "$work/install.log" "$work/status.log" "$work/restart.log" "$work/uninstall.log"
             sudo systemctl stop xray-socks5.service 2>/dev/null || true

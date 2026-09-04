@@ -21,7 +21,9 @@ PASSFILE=${4:?usage: run-socks5.sh SUBCOMMAND ANSWERS LOG PASSFILE}
 }
 
 status=0
+printf 'runner: invoking socks5.sh %s\n' "$CMD" >&2
 sh socks5.sh "$CMD" <"$ANSWERS" >"$LOG" 2>&1 || status=$?
+printf 'runner: socks5.sh %s returned %s\n' "$CMD" "$status" >&2
 [ "$status" -eq 0 ] && exit 0
 
 printf 'socks5.sh %s failed with status %s; redacted log follows\n' "$CMD" "$status" >&2
