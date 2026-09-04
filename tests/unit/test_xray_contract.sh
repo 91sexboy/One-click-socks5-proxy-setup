@@ -58,6 +58,8 @@ S5_ACCOUNT_UID=900
 S5_ACCOUNT_GID=900
 mkdir -p "$S5_UNITDIR"
 s5_write_unit >/dev/null 2>&1
+# S5_UNIT comes from the sourced socks5.sh; it is not a typo for S5_INIT.
+# shellcheck disable=SC2153
 S5_UNIT_SHA256=$(sha256sum "$S5_UNIT" | awk '{print $1}')
 s5_state_write
 assert_file_exists "Xray state is written" "$S5_STATE"

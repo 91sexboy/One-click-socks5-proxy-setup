@@ -992,6 +992,7 @@ s5_listener_state() {
     _slss=$(ss -H -ltnp 2>/dev/null) || return 2
     _slcount=0
     _slmatch=0
+    _slmatchstate=''
     while IFS= read -r _slrow; do
         [ -n "$_slrow" ] || continue
         _slstate=$(printf '%s\n' "$_slrow" | awk '{print $1}')
@@ -1002,14 +1003,14 @@ s5_listener_state() {
         esac
         _slcount=$((_slcount + 1))
         case "$_slrow" in
-        *pid=$_slpid,* | *pid=$_slpid) _slmatch=$((_slmatch + 1)) ;;
+        *pid=$_slpid,* | *pid=$_slpid) _slmatch=$((_slmatch + 1)); _slmatchstate=$_slstate ;;
         esac
     done <<EOF
 $_slss
 EOF
     [ "$_slcount" -eq 0 ] && return 1
     [ "$_slcount" -eq 1 ] && [ "$_slmatch" -eq 1 ] || return 2
-    [ "$_slstate" = LISTEN ] || return 2
+    [ "$_slmatchstate" = LISTEN ] || return 2
     return 0
 }
 
