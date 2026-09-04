@@ -1002,10 +1002,10 @@ s5_listener_state() {
         _sladdr=$(printf '%s\n' "$_slrow" | awk '{print $4}')
         case "$_sladdr" in
         "$S5_LISTEN:$S5_PORT") ;;
-        0.0.0.0:$S5_PORT)
+        "0.0.0.0:$S5_PORT")
             [ "$S5_LISTEN" = 0.0.0.0 ] || continue
             ;;
-        *:$S5_PORT)
+        "*:$S5_PORT")
             [ "$S5_LISTEN" = 0.0.0.0 ] || continue
             [ "$_sladdr" = "*:$S5_PORT" ] || continue
             ;;
