@@ -39,6 +39,7 @@ S5_INSTALL_COMPLETE=0
 S5_IN_CLEANUP=0
 S5_CONFIG_SHA256=''
 S5_BINARY_SHA256=''
+S5_UNIT_SHA256=''
 S5_ACCOUNT_UID=''
 S5_ACCOUNT_GID=''
 S5_ASSET_NAME=''
@@ -613,18 +614,36 @@ s5_binary_ready() {
     [ "$(sha256sum "$S5_BIN" 2>/dev/null | awk '{print $1}')" = "$S5_ASSET_BINARY_SHA256" ]
 }
 
+s5_getent_state() {
+    _sges_kind=$1
+    _sges_name=$2
+    getent "$_sges_kind" "$_sges_name" >/dev/null 2>&1
+    case $? in
+    0) return 0 ;;
+    2) return 1 ;;
+    *) return 2 ;;
+    esac
+}
+
 s5_account_create() {
-    if getent passwd "$S5_SERVICE_USER" >/dev/null 2>&1 || getent group "$S5_SERVICE_GROUP" >/dev/null 2>&1; then
-        s5_msg_err account.exists "$S5_SERVICE_USER"
-        return 1
-    fi
+    s5_getent_state passwd "$S5_SERVICE_USER"
+    case $? in
+    0) s5_msg_err account.exists "$S5_SERVICE_USER"; return 1 ;;
+    1) ;;
+    *) s5_msg_err account.identity; return 1 ;;
+    esac
+    s5_getent_state group "$S5_SERVICE_GROUP"
+    case $? in
+    0) s5_msg_err account.exists "$S5_SERVICE_GROUP"; return 1 ;;
+    1) ;;
+    *) s5_msg_err account.identity; return 1 ;;
+    esac
     groupadd -r "$S5_SERVICE_GROUP" >/dev/null 2>&1 || { s5_msg_err account.failed "$S5_SERVICE_GROUP"; return 1; }
     S5_CREATED_GROUP=1
     S5_CREATED_GROUP_NAMED=1
     useradd -r -g "$S5_SERVICE_GROUP" -M -d /nonexistent -s /usr/sbin/nologin "$S5_SERVICE_USER" >/dev/null 2>&1 || {
         s5_msg_err account.failed "$S5_SERVICE_USER"
         groupdel "$S5_SERVICE_GROUP" >/dev/null 2>&1 || true
-        S5_CREATED_GROUP=0
         return 1
     }
     S5_CREATED_USER=1
@@ -636,14 +655,15 @@ s5_account_create() {
 
 s5_account_identity() {
     [ -n "$S5_ACCOUNT_UID" ] && [ -n "$S5_ACCOUNT_GID" ] || return 1
-    [ "$(id -u "$S5_SERVICE_USER" 2>/dev/null)" = "$S5_ACCOUNT_UID" ] &&
-        [ "$(id -g "$S5_SERVICE_USER" 2>/dev/null)" = "$S5_ACCOUNT_GID" ]
+    _saiu=$(id -u "$S5_SERVICE_USER" 2>/dev/null) || return 1
+    _saig=$(id -g "$S5_SERVICE_USER" 2>/dev/null) || return 1
+    [ "$_saiu" = "$S5_ACCOUNT_UID" ] && [ "$_saig" = "$S5_ACCOUNT_GID" ]
 }
 
 s5_account_remove() {
     if [ -n "$S5_ACCOUNT_UID" ] && [ -n "$S5_ACCOUNT_GID" ]; then
         s5_account_identity || {
-            s5_warn "account identity mismatch: recorded $S5_ACCOUNT_UID/$S5_ACCOUNT_GID, observed $(id -u "$S5_SERVICE_USER" 2>&1)/$(id -g "$S5_SERVICE_USER" 2>&1)"
+            s5_warn "account identity mismatch: recorded $S5_ACCOUNT_UID/$S5_ACCOUNT_GID"
             s5_msg_err account.identity
             return 1
         }
@@ -656,22 +676,31 @@ s5_account_remove() {
             s5_warn "could not remove service account: $S5_SERVICE_USER"
             return 1
         fi
-        if getent passwd "$S5_SERVICE_USER" >/dev/null 2>&1; then
-            s5_warn "service account still exists after removal: $S5_SERVICE_USER"
-            return 1
-        fi
+        s5_getent_state passwd "$S5_SERVICE_USER"
+        case $? in
+        1) ;;
+        0) s5_warn "service account still exists after removal: $S5_SERVICE_USER"; return 1 ;;
+        *) s5_warn "could not verify service account removal: $S5_SERVICE_USER"; return 1 ;;
+        esac
     fi
     if [ "$S5_CREATED_GROUP" = 1 ] || [ -n "$S5_ACCOUNT_GID" ]; then
-        if getent group "$S5_SERVICE_GROUP" >/dev/null 2>&1; then
+        s5_getent_state group "$S5_SERVICE_GROUP"
+        case $? in
+        0)
             if ! groupdel "$S5_SERVICE_GROUP" >/dev/null 2>&1; then
                 s5_warn "could not remove service group: $S5_SERVICE_GROUP"
                 return 1
             fi
-        fi
-        if getent group "$S5_SERVICE_GROUP" >/dev/null 2>&1; then
-            s5_warn "service group still exists after removal: $S5_SERVICE_GROUP"
-            return 1
-        fi
+            ;;
+        1) ;;
+        *) s5_warn "could not verify service group before removal: $S5_SERVICE_GROUP"; return 1 ;;
+        esac
+        s5_getent_state group "$S5_SERVICE_GROUP"
+        case $? in
+        1) ;;
+        0) s5_warn "service group still exists after removal: $S5_SERVICE_GROUP"; return 1 ;;
+        *) s5_warn "could not verify service group removal: $S5_SERVICE_GROUP"; return 1 ;;
+        esac
     fi
     S5_CREATED_USER=0
     S5_CREATED_GROUP=0
@@ -765,6 +794,7 @@ init	$S5_INIT
 account_uid	$S5_ACCOUNT_UID
 account_gid	$S5_ACCOUNT_GID
 config_sha256	$S5_CONFIG_SHA256
+unit_sha256	$S5_UNIT_SHA256
 status	complete
 STATE
 }
@@ -804,12 +834,124 @@ s5_state_load() {
     S5_ACCOUNT_UID=$(s5_state_get account_uid)
     S5_ACCOUNT_GID=$(s5_state_get account_gid)
     S5_CONFIG_SHA256=$(s5_state_get config_sha256)
+    S5_UNIT_SHA256=$(s5_state_get unit_sha256)
     [ -n "$S5_ASSET_NAME" ] && [ -n "$S5_ASSET_SIZE" ] && [ -n "$S5_ASSET_SHA256" ] || return 1
     [ -n "$S5_ASSET_BINARY_SIZE" ] && [ -n "$S5_BINARY_SHA256" ] || return 1
+    [ -n "$S5_UNIT_SHA256" ] || return 1
     s5_valid_port "$S5_PORT" && s5_valid_username "$S5_USERNAME" && s5_ipv4_is_canonical "$S5_LISTEN" || return 1
+    [ -f "$S5_UNIT" ] && [ ! -L "$S5_UNIT" ] || return 1
+    [ "$(sha256sum "$S5_UNIT" 2>/dev/null | awk '{print $1}')" = "$S5_UNIT_SHA256" ] || return 1
     [ "$(sha256sum "$S5_CFG" 2>/dev/null | awk '{print $1}')" = "$S5_CONFIG_SHA256" ] || return 2
     [ "$(sha256sum "$S5_BIN" 2>/dev/null | awk '{print $1}')" = "$S5_BINARY_SHA256" ] || return 1
     s5_account_identity || return 1
+    return 0
+}
+
+s5_verify_dataplane() {
+    if [ "${S5_TEST_MODE:-0}" = 1 ]; then
+        if [ -n "${S5_PROTOCOL_VERIFY:-}" ]; then
+            "$S5_PROTOCOL_VERIFY" "$S5_PORT"
+            return $?
+        fi
+        return 0
+    fi
+    _svpf=$(mktemp "${S5_WORKDIR:-${S5_ROOTDIR:-/var/tmp}}/.s5pass.XXXXXX") || return 1
+    chmod 0600 "$_svpf" || { rm -f "$_svpf"; return 1; }
+    printf '%s\n%s\n' "$S5_USERNAME" "$S5_PASSWORD" >"$_svpf" || { rm -f "$_svpf"; return 1; }
+    python3 - "$S5_PORT" "$_svpf" <<'PY'
+import base64
+import socket
+import sys
+import threading
+
+port = int(sys.argv[1])
+with open(sys.argv[2], encoding="ascii") as handle:
+    user, password = handle.read().splitlines()
+stop = threading.Event()
+ready = threading.Event()
+
+def target():
+    srv = socket.socket()
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(8)
+    target.port = srv.getsockname()[1]
+    ready.set()
+    srv.settimeout(.5)
+    while not stop.is_set():
+        try: conn, _ = srv.accept()
+        except socket.timeout: continue
+        threading.Thread(target=relay, args=(conn,), daemon=True).start()
+    srv.close()
+
+def relay(conn):
+    try:
+        while True:
+            data = conn.recv(4096)
+            if not data: return
+            conn.sendall(data)
+    finally: conn.close()
+
+def exact(conn, n):
+    data = b""
+    while len(data) < n:
+        part = conn.recv(n-len(data))
+        if not part: raise RuntimeError("closed")
+        data += part
+    return data
+
+def socks():
+    conn = socket.create_connection(("127.0.0.1", port), 5)
+    try:
+        conn.sendall(b"\x05\x01\x02")
+        if exact(conn, 2) != b"\x05\x02": raise RuntimeError("auth method")
+        ub, pb = user.encode(), password.encode()
+        conn.sendall(b"\x01" + bytes([len(ub)]) + ub + bytes([len(pb)]) + pb)
+        if exact(conn, 2) != b"\x01\x00": raise RuntimeError("auth")
+        conn.sendall(b"\x05\x01\x00\x01" + socket.inet_aton("127.0.0.1") + target.port.to_bytes(2, "big"))
+        reply = exact(conn, 10)
+        if reply[:2] != b"\x05\x00": raise RuntimeError("connect")
+        conn.sendall(b"socks5-data")
+        if exact(conn, 11) != b"socks5-data": raise RuntimeError("echo")
+    finally: conn.close()
+
+def http():
+    conn = socket.create_connection(("127.0.0.1", port), 5)
+    try:
+        token = base64.b64encode((user + ":" + password).encode()).decode()
+        request = ("CONNECT 127.0.0.1:%d HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+                   "Proxy-Authorization: Basic %s\r\n\r\n") % (target.port, token)
+        conn.sendall(request.encode())
+        data = b""
+        while b"\r\n\r\n" not in data:
+            data += conn.recv(4096)
+            if len(data) > 8192: raise RuntimeError("http response")
+        if not data.startswith((b"HTTP/1.1 200", b"HTTP/1.0 200")): raise RuntimeError("http connect")
+        conn.sendall(b"http-data")
+        if exact(conn, 9) != b"http-data": raise RuntimeError("echo")
+    finally: conn.close()
+
+t = threading.Thread(target=target, daemon=True)
+t.start()
+try:
+    if not ready.wait(5): raise RuntimeError("target")
+    socks()
+    http()
+    bad = socket.create_connection(("127.0.0.1", port), 5)
+    bad.sendall(b"\x05\x01\x02")
+    if exact(bad, 2) != b"\x05\x02": raise RuntimeError("negative auth")
+    ub, pb = user.encode(), (password + "x").encode()
+    bad.sendall(b"\x01" + bytes([len(ub)]) + ub + bytes([len(pb)]) + pb)
+    if exact(bad, 2) == b"\x01\x00": raise RuntimeError("bad auth accepted")
+    bad.close()
+except Exception as exc:
+    raise SystemExit("data-plane verification failed: %s" % type(exc).__name__)
+finally:
+    stop.set()
+PY
+    _svd=$?
+    rm -f "$_svpf"
+    [ "$_svd" -eq 0 ] || { s5_msg_err service.unverified "$S5_PORT"; return 1; }
     return 0
 }
 
@@ -833,16 +975,65 @@ s5_wait_stopped() {
     return 1
 }
 
+s5_listener_state() {
+    if [ "${S5_TEST_MODE:-0}" = 1 ]; then
+        if [ -n "${S5_LISTENER_PROBE:-}" ]; then
+            "$S5_LISTENER_PROBE" "$S5_LISTEN" "$S5_PORT"
+            return $?
+        fi
+        if [ -n "${S5_PORT_PROBE:-}" ]; then
+            "$S5_PORT_PROBE" "$S5_PORT"
+            case $? in 1) return 0 ;; 0) return 1 ;; *) return 2 ;; esac
+        fi
+    fi
+    _slpid=$(systemctl show "$S5_PROJECT.service" -p MainPID --value 2>/dev/null) || return 2
+    case "$_slpid" in '' | *[!0-9]* | 0) return 2 ;; esac
+    command -v ss >/dev/null 2>&1 || return 2
+    _slss=$(ss -H -ltnp 2>/dev/null) || return 2
+    _slcount=0
+    _slmatch=0
+    while IFS= read -r _slrow; do
+        [ -n "$_slrow" ] || continue
+        _slstate=$(printf '%s\n' "$_slrow" | awk '{print $1}')
+        _sladdr=$(printf '%s\n' "$_slrow" | awk '{print $4}')
+        case "$_sladdr" in
+        "$S5_LISTEN:$S5_PORT") ;;
+        *) continue ;;
+        esac
+        _slcount=$((_slcount + 1))
+        case "$_slrow" in
+        *pid=$_slpid,* | *pid=$_slpid) _slmatch=$((_slmatch + 1)) ;;
+        esac
+    done <<EOF
+$_slss
+EOF
+    [ "$_slcount" -eq 0 ] && return 1
+    [ "$_slcount" -eq 1 ] && [ "$_slmatch" -eq 1 ] || return 2
+    [ "$_slstate" = LISTEN ] || return 2
+    return 0
+}
+
 s5_wait_listening() {
     _swlp=$1
     _swli=0
     while [ "$_swli" -lt 30 ]; do
-        s5_port_free "$_swlp"
-        case $? in 1) return 0 ;; 0) ;; *) return 2 ;; esac
+        S5_PORT=$_swlp
+        s5_listener_state
+        case $? in 0) return 0 ;; 1) ;; *) return 2 ;; esac
         _swli=$((_swli + 1))
         sleep 1
     done
     return 1
+}
+
+s5_cleanup_transaction() {
+    [ -d "$S5_TXNDIR" ] || return 0
+    for _sctf in "$S5_TXNDIR"/old.config.json "$S5_TXNDIR"/old.state "$S5_TXNDIR"/.s5new.* "$S5_TXNDIR"/.s5tmp.*; do
+        [ -e "$_sctf" ] || continue
+        rm -f "$_sctf" || return 1
+    done
+    rmdir "$S5_TXNDIR" 2>/dev/null || return 1
+    return 0
 }
 
 s5_cleanup_own_temps() {
@@ -879,6 +1070,7 @@ s5_cleanup() {
         # rmdir below, and uninstall later, both refuse a non-empty directory.
         s5_cleanup_own_temps "$S5_SYSCONFDIR" || true
         s5_cleanup_own_temps "$S5_STATEDIR" || true
+        s5_cleanup_transaction || true
         s5_cleanup_own_temps "$S5_PREFIX" || true
         if [ "$S5_CREATED_CONFDIR" = 1 ]; then rmdir "$S5_SYSCONFDIR" 2>/dev/null || true; fi
         if [ "$S5_CREATED_STATEDIR" = 1 ]; then rmdir "$S5_STATEDIR" 2>/dev/null || true; fi
@@ -903,6 +1095,7 @@ s5_on_signal() {
 }
 
 s5_precheck() {
+    _spcmode=${1:-install}
     s5_is_root || { s5_msg_err root.required; return 1; }
     S5_ARCHNAME=$(s5_map_arch "$(uname -m)") || {
         s5_msg_err detect.unsupported unknown unknown unknown
@@ -912,11 +1105,24 @@ s5_precheck() {
         s5_msg_err detect.unsupported "$S5_OS_ID" "$S5_OS_VERSION_ID" "$S5_ARCHNAME"
         return 1
     }
-    s5_require_commands awk sed grep tr tail head id getent groupadd groupdel useradd userdel mkdir rmdir rm mv cp cat printf stat sha256sum mktemp unzip curl file od ln sleep systemctl wc || return 1
-    if ! command -v ss >/dev/null 2>&1 && ! command -v netstat >/dev/null 2>&1; then
-        s5_msg_err detect.commands 'ss or netstat'
-        return 1
-    fi
+    s5_require_commands awk sed grep tr tail head id getent mkdir rmdir rm mv cp cat printf stat sha256sum mktemp ln sleep systemctl wc chmod || return 1
+    case "$_spcmode" in
+    install|update)
+        s5_require_commands groupadd groupdel useradd userdel unzip curl file od chown python3 || return 1
+        if ! command -v ss >/dev/null 2>&1 && ! command -v netstat >/dev/null 2>&1; then
+            s5_msg_err detect.commands 'ss or netstat'
+            return 1
+        fi
+        ;;
+    status|restart)
+        s5_require_commands python3 || return 1
+        command -v ss >/dev/null 2>&1 || { s5_msg_err detect.commands ss; return 1; }
+        ;;
+    uninstall)
+        s5_require_commands groupdel userdel || return 1
+        ;;
+    *) s5_msg_err detect.commands "unknown management mode"; return 1 ;;
+    esac
     s5_asset_select || return 1
     return 0
 }
@@ -973,6 +1179,7 @@ s5_install_new() {
     S5_CREATED_CFG=1
     s5_write_unit || return 1
     S5_CREATED_UNIT=1
+    S5_UNIT_SHA256=$(sha256sum "$S5_UNIT" | awk '{print $1}')
     systemctl daemon-reload >/dev/null 2>&1 || return 1
     systemctl enable "$S5_PROJECT.service" >/dev/null 2>&1 || return 1
     s5_service_start || { s5_msg_err service.start; return 1; }
@@ -981,6 +1188,7 @@ s5_install_new() {
     case "$_sina" in 0) ;; 1) s5_msg_err service.start; return 1 ;; *) s5_msg_err service.inactive; return 1 ;; esac
     s5_wait_listening "$S5_PORT"
     case $? in 0) ;; 1) s5_msg_err service.listen "$S5_PORT"; return 1 ;; *) s5_msg_err service.unverified "$S5_PORT"; return 1 ;; esac
+    s5_verify_dataplane || return 1
     S5_CONFIG_SHA256=$(sha256sum "$S5_CFG" | awk '{print $1}')
     s5_state_write || return 1
     S5_INSTALL_COMPLETE=1
@@ -1024,14 +1232,24 @@ s5_install_update() {
     if [ "$_siwait" -ne 0 ]; then
         s5_restore_transaction "$_sioldcfg" "$_sioldstate" || true
         s5_service_restart || true
-        rm -f "$_sioldcfg" "$_sioldstate" 2>/dev/null || true
+        s5_cleanup_transaction || true
+        S5_SERVICE_STARTED=0
         s5_msg_err service.listen "$S5_PORT"
         return 1
     fi
+    s5_verify_dataplane || {
+        s5_restore_transaction "$_sioldcfg" "$_sioldstate" || true
+        s5_service_restart || true
+        s5_cleanup_transaction || true
+        S5_SERVICE_STARTED=0
+        return 1
+    }
     S5_CONFIG_SHA256=$(sha256sum "$S5_CFG" | awk '{print $1}')
     if ! s5_state_write; then
         s5_restore_transaction "$_sioldcfg" "$_sioldstate" || true
         s5_service_restart || true
+        s5_cleanup_transaction || true
+        S5_SERVICE_STARTED=0
         return 1
     fi
     rm -f "$_sioldcfg" "$_sioldstate"
@@ -1041,7 +1259,7 @@ s5_install_update() {
 }
 
 s5_cmd_install() {
-    s5_precheck || return 1
+    s5_precheck install || return 1
     s5_lock_acquire || return 1
     trap 's5_on_signal 129' HUP
     trap 's5_on_signal 130' INT
@@ -1069,12 +1287,19 @@ s5_cmd_install() {
 }
 
 s5_cmd_status() {
-    s5_precheck || return 1
+    s5_precheck status || return 1
     s5_lock_acquire || return 1
     s5_state_load
     _ssr=$?
     case "$_ssr" in
-    1) s5_lock_release || true; s5_msg_err state.missing "$S5_PROJECT"; return 1 ;;
+    1)
+        if [ -e "$S5_STATE" ] || [ -L "$S5_STATE" ]; then
+            s5_lock_release || true; s5_msg_err state.invalid "$S5_STATE"
+        else
+            s5_lock_release || true; s5_msg_err state.missing "$S5_PROJECT"
+        fi
+        return 1
+        ;;
     2) s5_lock_release || true; s5_msg_err config.external; return 1 ;;
     esac
     s5_config_extract || { s5_lock_release || true; s5_msg_err state.invalid "$S5_STATE"; return 1; }
@@ -1084,8 +1309,13 @@ s5_cmd_status() {
     s5_msg_print status.heading
     s5_msg_print status.line "$_ssv" "$S5_PORT" "$S5_USERNAME"
     s5_msg_print status.version "$S5_XRAY_VERSION"
-    s5_port_free "$S5_PORT"
-    case $? in 1) ;; 0) s5_msg_print service.listen "$S5_PORT" ;; *) s5_msg_print service.unverified "$S5_PORT" ;; esac
+    s5_listener_state
+    _ssls=$?
+    case "$_ssls" in
+    0) s5_msg_print service.listen "$S5_PORT" ;;
+    1) s5_msg_print service.listen "$S5_PORT" ;;
+    *) s5_msg_print service.unverified "$S5_PORT" ;;
+    esac
     s5_lock_release || return 1
     return 0
 }
@@ -1093,7 +1323,7 @@ s5_cmd_status() {
 s5_cmd_show() {
     s5_is_root || { s5_msg_err root.required; return 1; }
     if [ ! -t 1 ]; then s5_msg_err show.terminal; return 1; fi
-    s5_precheck || return 1
+    s5_precheck status || return 1
     s5_lock_acquire || return 1
     s5_state_load || { s5_lock_release || true; s5_msg_err state.invalid "$S5_STATE"; return 1; }
     s5_config_extract || { s5_lock_release || true; return 1; }
@@ -1109,7 +1339,7 @@ s5_cmd_show() {
 }
 
 s5_cmd_restart() {
-    s5_precheck || return 1
+    s5_precheck restart || return 1
     s5_lock_acquire || return 1
     s5_state_load || { s5_lock_release || true; s5_msg_err state.invalid "$S5_STATE"; return 1; }
     s5_config_extract || { s5_lock_release || true; return 1; }
@@ -1117,6 +1347,9 @@ s5_cmd_restart() {
     s5_service_restart || { s5_lock_release || true; s5_msg_err service.start; return 1; }
     s5_wait_listening "$S5_PORT"
     _srr=$?
+    if [ "$_srr" -eq 0 ]; then
+        s5_verify_dataplane || _srr=2
+    fi
     s5_lock_release || return 1
     case "$_srr" in 0) return 0 ;; 1) s5_msg_err service.listen "$S5_PORT" ;; *) s5_msg_err service.unverified "$S5_PORT" ;; esac
     return 1
@@ -1145,7 +1378,7 @@ s5_remove_owned_dir() {
 }
 
 s5_cmd_uninstall() {
-    s5_precheck || return 1
+    s5_precheck uninstall || return 1
     s5_lock_acquire || return 1
     s5_state_load
     _sur=$?
@@ -1167,16 +1400,16 @@ s5_cmd_uninstall() {
     s5_wait_stopped
     case $? in 0) ;; *) s5_lock_release || true; s5_msg_err service.stop; return 1 ;; esac
     s5_account_identity || { s5_lock_release || true; s5_msg_err account.identity; return 1; }
-    systemctl disable "$S5_PROJECT.service" >/dev/null 2>&1 || true
+    systemctl disable "$S5_PROJECT.service" >/dev/null 2>&1 || { s5_lock_release || true; return 1; }
     s5_remove_owned_file "$S5_UNIT" || { s5_lock_release || true; return 1; }
     s5_remove_owned_file "$S5_CFG" || { s5_lock_release || true; return 1; }
-    s5_remove_owned_file "$S5_STATE" || { s5_lock_release || true; return 1; }
     s5_remove_owned_file "$S5_BIN" || { s5_lock_release || true; return 1; }
-    systemctl daemon-reload >/dev/null 2>&1 || true
+    systemctl daemon-reload >/dev/null 2>&1 || { s5_lock_release || true; return 1; }
+    s5_account_remove || { s5_lock_release || true; return 1; }
+    s5_remove_owned_file "$S5_STATE" || { s5_lock_release || true; return 1; }
     s5_remove_owned_dir "$S5_SYSCONFDIR" || { s5_lock_release || true; return 1; }
     s5_remove_owned_dir "$S5_STATEDIR" || { s5_lock_release || true; return 1; }
     s5_remove_owned_dir "$S5_PREFIX" || { s5_lock_release || true; return 1; }
-    s5_account_remove || { s5_lock_release || true; return 1; }
     s5_lock_release || return 1
     s5_msg_print uninstall.done
     return 0

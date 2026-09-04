@@ -95,7 +95,7 @@ xray run -c /etc/xray-socks5/config.json
 ```
 
 Config-test does not bind a port. A successful config-test is followed by atomic
-publication, service start, exact-listener readiness, and protocol verification.
+publication, service start, exact-listener readiness, and local protocol verification.
 
 ## 4. Namespace and permissions
 

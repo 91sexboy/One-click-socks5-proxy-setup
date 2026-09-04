@@ -84,7 +84,7 @@ script
   → replace the configuration atomically
   → run Xray as a non-root account
   → wait for the service and the exact port to become ready
-  → verify SOCKS5, HTTP and sustained bidirectional transport
+  → verify SOCKS5, HTTP and sustained bidirectional transport locally
 ```
 
 The configuration contains no Xray API, stats, metrics, routing, GeoIP,

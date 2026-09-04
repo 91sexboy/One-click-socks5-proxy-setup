@@ -196,6 +196,8 @@ assert_contains "the sampler records cgroup OOM kills" \
     '_cgroup_oom_kill=' "$sampler_text"
 assert_contains "the memory job passes a cgroup directory to the sampler" \
     'memory-sample.sh "$pid" idle "$cgdir"' "$ci_text"
+assert_contains "the memory job resets peak before sampling" \
+    'memory-sample.sh "$pid" reset "$cgdir"' "$ci_text"
 assert_contains "the memory job resolves the service cgroup" \
     'ControlGroup' "$ci_text"
 assert_contains "the memory job records startup time" \

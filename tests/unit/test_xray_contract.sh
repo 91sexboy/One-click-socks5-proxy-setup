@@ -56,6 +56,9 @@ s5_asset_select
 S5_INIT=systemd
 S5_ACCOUNT_UID=900
 S5_ACCOUNT_GID=900
+mkdir -p "$S5_UNITDIR"
+s5_write_unit >/dev/null 2>&1
+S5_UNIT_SHA256=$(sha256sum "$S5_UNIT" | awk '{print $1}')
 s5_state_write
 assert_file_exists "Xray state is written" "$S5_STATE"
 assert_mode "Xray state is root-only" 600 "$S5_STATE"
@@ -63,6 +66,7 @@ assert_not_contains "state never stores password" "$S5_PASSWORD" "$(cat "$S5_STA
 assert_eq "state identifies Xray" xray "$(s5_state_get engine)"
 assert_eq "state identifies mixed" mixed "$(s5_state_get protocol)"
 assert_eq "state disables UDP" false "$(s5_state_get udp)"
+assert_eq "state has unit ownership hash" "$S5_UNIT_SHA256" "$(s5_state_get unit_sha256)"
 
 # Old 3proxy namespace is deliberately untouched by this branch.
 mkdir -p "$S5_TEST_ROOT/etc/socks5-manager" "$S5_TEST_ROOT/var/lib/socks5-manager" "$S5_TEST_ROOT/usr/local/libexec/socks5-manager"

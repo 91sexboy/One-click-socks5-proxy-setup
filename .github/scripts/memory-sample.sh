@@ -1,9 +1,5 @@
 #!/bin/sh
 # Print non-secret Xray RSS and cgroup metrics for GitHub Actions.
-#
-# SPEC 8 records evidence without claiming a universal minimum. OOM counters are
-# part of that evidence, so a cgroup that cannot be read is an error rather than
-# a silently skipped metric once a cgroup directory has been named.
 set -eu
 
 PID=${1:?usage: memory-sample.sh PID LABEL [CGROUP_DIR]}
@@ -28,8 +24,14 @@ require_number "$rss" VmRSS
 printf '%s_rss_kib=%s\n' "$LABEL" "$rss"
 
 [ -n "$CGROUP" ] || exit 0
-
 [ -d "$CGROUP" ] || { printf 'cgroup directory is missing: %s\n' "$CGROUP" >&2; exit 1; }
+
+if [ "$LABEL" = reset ]; then
+    [ -w "$CGROUP/memory.peak" ] || { printf 'memory.peak is not writable\n' >&2; exit 1; }
+    printf 0 >"$CGROUP/memory.peak" || { printf 'could not reset memory.peak\n' >&2; exit 1; }
+    exit 0
+fi
+
 current=$(cat "$CGROUP/memory.current")
 peak=$(cat "$CGROUP/memory.peak")
 require_number "$current" memory.current

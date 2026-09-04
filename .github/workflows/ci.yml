@@ -362,6 +362,7 @@ jobs:
           for n in $(seq 1 50); do test -s "$root/target.port" && break; sleep 0.1; done
           test -s "$root/target.port"
           target_port=$(cat "$root/target.port")
+          sudo sh .github/scripts/memory-sample.sh "$pid" reset "$cgdir"
           sudo sh .github/scripts/memory-sample.sh "$pid" idle "$cgdir"
           # SPEC 8 wants the idle/1/32/128 peaks kept apart, so each stage is
           # sampled while exactly that many tunnels are held open.
@@ -377,6 +378,7 @@ jobs:
               cat "$root/held.log" >&2
               exit 1
             fi
+            sudo sh .github/scripts/memory-sample.sh "$pid" reset "$cgdir"
             sudo sh .github/scripts/memory-sample.sh "$pid" "conn$stage" "$cgdir"
             kill -TERM "$holder_pid" 2>/dev/null || true
             wait "$holder_pid" 2>/dev/null || true
