@@ -247,8 +247,10 @@ jobs:
           sudo sh .github/scripts/run-socks5.sh status \
             "$work/answers.lang" "$work/status.log" "$work/pass"
           printf 'lifecycle: status-ok\n'
-          printf 'lifecycle: status-log=%s\n' "$(tr '\n' ' ' <"$work/status.log")"
-          grep -q 'mixed' "$work/status.log"
+          printf 'lifecycle: status-log='
+          sudo tr '\n' ' ' <"$work/status.log"
+          printf '\n'
+          sudo grep -q 'mixed' "$work/status.log"
           printf 'lifecycle: status-content-ok\n'
           sudo sh .github/scripts/run-socks5.sh restart \
             "$work/answers.lang" "$work/restart.log" "$work/pass"
