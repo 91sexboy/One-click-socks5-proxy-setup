@@ -12,6 +12,7 @@ S5_SKIP_OWNERSHIP=1
 S5_OSRELEASE="$ROOT/tests/fixtures/os-release/alpine-3.20"
 S5_ARCHNAME=amd64
 export S5_LIB_ONLY S5_ASSUME_ROOT S5_SKIP_OWNERSHIP S5_OSRELEASE
+# shellcheck disable=SC1091
 . "$ROOT/socks5.sh"
 S5_LANG=en
 S5_PORT=23456
@@ -74,7 +75,7 @@ mkdir -p "$S5_OPENRC_OPTION_DIR"
 printf '900\n' >"$S5_OPENRC_OPTION_DIR/child_pid"
 export S5_OPENRC_OPTION_DIR
 _REAL_CAT=$(command -v cat)
-export REAL_CAT=$_REAL_CAT
+export REAL_CAT="$_REAL_CAT"
 "$_REAL_CAT" >"$S5_TEST_ROOT/bin/cat" <<'CAT'
 #!/bin/sh
 case "${1:-}" in
@@ -89,10 +90,11 @@ cat >"$S5_TEST_ROOT/bin/ss" <<'SS'
 printf '%s\n' 'LISTEN 0 128 127.0.0.1:23456 0.0.0.0:* users:(("xray",pid=901,fd=3))'
 SS
 chmod 755 "$S5_TEST_ROOT/bin/ss"
-export REAL_CAT=$_REAL_CAT
+export REAL_CAT="$_REAL_CAT"
 if [ "${S5_TEST_SHELL:-}" != 'busybox sh' ]; then
 s5_listener_state
 assert_eq "OpenRC listener resolves supervised Xray child" 0 "$?"
+# shellcheck disable=SC2154
 assert_eq "OpenRC listener uses child PID" 901 "$_slpid"
 else
     t_skip "OpenRC listener child resolution" "BusyBox test shell cannot stub /proc safely"
