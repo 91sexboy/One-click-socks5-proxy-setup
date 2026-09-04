@@ -1,118 +1,148 @@
 #!/bin/sh
-# tests/protocol/start_engine.sh - CI ONLY.
-#
-# Installs a prebuilt release candidate, renders the production configuration,
-# and starts the engine in the background so run_protocol.sh and
-# acl_resolution.sh can exercise the protocol boundary without needing systemd
-# or OpenRC.
-#
-# SCOPE: this proves the engine + the rendered config. It does NOT install a
-# service. Real systemd/OpenRC installation is covered by separate CI jobs.
-#
-# This binds a real TCP port and must never run on a development machine.
-# The listener is confined to loopback via the S5_LISTEN override, which
-# socks5.sh honours only under S5_TEST_MODE=1; production always binds 0.0.0.0.
-#
-# The password is read from $PASSFILE (mode 0600), never from argv or the
-# environment. Writes $OUTDIR/{port,user,pid,root}. It never writes the password.
-
-set -eu
-
-HERE=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
-REPO=$(CDPATH='' cd -- "$HERE/../.." && pwd)
-OUTDIR=${OUTDIR:-$(mktemp -d)}
-
-PORT=${PORT:-41080}
-PROXY_USER=${PROXY_USER:-ciuser}
-PASSFILE=${PASSFILE:?PASSFILE must point at a 0600 file holding the password}
-ENGINE_BIN=${ENGINE_BIN:-}
-
-if [ ! -f "$PASSFILE" ] || [ -L "$PASSFILE" ]; then
-    printf 'PASSFILE must be a regular non-symlink file: %s\n' "$PASSFILE" >&2
-    exit 2
-fi
-_pfmode=$(stat -c '%a' "$PASSFILE" 2>/dev/null || printf '')
-if [ "$_pfmode" != 600 ]; then
-    printf 'PASSFILE must have mode 0600, found %s: %s\n' "${_pfmode:-unknown}" "$PASSFILE" >&2
-    exit 2
-fi
-if [ -n "$ENGINE_BIN" ] &&
-    { [ ! -f "$ENGINE_BIN" ] || [ -L "$ENGINE_BIN" ] || [ ! -x "$ENGINE_BIN" ]; }; then
-    printf 'ENGINE_BIN must be an executable regular non-symlink file: %s\n' "$ENGINE_BIN" >&2
-    exit 2
-fi
-
+# CI-only launcher for the pinned Xray mixed proxy.
+set -u
 umask 077
-ROOT=$(mktemp -d)
-: >"$ROOT/.s5-test-root"
 
-S5_TEST_MODE=1
-S5_TEST_ROOT="$ROOT"
-S5_LIB_ONLY=1
-S5_SKIP_OWNERSHIP=1
-S5_ASSUME_ROOT=1
-# Confine the CI listener to loopback. Rejected outside test mode.
-S5_LISTEN=127.0.0.1
-export S5_TEST_MODE S5_TEST_ROOT S5_LIB_ONLY S5_SKIP_OWNERSHIP S5_ASSUME_ROOT S5_LISTEN
+OUTDIR=${OUTDIR:?OUTDIR must be set}
+PASSFILE=${PASSFILE:?PASSFILE must be set}
+PORT=${PORT:?PORT must be set}
+ARCH=${ARCH:-amd64}
 
-# shellcheck source=/dev/null
-. "$REPO/socks5.sh"
+case "$ARCH" in
+amd64)
+    ASSET=Xray-linux-64.zip
+    SIZE=21136402
+    SHA=23cd9af937744d97776ee35ecad4972cf4b2109d1e0fe6be9930467608f7c8ae
+    ;;
+arm64)
+    ASSET=Xray-linux-arm64-v8a.zip
+    SIZE=19716427
+    SHA=4d30283ae614e3057f730f67cd088a42be6fdf91f8639d82cb69e48cde80413c
+    ;;
+*)
+    printf 'unsupported architecture: %s\n' "$ARCH" >&2
+    exit 2
+    ;;
+esac
 
-if [ -n "$ENGINE_BIN" ]; then
-    printf 'installing supplied verified release engine %s\n' "$ENGINE_BIN" >&2
-    s5_install_binary "$ENGINE_BIN" ephemeral
-else
-    S5_ARCHNAME=$(s5_map_arch "$(uname -m)")
-    s5_detect_platform "$S5_ARCHNAME"
-    s5_select_engine_asset
-    printf 'downloading verified release engine %s\n' "$S5_ASSET_NAME" >&2
-    s5_fetch_verified_engine ephemeral
+fail() {
+    printf 'xray launcher: %s\n' "$1" >&2
+    exit 1
+}
+
+# Engine logs are echoed on failure with the password removed. The pattern
+# arrives on stdin so it never enters an external command's argv.
+redact() {
+    printf '%s\n' "$pass" | grep -vFf - "$1" >&2 || true
+}
+
+[ -f "$PASSFILE" ] || fail 'invalid PASSFILE'
+[ ! -L "$PASSFILE" ] || fail 'invalid PASSFILE'
+[ "$(stat -c '%a' "$PASSFILE" 2>/dev/null)" = 600 ] || fail 'PASSFILE must have mode 0600'
+user=$(sed -n '1p' "$PASSFILE") || fail 'cannot read PASSFILE username'
+pass=$(sed -n '2p' "$PASSFILE") || fail 'cannot read PASSFILE password'
+[ -n "$user" ] || fail 'PASSFILE is incomplete'
+[ -n "$pass" ] || fail 'PASSFILE is incomplete'
+
+mkdir -p "$OUTDIR" || fail 'cannot create output directory'
+chmod 0700 "$OUTDIR" || fail 'cannot protect output directory'
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/xray-mixed.XXXXXX") || fail 'cannot create private workdir'
+XRAY_PID=''
+TARGET_PID=''
+cleanup() {
+    trap - EXIT HUP INT TERM
+    if [ -n "$XRAY_PID" ]; then
+        kill "$XRAY_PID" 2>/dev/null || true
+        wait "$XRAY_PID" 2>/dev/null || true
+    fi
+    if [ -n "$TARGET_PID" ]; then
+        kill "$TARGET_PID" 2>/dev/null || true
+        wait "$TARGET_PID" 2>/dev/null || true
+    fi
+    rm -rf "$WORK"
+}
+trap cleanup EXIT HUP INT TERM
+
+if ! curl -fsSL --proto '=https' --proto-redir '=https' --max-filesize $((SIZE + 1)) \
+    -o "$WORK/$ASSET" "https://github.com/XTLS/Xray-core/releases/download/v26.3.27/$ASSET"; then
+    fail 'Xray archive download failed'
 fi
+archive_size=$(wc -c <"$WORK/$ASSET" | tr -d '[:space:]') || fail 'cannot measure Xray archive'
+[ "$archive_size" = "$SIZE" ] || fail "Xray archive size mismatch: $archive_size"
+archive_sha=$(sha256sum "$WORK/$ASSET" | awk '{print $1}') || fail 'cannot hash Xray archive'
+[ "$archive_sha" = "$SHA" ] || fail 'Xray archive SHA-256 mismatch'
+unzip -Z1 "$WORK/$ASSET" >"$WORK/members" || fail 'cannot inspect Xray archive'
+[ "$(grep -cxF xray "$WORK/members" || true)" = 1 ] || fail 'archive must contain exactly one xray member'
+for member in geoip.dat geosite.dat LICENSE README.md; do
+    [ "$(grep -cxF "$member" "$WORK/members" || true)" = 1 ] || fail "archive missing $member"
+done
+[ "$(wc -l <"$WORK/members" | tr -d '[:space:]')" = 5 ] || fail 'archive contains unexpected member count'
+while IFS= read -r member; do
+    case "$member" in
+    '' | */* | *..* | *\\*) fail 'archive contains an unsafe member name' ;;
+    esac
+done <"$WORK/members"
 
-S5_PORT=$PORT
-S5_USERNAME=$PROXY_USER
-S5_PASSWORD=$(cat "$PASSFILE")
-S5_SECRET=$S5_PASSWORD
+unzip -p "$WORK/$ASSET" xray >"$WORK/xray" || fail 'cannot extract xray member'
+chmod 0755 "$WORK/xray" || fail 'cannot chmod xray'
+_file=$(file -b "$WORK/xray" 2>/dev/null) || fail 'cannot inspect xray executable'
+case "$ARCH:$_file" in
+amd64:*'ELF 64-bit LSB executable, x86-64'*) ;;
+arm64:*'ELF 64-bit LSB executable, ARM aarch64'*) ;;
+*) fail 'xray ELF architecture does not match the requested architecture' ;;
+esac
+ENGINE="$WORK/xray"
+: >"$WORK/config.json" || fail 'cannot create Xray config'
+chmod 0600 "$WORK/config.json" || fail 'cannot protect Xray config'
+cat >"$WORK/config.json" <<CONFIG
+{
+  "log": {"loglevel": "warning", "access": "none", "error": ""},
+  "inbounds": [{
+    "listen": "127.0.0.1",
+    "port": $PORT,
+    "protocol": "mixed",
+    "settings": {"auth": "password", "accounts": [{"user": "$user", "pass": "$pass"}], "udp": false},
+    "tag": "xray-mixed-in"
+  }],
+  "outbounds": [{"protocol": "freedom", "settings": {}, "tag": "direct"}]
+}
+CONFIG
+"$ENGINE" run -test -c "$WORK/config.json" >"$WORK/config-test.log" 2>&1 || {
+    printf 'xray config-test failed\n' >&2
+    redact "$WORK/config-test.log"
+    fail 'Xray config-test rejected the generated config'
+}
+"$ENGINE" run -c "$WORK/config.json" >"$WORK/xray.log" 2>&1 &
+XRAY_PID=$!
+printf '%s\n' "$XRAY_PID" >"$OUTDIR/xray.pid"
+printf '%s\n' "$PORT" >"$OUTDIR/port"
+printf '%s\n' "$WORK/config.json" >"$OUTDIR/config.path"
 
-mkdir -p "$S5_SYSCONFDIR"
-chmod 0700 "$S5_SYSCONFDIR"
-s5_render_users >"$S5_USERSCFG"
-chmod 0640 "$S5_USERSCFG"
-s5_render_cfg >"$S5_CFG"
-chmod 0640 "$S5_CFG"
-
-# The same static check the installer performs.
-s5_static_check_cfg "$S5_CFG"
-
-# The rendered configuration holds no credentials of any kind: the only thing it
-# says about them is `users $<confdir>/users.cfg`, and that file is never printed.
-# Saying "credentials elided" implied a redaction that was not happening and that
-# there was nothing to redact.
-printf 'rendered configuration (no credentials appear in it; paths shortened):\n' >&2
-sed -e "s|$S5_SYSCONFDIR|<confdir>|g" "$S5_CFG" >&2
-
-"$S5_BIN" "$S5_CFG" &
-enginepid=$!
-
-# wait for the port to accept connections
-i=0
-while [ "$i" -lt 50 ]; do
-    if python3 -c "import socket,sys; s=socket.socket(); s.settimeout(1); sys.exit(0 if s.connect_ex(('127.0.0.1',$PORT))==0 else 1)"; then
+ready=0
+n=0
+while [ "$n" -lt 30 ]; do
+    if ! kill -0 "$XRAY_PID" 2>/dev/null; then
+        printf 'xray exited before readiness\n' >&2
+        redact "$WORK/xray.log"
+        fail 'Xray exited before the listener became ready'
+    fi
+    if python3 - "$PORT" <<'PY'
+import socket, sys
+sock = socket.socket()
+sock.settimeout(0.5)
+try:
+    result = sock.connect_ex(("127.0.0.1", int(sys.argv[1])))
+finally:
+    sock.close()
+sys.exit(0 if result == 0 else 1)
+PY
+    then
+        ready=1
         break
     fi
-    i=$((i + 1))
-    sleep 0.2
+    n=$((n + 1))
+    sleep 1
 done
-if [ "$i" -ge 50 ]; then
-    printf 'engine did not start listening on 127.0.0.1:%s\n' "$PORT" >&2
-    kill "$enginepid" 2>/dev/null || true
-    exit 1
-fi
-
-mkdir -p "$OUTDIR"
-chmod 0700 "$OUTDIR"
-printf '%s' "$PORT" >"$OUTDIR/port"
-printf '%s' "$PROXY_USER" >"$OUTDIR/user"
-printf '%s' "$enginepid" >"$OUTDIR/pid"
-printf '%s' "$ROOT" >"$OUTDIR/root"
-printf 'engine listening on 127.0.0.1:%s (pid %s)\n' "$PORT" "$enginepid" >&2
+[ "$ready" = 1 ] || fail 'Xray did not become ready within 30 seconds'
+printf 'xray ready pid=%s port=%s\n' "$XRAY_PID" "$PORT"
+wait "$XRAY_PID"

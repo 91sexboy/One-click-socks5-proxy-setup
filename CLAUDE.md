@@ -17,3 +17,14 @@ See `docs/agents/triage-labels.md`.
 
 Single-context: `CONTEXT.md` and `docs/adr/` at the repo root (neither exists
 yet; skills create them lazily). See `docs/agents/domain.md`.
+
+## Testing workflow
+
+- Run the complete test suite in GitHub Actions by default; do not run the full
+  local `tests/run.sh` suite because it is slow.
+- Local checks should be limited to fast syntax checks or targeted tests, such as
+  `sh -n socks5.sh`, `dash -n socks5.sh`, `busybox sh -n socks5.sh`, or one unit
+  test file when investigating a focused change.
+- Do not push without explicit user authorization. When authorized, push the
+  branch and use the required GitHub Actions jobs as the complete test result.
+- Do not report testing as complete until all required CI jobs have passed.

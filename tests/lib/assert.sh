@@ -1,6 +1,7 @@
 #!/bin/sh
 # tests/lib/assert.sh - minimal POSIX sh assertion helpers.
-# No framework dependency (SPEC 13). Sourced by every tests/unit/*.sh file.
+# No test-framework dependency: SPEC 8 requires the unit suite to run under sh,
+# dash and BusyBox sh. Sourced by every tests/unit/*.sh file.
 #
 # Each test file prints a final "TESTS <pass> <fail>" line that tests/run.sh aggregates,
 # and exits non-zero if any assertion failed.

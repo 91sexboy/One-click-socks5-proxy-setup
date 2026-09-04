@@ -1,15 +1,15 @@
 [Unit]
-Description=socks5-manager SOCKS5 proxy (3proxy 0.9.9.0)
-Documentation=https://github.com/3proxy/3proxy
+Description=Xray mixed SOCKS5 and HTTP proxy
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=socks5proxy
-Group=socks5proxy
-ExecStart=@PREFIX@/3proxy @SYSCONFDIR@/3proxy.cfg
+User=xray-socks5
+Group=xray-socks5
+ExecStart=/usr/local/libexec/xray-socks5/xray run -c /etc/xray-socks5/config.json
 Restart=on-failure
+RestartPreventExitStatus=23
 RestartSec=5s
 NoNewPrivileges=yes
 ProtectSystem=strict

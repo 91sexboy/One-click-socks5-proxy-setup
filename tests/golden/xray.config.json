@@ -1,0 +1,15 @@
+{
+  "log": {"loglevel": "warning", "access": "none", "error": ""},
+  "inbounds": [{
+    "listen": "127.0.0.1",
+    "port": 23456,
+    "protocol": "mixed",
+    "settings": {
+      "auth": "password",
+      "accounts": [{"user": "testuser", "pass": "TestPassword_123~x"}],
+      "udp": false
+    },
+    "tag": "xray-mixed-in"
+  }],
+  "outbounds": [{"protocol": "freedom", "settings": {}, "tag": "direct"}]
+}
