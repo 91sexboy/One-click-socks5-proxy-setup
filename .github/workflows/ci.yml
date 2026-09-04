@@ -223,6 +223,10 @@ jobs:
           sudo sh .github/scripts/run-socks5.sh install \
             "$work/answers" "$work/install.log" "$work/pass"
           printf 'lifecycle: install-ok\n'
+          sudo find /etc/xray-socks5 /var/lib/xray-socks5 /usr/local/libexec/xray-socks5 \
+            -maxdepth 2 -printf '%M %u:%g %p\n' 2>&1 || true
+          test -e /etc/xray-socks5
+          printf 'lifecycle: config-dir-entry-ok\n'
           test -f /etc/xray-socks5/config.json
           printf 'lifecycle: config-file-ok\n'
           test -f /var/lib/xray-socks5/state
