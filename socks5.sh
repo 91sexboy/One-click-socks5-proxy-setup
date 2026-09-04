@@ -1119,18 +1119,23 @@ s5_cmd_restart() {
 s5_remove_owned_file() {
     _srof=$1
     [ -e "$_srof" ] || [ -L "$_srof" ] || return 0
-    [ -L "$_srof" ] && return 1
-    rm -f "$_srof"
+    [ -L "$_srof" ] && { s5_warn "refusing symlink during uninstall: $_srof"; return 1; }
+    rm -f "$_srof" || { s5_warn "could not remove owned file: $_srof"; return 1; }
+    return 0
 }
 
 s5_remove_owned_dir() {
     _srod=$1
     [ -e "$_srod" ] || [ -L "$_srod" ] || return 0
-    [ -L "$_srod" ] || [ -d "$_srod" ] || return 1
+    [ -L "$_srod" ] || [ -d "$_srod" ] || { s5_warn "owned path is not a directory: $_srod"; return 1; }
     for _sroe in "$_srod"/* "$_srod"/.[!.]* "$_srod"/..?*; do
-        if [ -e "$_sroe" ] || [ -L "$_sroe" ]; then return 1; fi
+        if [ -e "$_sroe" ] || [ -L "$_sroe" ]; then
+            s5_warn "refusing non-empty owned directory: $_sroe"
+            return 1
+        fi
     done
-    rmdir "$_srod"
+    rmdir "$_srod" || { s5_warn "could not remove owned directory: $_srod"; return 1; }
+    return 0
 }
 
 s5_cmd_uninstall() {
