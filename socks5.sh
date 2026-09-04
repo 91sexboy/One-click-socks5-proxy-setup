@@ -677,8 +677,9 @@ s5_account_remove() {
 }
 
 s5_write_config_candidate() {
-    _swcc=$(mktemp "$S5_SYSCONFDIR/.s5new.XXXXXX") || return 1
-    rm -f "$_swcc" || return 1
+    _swct=$(mktemp "$S5_SYSCONFDIR/.s5new.XXXXXX") || return 1
+    rm -f "$_swct" || return 1
+    _swcc=$_swct.json
     _swraw=$(mktemp "$S5_SYSCONFDIR/.s5tmp.XXXXXX") || return 1
     chmod 0600 "$_swraw" || { rm -f "$_swraw"; return 1; }
     if ! s5_config_render >"$_swraw"; then

@@ -87,6 +87,15 @@ if s5_config_test "$S5_CFG"; then t_ok; else t_bad "config-test wrapper succeeds
 assert_contains "config-test uses run -test -c" \
     'run -test -c /tmp' "$(cat "$S5_TEST_ROOT/xray-calls")"
 
+# The production writer gives Xray's format detector a .json candidate path.
+S5_CONFIG_TEST_STATUS=0
+candidate=$(s5_write_config_candidate)
+assert_contains "candidate config-test path has a JSON suffix" \
+    '.s5new.' "$candidate"
+case "$candidate" in
+*.json) t_ok ;; *) t_bad "candidate path ends in .json: $candidate" ;; esac
+rm -f "$candidate"
+
 # A rejected candidate has to explain itself: the engine's own diagnostic is the
 # only thing that says why, and it must arrive with the password removed.
 cat >"$S5_BIN" <<'XRAY'
