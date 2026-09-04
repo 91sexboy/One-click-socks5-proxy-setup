@@ -24,7 +24,10 @@ status=0
 printf 'runner: invoking socks5.sh %s\n' "$CMD" >&2
 sh socks5.sh "$CMD" <"$ANSWERS" >"$LOG" 2>&1 || status=$?
 printf 'runner: socks5.sh %s returned %s\n' "$CMD" "$status" >&2
-[ "$status" -eq 0 ] && exit 0
+if [ "$status" -eq 0 ]; then
+    cat "$LOG"
+    exit 0
+fi
 
 printf 'socks5.sh %s failed with status %s; redacted log follows\n' "$CMD" "$status" >&2
 sed -n '2p' "$PASSFILE" | grep -vFf - "$LOG" >&2 || true
