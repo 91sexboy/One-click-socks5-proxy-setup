@@ -186,20 +186,22 @@ The platform check in `socks5.sh` accepts:
 
 - Ubuntu 22.04+ on amd64 and arm64;
 - Ubuntu 20.04 on amd64;
+- Alpine Linux 3.20+ on amd64 and arm64;
 - Debian 12+ on amd64 and arm64;
 - CentOS Stream 9+ on amd64 and arm64.
 
-Acceptance is not evidence. The full service lifecycle — install, status,
-restart, crash recovery, protocol, uninstall — is exercised in CI on **Ubuntu
-24.04 amd64 only**. arm64 has archive and binary verification but no lifecycle
-job. Ubuntu 22.04, Ubuntu 20.04, Debian 12 and CentOS Stream have no lifecycle
-job, so they are accepted but unverified.
+The full service lifecycle — install, status, restart, crash recovery, protocol,
+uninstall — is exercised in CI on **Ubuntu 24.04 amd64 only**. Alpine 3.20+ uses
+OpenRC and has a dedicated lifecycle matrix; arm64 has archive and binary
+verification but no lifecycle job. Ubuntu 22.04, Ubuntu 20.04, Debian 12 and
+CentOS Stream have no lifecycle job, so they are accepted but unverified.
 
 A successful Xray archive download is not evidence that a distribution's service
 lifecycle has been verified.
 
-Non-systemd init systems are outside the contract: the service contract requires
-systemd, and `socks5.sh` refuses to install without it.
+The service contract uses the native init system: systemd on Ubuntu, Debian and
+CentOS, and OpenRC on Alpine 3.20+. The installer refuses unsupported init
+systems.
 
 ## Testing and memory
 

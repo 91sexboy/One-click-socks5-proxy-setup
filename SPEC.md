@@ -108,6 +108,7 @@ publication, service start, exact-listener readiness, and local protocol verific
 | Transaction | `/var/lib/xray-socks5/transaction/` | root-owned, private |
 | Lock | `/run/xray-socks5.lock` | root-owned |
 | systemd | `/etc/systemd/system/xray-socks5.service` | `root:root 0644` |
+| OpenRC | `/etc/init.d/xray-socks5` | `root:root 0755` |
 | Account | `xray-socks5` | system, no home, `nologin`, no password |
 
 The config is the only credential-bearing file. State contains no password. The
@@ -119,10 +120,12 @@ never adopts, replaces, or removes old `socks5-manager` paths, units, or the
 
 ## 5. Service contract
 
-The service runs as the dedicated non-root account with `NoNewPrivileges`,
-`ProtectHome`, `PrivateTmp`, restricted capabilities, and a read-only system
-filesystem except for explicitly required paths. Xray config errors use exit
-status 23; systemd prevents that status from entering an automatic restart loop.
+The service runs through the platform's native manager as the dedicated non-root
+account. On systemd targets it uses `NoNewPrivileges`, `ProtectHome`, `PrivateTmp`,
+restricted capabilities, a read-only system filesystem except for explicitly
+required paths, and `RestartPreventExitStatus=23`. On Alpine 3.20+ it uses OpenRC
+with `supervise-daemon`, `command_user`, and logger routing without credentials.
+Config errors must not enter an automatic restart loop on either backend.
 
 Install, update, restart, and uninstall are serialized by an operation lock.
 Status distinguishes service state from listener state. An active service is not
@@ -187,17 +190,18 @@ Documentation may publish a memory budget only with the Xray version, platform,
 configuration, connection count, duration, and CI run that produced it.
 
 The platform matrix carries its own evidence requirement. The platform check
-accepts Ubuntu 22.04+ on amd64 and arm64, Ubuntu 20.04 on amd64, Debian 12+ and
-CentOS Stream 9+. Acceptance is not evidence: the full service lifecycle is
-exercised on Ubuntu 24.04 amd64 only, arm64 carries archive and binary
-verification without a lifecycle job, and every other accepted target is
-unverified. A successful archive download is never evidence that a
-distribution's service lifecycle works. Non-systemd init systems are outside
-this contract; see section 5.
+accepts Ubuntu 22.04+ on amd64 and arm64, Ubuntu 20.04 on amd64, Debian 12+,
+Alpine 3.20+ on amd64 and arm64, and CentOS Stream 9+. Acceptance is not
+evidence: the full systemd service lifecycle is exercised on Ubuntu 24.04 amd64,
+and the Alpine/OpenRC lifecycle is exercised by its dedicated integration job.
+arm64 carries archive and binary verification without a lifecycle job, and every
+other accepted target is unverified. A successful archive download is never evidence that a
+distribution's service lifecycle works. The installer refuses unsupported init
+systems.
 
 Lifecycle verification includes crash recovery: the service is killed with
-`SIGKILL` and must be restarted by systemd with the listener returning, and a
-configuration error must exit 23 without entering a restart loop.
+`SIGKILL` and must be restarted by its native manager with the listener returning,
+and a configuration error must exit 23 without entering a restart loop.
 
 ## 9. Non-goals
 

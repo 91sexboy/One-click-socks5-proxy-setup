@@ -315,6 +315,43 @@ jobs:
           if sudo grep -q 'CISecret_123~x' "$work/status.log"; then exit 1; else rc=$?; test "$rc" = 1 || exit 1; fi
 
 
+  openrc-integration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["alpine:3.20", "alpine:3.24"]
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - name: Run Alpine OpenRC lifecycle
+        run: |
+          docker run --rm --privileged -v "$PWD:/src" -w /src "${{ matrix.image }}" sh -c '
+            set -eu
+            apk add --no-cache openrc python3 >/dev/null
+            mkdir -p /run/openrc
+            touch /run/openrc/softlevel
+            rc-status -a >/dev/null 2>&1 || true
+            umask 077
+            work=$(mktemp -d)
+            trap "rm -rf $work" EXIT HUP INT TERM
+            printf "2\ny\n23456\nciuser\nCISecret_123~x\n" >"$work/answers"
+            printf "ciuser\nCISecret_123~x\n" >"$work/pass"
+            chmod 0600 "$work/answers" "$work/pass"
+            sh socks5.sh install <"$work/answers" >"$work/install.log" 2>&1
+            printf "2\n" | sh socks5.sh status >"$work/status.log"
+            printf "2\n" | sh socks5.sh restart
+            rc-service xray-socks5 status
+            grep -q "mixed" "$work/status.log"
+            printf "2\ny\n" | sh socks5.sh uninstall
+            test ! -e /etc/xray-socks5
+            test ! -e /var/lib/xray-socks5
+            test ! -e /usr/local/libexec/xray-socks5
+            test ! -e /etc/init.d/xray-socks5
+            test ! -e /run/xray-socks5.pid
+            ! grep -q "CISecret_123~x" "$work/install.log"
+          '
+
   memory-report:
     runs-on: ubuntu-24.04
     timeout-minutes: 30

@@ -20,6 +20,8 @@ S5_PORT=''
 S5_ARCHNAME=''
 S5_OS_ID=''
 S5_OS_VERSION_ID=''
+S5_OS_FAMILY=''
+S5_PKGMGR=''
 S5_INIT=''
 S5_WORKDIR=''
 S5_LOCK_HELD=0
@@ -93,9 +95,14 @@ S5_BIN=$S5_PREFIX/xray
 S5_CFG=$S5_SYSCONFDIR/config.json
 S5_STATE=$S5_STATEDIR/state
 S5_UNIT=$S5_UNITDIR/$S5_PROJECT.service
+S5_INITSCRIPTDIR=$S5_ROOTDIR/etc/init.d
+S5_INITSCRIPT=$S5_INITSCRIPTDIR/$S5_PROJECT
+S5_SERVICE_ARTIFACT=$S5_UNIT
 S5_LOCKDIR=$S5_ROOTDIR/run/$S5_PROJECT.lock
 S5_LOCK_OWNER=$S5_LOCKDIR/owner
 S5_TXNDIR=$S5_STATEDIR/transaction
+S5_PIDFILE=$S5_ROOTDIR/run/$S5_PROJECT.pid
+S5_OPENRC_OPTION_DIR=$S5_ROOTDIR/run/openrc/options/$S5_PROJECT
 
 s5_redact() {
     if [ -z "${S5_SECRET:-}" ]; then
@@ -250,12 +257,36 @@ s5_detect_platform() {
         arm64:*) s5_ver_ge "$S5_OS_VERSION_ID" 22.04 || return 1 ;;
         *) return 1 ;;
         esac
+        S5_OS_FAMILY=debian
+        S5_PKGMGR=apt
+        S5_INIT=systemd
         ;;
-    debian) s5_ver_ge "$S5_OS_VERSION_ID" 12 || return 1 ;;
-    centos) s5_ver_ge "$S5_OS_VERSION_ID" 9 || return 1 ;;
+    debian)
+        s5_ver_ge "$S5_OS_VERSION_ID" 12 || return 1
+        S5_OS_FAMILY=debian
+        S5_PKGMGR=apt
+        S5_INIT=systemd
+        ;;
+    alpine)
+        s5_ver_ge "$S5_OS_VERSION_ID" 3.20 || return 1
+        S5_OS_FAMILY=alpine
+        S5_PKGMGR=apk
+        S5_INIT=openrc
+        ;;
+    centos)
+        s5_ver_ge "$S5_OS_VERSION_ID" 9 || return 1
+        S5_OS_FAMILY=el
+        S5_PKGMGR=dnf
+        S5_INIT=systemd
+        export S5_PKGMGR
+        ;;
     *) return 1 ;;
     esac
-    S5_INIT=systemd
+    if [ "$S5_INIT" = openrc ]; then
+        S5_UNIT=$S5_INITSCRIPT
+    else
+        S5_UNIT=$S5_UNITDIR/$S5_PROJECT.service
+    fi
     return 0
 }
 
@@ -650,7 +681,12 @@ s5_getent_state() {
     esac
 }
 
+s5_nologin_path() {
+    case "$S5_OS_FAMILY" in alpine) printf '/sbin/nologin' ;; *) printf '/usr/sbin/nologin' ;; esac
+}
+
 s5_account_create() {
+    _s5nologin=$(s5_nologin_path)
     s5_getent_state passwd "$S5_SERVICE_USER"
     case $? in
     0) s5_msg_err account.exists "$S5_SERVICE_USER"; return 1 ;;
@@ -663,14 +699,27 @@ s5_account_create() {
     1) ;;
     *) s5_msg_err account.identity; return 1 ;;
     esac
-    groupadd -r "$S5_SERVICE_GROUP" >/dev/null 2>&1 || { s5_msg_err account.failed "$S5_SERVICE_GROUP"; return 1; }
-    S5_CREATED_GROUP=1
-    S5_CREATED_GROUP_NAMED=1
-    useradd -r -g "$S5_SERVICE_GROUP" -M -d /nonexistent -s /usr/sbin/nologin "$S5_SERVICE_USER" >/dev/null 2>&1 || {
-        s5_msg_err account.failed "$S5_SERVICE_USER"
-        groupdel "$S5_SERVICE_GROUP" >/dev/null 2>&1 || true
-        return 1
-    }
+    if [ "$S5_OS_FAMILY" = alpine ]; then
+        addgroup -S "$S5_SERVICE_GROUP" >/dev/null 2>&1 || { s5_msg_err account.failed "$S5_SERVICE_GROUP"; return 1; }
+        S5_CREATED_GROUP=1
+        S5_CREATED_GROUP_NAMED=1
+        adduser -S -D -H -h /nonexistent -G "$S5_SERVICE_GROUP" -s "$_s5nologin" "$S5_SERVICE_USER" >/dev/null 2>&1 || {
+            s5_msg_err account.failed "$S5_SERVICE_USER"
+            delgroup "$S5_SERVICE_GROUP" >/dev/null 2>&1 || true
+            S5_CREATED_GROUP=0
+            S5_CREATED_GROUP_NAMED=0
+            return 1
+        }
+    else
+        groupadd -r "$S5_SERVICE_GROUP" >/dev/null 2>&1 || { s5_msg_err account.failed "$S5_SERVICE_GROUP"; return 1; }
+        S5_CREATED_GROUP=1
+        S5_CREATED_GROUP_NAMED=1
+        useradd -r -g "$S5_SERVICE_GROUP" -M -d /nonexistent -s "$_s5nologin" "$S5_SERVICE_USER" >/dev/null 2>&1 || {
+            s5_msg_err account.failed "$S5_SERVICE_USER"
+            groupdel "$S5_SERVICE_GROUP" >/dev/null 2>&1 || true
+            return 1
+        }
+    fi
     S5_CREATED_USER=1
     S5_CREATED_USER_NAMED=1
     S5_ACCOUNT_UID=$(id -u "$S5_SERVICE_USER" 2>/dev/null) || return 1
@@ -683,8 +732,12 @@ s5_account_identity() {
     _saiu=$(id -u "$S5_SERVICE_USER" 2>/dev/null) || return 1
     _saig=$(id -g "$S5_SERVICE_USER" 2>/dev/null) || return 1
     [ "$_saiu" = "$S5_ACCOUNT_UID" ] && [ "$_saig" = "$S5_ACCOUNT_GID" ] || return 1
-    _saig_named=$(getent group "$S5_SERVICE_GROUP" 2>/dev/null | awk -F: 'NR == 1 { print $3 }') || return 1
-    [ "$_saig_named" = "$S5_ACCOUNT_GID" ]
+    if [ "$S5_OS_FAMILY" = alpine ]; then
+        _saig_named=$(getent group "$S5_SERVICE_GROUP" 2>/dev/null | awk -F: 'NR == 1 { print $3 }') || return 1
+        [ "$_saig_named" = "$S5_ACCOUNT_GID" ]
+    else
+        return 0
+    fi
 }
 
 s5_account_remove() {
@@ -699,11 +752,18 @@ s5_account_remove() {
         return 1
     fi
     if [ "$S5_CREATED_USER" = 1 ] || [ -n "$S5_ACCOUNT_UID" ]; then
+    if [ "$S5_OS_FAMILY" = alpine ]; then
+        deluser "$S5_SERVICE_USER" >/dev/null 2>&1 || {
+            s5_warn "could not remove service account: $S5_SERVICE_USER"
+            return 1
+        }
+    else
         if ! userdel "$S5_SERVICE_USER" >/dev/null 2>&1; then
             s5_warn "could not remove service account: $S5_SERVICE_USER"
             return 1
         fi
-        s5_getent_state passwd "$S5_SERVICE_USER"
+    fi
+    s5_getent_state passwd "$S5_SERVICE_USER"
         case $? in
         1) ;;
         0) s5_warn "service account still exists after removal: $S5_SERVICE_USER"; return 1 ;;
@@ -714,7 +774,9 @@ s5_account_remove() {
         s5_getent_state group "$S5_SERVICE_GROUP"
         case $? in
         0)
-            if ! groupdel "$S5_SERVICE_GROUP" >/dev/null 2>&1; then
+            if [ "$S5_OS_FAMILY" = alpine ]; then
+                delgroup "$S5_SERVICE_GROUP" >/dev/null 2>&1 || return 1
+            elif ! groupdel "$S5_SERVICE_GROUP" >/dev/null 2>&1; then
                 s5_warn "could not remove service group: $S5_SERVICE_GROUP"
                 return 1
             fi
@@ -758,10 +820,40 @@ s5_write_config_candidate() {
 }
 
 s5_write_unit() {
-    if [ ! -d "$S5_UNITDIR" ]; then
-        mkdir -p "$S5_UNITDIR" || return 1
-    fi
-    s5_atomic_write "$S5_UNIT" root:root 0644 <<UNIT
+    case "${S5_INIT:-systemd}" in
+    openrc)
+        if [ ! -d "$S5_INITSCRIPTDIR" ]; then
+            s5_mkdir_parents "$S5_INITSCRIPTDIR" || return 1
+        fi
+        s5_atomic_write "$S5_INITSCRIPT" root:root 0755 <<UNIT
+#!/sbin/openrc-run
+
+name="$S5_PROJECT"
+description="Xray mixed SOCKS5 and HTTP proxy"
+command="$S5_BIN"
+command_args="run -c $S5_CFG"
+command_user="$S5_SERVICE_USER:$S5_SERVICE_GROUP"
+supervisor="supervise-daemon"
+respawn_max=1
+respawn_period=60
+respawn_delay=1
+output_logger="logger -t $S5_PROJECT -p daemon.info"
+error_logger="logger -t $S5_PROJECT -p daemon.err"
+pidfile="$S5_PIDFILE"
+
+depend() {
+	after firewall
+	use dns logger
+}
+UNIT
+        S5_UNIT=$S5_INITSCRIPT
+        return $?
+        ;;
+    systemd)
+        if [ ! -d "$S5_UNITDIR" ]; then
+            s5_mkdir_parents "$S5_UNITDIR" || return 1
+        fi
+        s5_atomic_write "$S5_UNIT" root:root 0644 <<UNIT
 [Unit]
 Description=Xray mixed SOCKS5 and HTTP proxy
 After=network-online.target
@@ -791,6 +883,7 @@ AmbientCapabilities=
 [Install]
 WantedBy=multi-user.target
 UNIT
+    esac
 }
 
 s5_state_get() {
@@ -802,11 +895,12 @@ s5_state_schema_valid() {
         BEGIN { valid=1 }
         {
             if (NF != 2 || $1 == "" || $2 == "") valid=0
-            if ($1 !~ /^(engine|release|commit|asset|archive_size|archive_sha256|binary_size|binary_sha256|protocol|auth|udp|listen|port|username|os|arch|init|account_uid|account_gid|config_sha256|unit_sha256|status)$/) valid=0
+            if ($1 !~ /^(engine|release|commit|asset|archive_size|archive_sha256|binary_size|binary_sha256|protocol|auth|udp|listen|port|username|os|arch|family|init|account_uid|account_gid|config_sha256|unit_sha256|status)$/) valid=0
             seen[$1]++
         }
         END {
-            if (NR != 22) valid=0
+            if (NR != 22 && NR != 23) valid=0
+            if (NR == 22 && seen["family"]) valid=0
             for (key in seen) if (seen[key] != 1) valid=0
             exit valid ? 0 : 1
         }
@@ -833,6 +927,7 @@ port	$S5_PORT
 username	$S5_USERNAME
 os	$S5_OS_ID-$S5_OS_VERSION_ID
 arch	$S5_ARCHNAME
+family	$S5_OS_FAMILY
 init	$S5_INIT
 account_uid	$S5_ACCOUNT_UID
 account_gid	$S5_ACCOUNT_GID
@@ -843,6 +938,8 @@ STATE
 }
 
 s5_state_load() {
+    _slcurrent_family=$S5_OS_FAMILY
+    _slcurrent_init=$S5_INIT
     [ -f "$S5_STATE" ] && [ ! -L "$S5_STATE" ] || return 1
     [ "$(stat -c '%a' "$S5_STATE" 2>/dev/null)" = 600 ] || return 1
     s5_state_schema_valid || return 1
@@ -877,7 +974,21 @@ s5_state_load() {
     S5_PORT=$(s5_state_get port)
     S5_USERNAME=$(s5_state_get username)
     S5_ARCHNAME=$(s5_state_get arch)
+    S5_OS_FAMILY=$(s5_state_get family)
     S5_INIT=$(s5_state_get init)
+    if [ -z "$S5_OS_FAMILY" ]; then
+        case "$S5_INIT" in
+        systemd) S5_OS_FAMILY=debian ;;
+        *) return 1 ;;
+        esac
+    fi
+    [ -n "$_slcurrent_init" ] && [ "$_slcurrent_init" = "$S5_INIT" ] || return 1
+    case "$S5_OS_FAMILY:$S5_INIT" in
+    alpine:openrc) S5_INITSCRIPT=$S5_ROOTDIR/etc/init.d/$S5_PROJECT; S5_UNIT=$S5_INITSCRIPT ;;
+    debian:systemd | el:systemd) S5_UNIT=$S5_UNITDIR/$S5_PROJECT.service ;;
+    *) return 1 ;;
+    esac
+    S5_SERVICE_ARTIFACT=$S5_UNIT
     S5_ACCOUNT_UID=$(s5_state_get account_uid)
     S5_ACCOUNT_GID=$(s5_state_get account_gid)
     S5_CONFIG_SHA256=$(s5_state_get config_sha256)
@@ -1006,19 +1117,49 @@ PY
 }
 
 s5_service_active() {
-    systemctl is-active "$S5_PROJECT.service" >/dev/null 2>&1
-    case $? in 0) return 0 ;; 3 | 1) return 1 ;; *) return 2 ;; esac
+    case "$S5_INIT" in
+    openrc)
+        rc-service "$S5_PROJECT" status >/dev/null 2>&1
+        case $? in 0 | 8) return 0 ;; 1 | 3 | 16 | 32) return 1 ;; 4) return 2 ;; *) return 2 ;; esac
+        ;;
+    *)
+        systemctl is-active "$S5_PROJECT.service" >/dev/null 2>&1
+        case $? in 0) return 0 ;; 3) return 1 ;; *) return 2 ;; esac
+        ;;
+    esac
 }
 
-s5_service_start() { systemctl start "$S5_PROJECT.service" >/dev/null 2>&1; }
-s5_service_stop() { systemctl stop "$S5_PROJECT.service" >/dev/null 2>&1; }
-s5_service_restart() { systemctl restart "$S5_PROJECT.service" >/dev/null 2>&1; }
+s5_openrc_start() {
+    rc-service "$S5_PROJECT" "$1"
+    _sosrc=$?
+    [ "$_sosrc" -eq 0 ] && return 0
+    s5_service_active
+    _sosactive=$?
+    [ "$_sosactive" -eq 0 ] && return 0
+    return "$_sosrc"
+}
+
+s5_service_start() {
+    if [ "$S5_INIT" = openrc ]; then s5_openrc_start start; else systemctl start "$S5_PROJECT.service" >/dev/null 2>&1; fi
+}
+s5_service_stop() {
+    if [ "$S5_INIT" = openrc ]; then rc-service "$S5_PROJECT" stop; else systemctl stop "$S5_PROJECT.service" >/dev/null 2>&1; fi
+}
+s5_service_restart() {
+    if [ "$S5_INIT" = openrc ]; then s5_openrc_start restart; else systemctl restart "$S5_PROJECT.service" >/dev/null 2>&1; fi
+}
+s5_service_enable() {
+    if [ "$S5_INIT" = openrc ]; then rc-update add "$S5_PROJECT" default >/dev/null 2>&1; else systemctl enable "$S5_PROJECT.service" >/dev/null 2>&1; fi
+}
+s5_service_disable() {
+    if [ "$S5_INIT" = openrc ]; then rc-update del "$S5_PROJECT" default >/dev/null 2>&1; else systemctl disable "$S5_PROJECT.service" >/dev/null 2>&1; fi
+}
 
 s5_wait_stopped() {
     _swsi=0
     while [ "$_swsi" -lt 15 ]; do
         s5_service_active
-        case $? in 1) return 0 ;; 0) ;; *) return 2 ;; esac
+        case $? in 1) return 0 ;; 0 | 2) ;; *) return 2 ;; esac
         _swsi=$((_swsi + 1))
         sleep 1
     done
@@ -1036,7 +1177,17 @@ s5_listener_state() {
             case $? in 1) return 0 ;; 0) return 1 ;; *) return 2 ;; esac
         fi
     fi
-    _slpid=$(systemctl show "$S5_PROJECT.service" -p MainPID --value 2>/dev/null) || return 2
+    _slpid=''
+    if [ "$S5_INIT" = openrc ]; then
+        _slpid=$(cat "$S5_OPENRC_OPTION_DIR/child_pid" 2>/dev/null) || return 1
+        case "$_slpid" in '' | *[!0-9]* | 0) return 1 ;; esac
+        _slchildren=$(cat "/proc/$_slpid/task/$_slpid/children" 2>/dev/null) || return 1
+        set -- $_slchildren
+        [ "$#" -eq 1 ] || return 1
+        _slpid=$1
+    else
+        _slpid=$(systemctl show "$S5_PROJECT.service" -p MainPID --value 2>/dev/null) || return 2
+    fi
     case "$_slpid" in '' | *[!0-9]* | 0) return 2 ;; esac
     command -v ss >/dev/null 2>&1 || return 2
     _slss=$(ss -H -ltnp 2>/dev/null) || return 2
@@ -1078,7 +1229,7 @@ s5_wait_listening() {
     while [ "$_swli" -lt 30 ]; do
         S5_PORT=$_swlp
         s5_listener_state
-        case $? in 0) return 0 ;; 1) ;; *) return 2 ;; esac
+        case $? in 0) return 0 ;; 1) ;; 2) [ "$S5_INIT" = openrc ] || return 2 ;; *) return 2 ;; esac
         _swli=$((_swli + 1))
         sleep 1
     done
@@ -1118,17 +1269,26 @@ s5_cleanup() {
             S5_SERVICE_STARTED=0
         fi
         if [ "$S5_UNIT_ENABLED" = 1 ]; then
-            systemctl disable "$S5_PROJECT.service" >/dev/null 2>&1 || true
-            systemctl daemon-reload >/dev/null 2>&1 || true
+            s5_service_disable || true
+            if [ "$S5_INIT" = systemd ]; then
+                systemctl daemon-reload >/dev/null 2>&1 || true
+            fi
             S5_UNIT_ENABLED=0
         fi
         if [ "$S5_CREATED_UNIT" = 1 ]; then rm -f "$S5_UNIT" 2>/dev/null || true; fi
+        if [ "$S5_INIT" = openrc ]; then
+            rm -f "$S5_PIDFILE" "$S5_OPENRC_OPTION_DIR/child_pid" 2>/dev/null || true
+        fi
         if [ "$S5_CREATED_CFG" = 1 ]; then rm -f "$S5_CFG" 2>/dev/null || true; fi
         if [ "$S5_CREATED_BIN" = 1 ]; then rm -f "$S5_BIN" 2>/dev/null || true; fi
         if [ "$S5_CREATED_USER" = 1 ]; then
             s5_account_remove || true
         elif [ "$S5_CREATED_GROUP" = 1 ]; then
-            groupdel "$S5_SERVICE_GROUP" >/dev/null 2>&1 || true
+            if [ "$S5_OS_FAMILY" = alpine ]; then
+                delgroup "$S5_SERVICE_GROUP" >/dev/null 2>&1 || true
+            else
+                groupdel "$S5_SERVICE_GROUP" >/dev/null 2>&1 || true
+            fi
         fi
         # An interrupted atomic write leaves a private temporary behind; the
         # rmdir below, and uninstall later, both refuse a non-empty directory.
@@ -1158,6 +1318,34 @@ s5_on_signal() {
     exit "$1"
 }
 
+s5_install_runtime_dependencies() {
+    [ "${S5_TEST_MODE:-0}" = 1 ] && return 0
+    [ "$S5_INIT" = openrc ] || return 0
+    command -v apk >/dev/null 2>&1 || return 1
+    _sird=''
+    command -v curl >/dev/null 2>&1 || _sird="$_sird curl ca-certificates"
+    command -v unzip >/dev/null 2>&1 || _sird="$_sird unzip"
+    command -v file >/dev/null 2>&1 || _sird="$_sird file"
+    command -v python3 >/dev/null 2>&1 || _sird="$_sird python3"
+    if ! command -v ss >/dev/null 2>&1; then
+        _sird="$_sird iproute2"
+    fi
+    if [ -n "$_sird" ]; then
+        # Package names are fixed, and only missing runtime tools are requested.
+        # No compiler, VCS, build system, or source headers are installed.
+        set -f
+        # shellcheck disable=SC2086
+        apk add --no-cache $_sird >/dev/null 2>&1
+        _s5apk=$?
+        set +f
+        [ "$_s5apk" -eq 0 ] || {
+            s5_msg_err detect.commands "Alpine runtime packages"
+            return 1
+        }
+    fi
+    return 0
+}
+
 s5_precheck() {
     _spcmode=${1:-install}
     s5_is_root || { s5_msg_err root.required; return 1; }
@@ -1169,23 +1357,29 @@ s5_precheck() {
         s5_msg_err detect.unsupported "$S5_OS_ID" "$S5_OS_VERSION_ID" "$S5_ARCHNAME"
         return 1
     }
-    s5_require_commands awk sed grep tr tail head id getent mkdir rmdir rm mv cp cat printf stat sha256sum mktemp ln sleep systemctl wc chmod || return 1
-    case "$_spcmode" in
-    install|update)
-        s5_require_commands groupadd groupdel useradd userdel unzip curl file od chown python3 || return 1
-        if ! command -v ss >/dev/null 2>&1 && ! command -v netstat >/dev/null 2>&1; then
-            s5_msg_err detect.commands 'ss or netstat'
-            return 1
-        fi
+    s5_install_runtime_dependencies || return 1
+    s5_require_commands awk sed grep tr tail head id getent mkdir rmdir rm mv cp cat printf stat sha256sum mktemp ln sleep wc chmod || return 1
+    case "$S5_INIT:$_spcmode" in
+    openrc:install|openrc:update)
+        s5_require_commands addgroup adduser delgroup deluser rc-service rc-update rc-status logger unzip curl file od chown python3 ss || return 1
         ;;
-    status|restart)
-        s5_require_commands python3 || return 1
+    systemd:install|systemd:update)
+        s5_require_commands groupadd groupdel useradd userdel unzip curl file od chown python3 || return 1
         command -v ss >/dev/null 2>&1 || { s5_msg_err detect.commands ss; return 1; }
         ;;
-    uninstall)
-        s5_require_commands groupdel userdel || return 1
+    openrc:status|openrc:restart)
+        s5_require_commands python3 rc-service rc-status ss || return 1
         ;;
-    *) s5_msg_err detect.commands "unknown management mode"; return 1 ;;
+    systemd:status|systemd:restart)
+        s5_require_commands python3 systemctl ss || return 1
+        ;;
+    openrc:uninstall)
+        s5_require_commands delgroup deluser rc-service rc-update rc-status || return 1
+        ;;
+    systemd:uninstall)
+        s5_require_commands groupdel userdel systemctl || return 1
+        ;;
+    *) s5_msg_err detect.init; return 1 ;;
     esac
     s5_asset_select || return 1
     return 0
@@ -1241,11 +1435,25 @@ s5_install_new() {
     _sinc=$(s5_write_config_candidate) || return 1
     mv -f "$_sinc" "$S5_CFG" || return 1
     S5_CREATED_CFG=1
+    if [ "$S5_INIT" = openrc ]; then
+        S5_UNIT=$S5_INITSCRIPT
+    else
+        S5_UNIT=$S5_UNITDIR/$S5_PROJECT.service
+    fi
     s5_write_unit || return 1
     S5_CREATED_UNIT=1
-    S5_UNIT_SHA256=$(sha256sum "$S5_UNIT" | awk '{print $1}')
-    systemctl daemon-reload >/dev/null 2>&1 || return 1
-    systemctl enable "$S5_PROJECT.service" >/dev/null 2>&1 || return 1
+    if [ "$S5_INIT" = openrc ]; then
+        S5_SERVICE_ARTIFACT=$S5_INITSCRIPT
+    else
+        S5_SERVICE_ARTIFACT=$S5_UNIT
+    fi
+    S5_UNIT_SHA256=$(sha256sum "$S5_SERVICE_ARTIFACT" | awk '{print $1}')
+    if [ "$S5_INIT" = openrc ]; then
+        s5_service_enable || return 1
+    else
+        systemctl daemon-reload >/dev/null 2>&1 || return 1
+        s5_service_enable || return 1
+    fi
     S5_UNIT_ENABLED=1
     s5_service_start || { s5_msg_err service.start; return 1; }
     S5_SERVICE_STARTED=1
@@ -1262,6 +1470,8 @@ s5_install_new() {
 
 s5_install_update() {
     s5_state_load || { s5_msg_err state.invalid "$S5_STATE"; return 1; }
+    [ "$S5_OS_FAMILY" = alpine ] && [ "$S5_INIT" = openrc ] ||
+        [ "$S5_OS_FAMILY" != alpine ] && [ "$S5_INIT" = systemd ] || return 1
     s5_config_extract || return 1
     s5_confirm_update || return 1
     s5_prompt_port || return 1
@@ -1465,11 +1675,20 @@ s5_cmd_uninstall() {
     s5_wait_stopped
     case $? in 0) ;; *) s5_lock_release || true; s5_msg_err service.stop; return 1 ;; esac
     s5_account_identity || { s5_lock_release || true; s5_msg_err account.identity; return 1; }
-    systemctl disable "$S5_PROJECT.service" >/dev/null 2>&1 || { s5_lock_release || true; return 1; }
+    case "$S5_INIT" in
+    openrc)
+        s5_service_disable || { s5_lock_release || true; return 1; }
+        ;;
+    *)
+        s5_service_disable || { s5_lock_release || true; return 1; }
+        ;;
+    esac
     s5_remove_owned_file "$S5_UNIT" || { s5_lock_release || true; return 1; }
     s5_remove_owned_file "$S5_CFG" || { s5_lock_release || true; return 1; }
     s5_remove_owned_file "$S5_BIN" || { s5_lock_release || true; return 1; }
-    systemctl daemon-reload >/dev/null 2>&1 || { s5_lock_release || true; return 1; }
+    if [ "$S5_INIT" = systemd ]; then
+        systemctl daemon-reload >/dev/null 2>&1 || { s5_lock_release || true; return 1; }
+    fi
     s5_account_remove || { s5_lock_release || true; return 1; }
     s5_remove_owned_file "$S5_STATE" || { s5_lock_release || true; return 1; }
     s5_remove_owned_dir "$S5_SYSCONFDIR" || { s5_lock_release || true; return 1; }

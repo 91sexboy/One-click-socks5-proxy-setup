@@ -212,19 +212,26 @@ assert_contains "the memory job asserts the cgroup OOM counters" \
     'memory.events' "$ci_text"
 assert_contains "the memory job loads connections to sample under" \
     'hold_connections.py' "$ci_text"
+assert_contains "OpenRC lifecycle job covers Alpine" 'openrc-integration' "$ci_text"
+assert_contains "OpenRC lifecycle job tests both supported versions" 'alpine:3.20' "$ci_text"
+assert_contains "OpenRC lifecycle job tests current Alpine" 'alpine:3.24' "$ci_text"
 
 # SPEC 5 crash recovery and the exit-23 guard are documented claims, so each
-# needs a step behind it. SPEC 5 is systemd-only, so no document may name a
-# non-systemd init system as a target.
+# needs a step behind it. The backend-specific lifecycle checks must remain
+# consistent with the target platform; systemd uses its native guard and Alpine
+# uses the OpenRC integration job.
 assert_contains "the lifecycle job kills the service to prove recovery" \
     'sudo kill -9 "$crash_pid"' "$ci_text"
 assert_contains "the lifecycle job proves the exit-23 restart guard" \
     'ExecMainStatus' "$ci_text"
 for _doc in README.md README.zh-CN.md SPEC.md; do
-    if grep -qiE 'openrc|alpine' "$ROOT/$_doc"; then
-        t_bad "$_doc names a non-systemd init target"
-    else
+    _doctext=$(cat "$ROOT/$_doc")
+    if grep -qi 'alpine' "$ROOT/$_doc" && grep -qi 'openrc' "$ROOT/$_doc"; then
         t_ok
+        t_ok
+    else
+        t_bad "$_doc documents the Alpine target"
+        t_bad "$_doc documents the OpenRC backend"
     fi
 done
 
