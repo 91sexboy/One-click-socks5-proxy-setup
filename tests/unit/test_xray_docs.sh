@@ -139,6 +139,8 @@ else
 fi
 assert_contains "the workflow guards continue-on-error itself" \
     '^[[:space:]]+continue-on-error' "$ci_text"
+assert_contains "secret checks use explicit conditionals" \
+    "if sudo grep -q 'CISecret_123~x'" "$ci_text"
 
 _jobs=$(awk '/^jobs:/{f=1;next} f && /^  [a-z][a-z0-9-]*:$/{n++} END{print n+0}' "$CI")
 _tos=$(grep -c '^    timeout-minutes:' "$CI")

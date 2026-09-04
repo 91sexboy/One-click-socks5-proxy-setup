@@ -67,6 +67,7 @@ s5_guard_environment() {
     [ -n "${S5_SKIP_OWNERSHIP:-}" ] && _sgef="$_sgef S5_SKIP_OWNERSHIP"
     [ -n "${S5_PORT_PROBE:-}" ] && _sgef="$_sgef S5_PORT_PROBE"
     [ -n "${S5_TEST_ASSET_PATH:-}" ] && _sgef="$_sgef S5_TEST_ASSET_PATH"
+    [ -n "${S5_OSRELEASE:-}" ] && _sgef="$_sgef S5_OSRELEASE"
     [ -n "${S5_LISTEN+x}" ] && _sgef="$_sgef S5_LISTEN"
     if [ -n "$_sgef" ]; then
         printf '%s: refusing test-mode variable(s) outside test mode:%s\n' "$0" "$_sgef" >&2
@@ -142,6 +143,7 @@ s5_msg() {
     service.stop) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '无法确认 Xray 服务已停止。' ;; en) printf 'could not verify that the Xray service stopped.' ;; esac ;;
     service.inactive) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '无法确认 Xray 服务正在运行。' ;; en) printf 'could not verify that the Xray service is running.' ;; esac ;;
     service.listen) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf 'Xray 未在端口 %s 上监听。' "$1" ;; en) printf 'Xray is not listening on port %s.' "$1" ;; esac ;;
+    service.ready) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf 'Xray 正在端口 %s 上监听。' "$1" ;; en) printf 'Xray is listening on port %s.' "$1" ;; esac ;;
     service.unverified) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法验证端口 %s 的监听状态。' "$1" ;; en) printf 'the listen state of port %s could not be verified.' "$1" ;; esac ;;
     account.exists) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '账户或组 %s 已存在；拒绝采用外部身份。' "$1" ;; en) printf 'account or group %s already exists; refusing to adopt an external identity.' "$1" ;; esac ;;
     account.failed) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法创建服务账户：%s。' "$1" ;; en) printf 'could not create the service account: %s.' "$1" ;; esac ;;
@@ -567,10 +569,30 @@ s5_download_engine() {
         cp "$S5_TEST_ASSET_PATH" "$_sdezip" || return 1
     else
         s5_msg_print asset.download "$S5_ASSET_NAME" >&2
-        curl -fsSL --proto '=https' --proto-redir '=https' \
-            --max-filesize $((S5_ASSET_SIZE + 1)) -o "$_sdezip" \
-            "$S5_XRAY_BASE/$S5_ASSET_NAME" || {
+        # curl --proto '=https' is invoked by the bounded Python reader below.
+        python3 -c 'import subprocess
+import sys
+out, limit = sys.argv[1], int(sys.argv[2])
+url = sys.argv[3]
+proc = subprocess.Popen(["curl", "-fsSL", "--proto", "=https", "--proto-redir", "=https", "--max-time", "120", url], stdout=subprocess.PIPE)
+total = 0
+with open(out, "wb") as handle:
+    while True:
+        chunk = proc.stdout.read(65536)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total <= limit:
+            handle.write(chunk)
+rc = proc.wait()
+if rc != 0 or total > limit:
+    sys.exit(1)
+' "$_sdezip" "$((S5_ASSET_SIZE + 1))" "$S5_XRAY_BASE/$S5_ASSET_NAME" || {
             s5_msg_err asset.invalid download
+            return 1
+        }
+        [ "$(wc -c <"$_sdezip" | tr -d '[:space:]')" -le "$((S5_ASSET_SIZE + 1))" ] || {
+            s5_msg_err asset.invalid size
             return 1
         }
     fi
@@ -586,7 +608,9 @@ s5_download_engine() {
     while IFS= read -r _sden; do
         case "$_sden" in '' | */* | *..* | *\\*) s5_msg_err asset.invalid members; return 1 ;; esac
     done <"$_sdem"
-    if unzip -Z -v "$_sdezip" 2>/dev/null | grep -qiE 'symbolic link|hard link|device|FIFO'; then
+    if ! unzip -Z -v "$_sdezip" 2>/dev/null |
+        awk '/Unix file attributes/ { seen++; if ($4 !~ /^\(10[0-7]/) bad=1 }
+             END { exit (seen == 5 && !bad) ? 0 : 1 }'; then
         s5_msg_err asset.invalid members
         return 1
     fi
@@ -658,7 +682,9 @@ s5_account_identity() {
     [ -n "$S5_ACCOUNT_UID" ] && [ -n "$S5_ACCOUNT_GID" ] || return 1
     _saiu=$(id -u "$S5_SERVICE_USER" 2>/dev/null) || return 1
     _saig=$(id -g "$S5_SERVICE_USER" 2>/dev/null) || return 1
-    [ "$_saiu" = "$S5_ACCOUNT_UID" ] && [ "$_saig" = "$S5_ACCOUNT_GID" ]
+    [ "$_saiu" = "$S5_ACCOUNT_UID" ] && [ "$_saig" = "$S5_ACCOUNT_GID" ] || return 1
+    _saig_named=$(getent group "$S5_SERVICE_GROUP" 2>/dev/null | awk -F: 'NR == 1 { print $3 }') || return 1
+    [ "$_saig_named" = "$S5_ACCOUNT_GID" ]
 }
 
 s5_account_remove() {
@@ -771,6 +797,22 @@ s5_state_get() {
     awk -F '\t' -v k="$1" '$1 == k { print $2; exit }' "$S5_STATE" 2>/dev/null
 }
 
+s5_state_schema_valid() {
+    awk -F '\t' '
+        BEGIN { valid=1 }
+        {
+            if (NF != 2 || $1 == "" || $2 == "") valid=0
+            if ($1 !~ /^(engine|release|commit|asset|archive_size|archive_sha256|binary_size|binary_sha256|protocol|auth|udp|listen|port|username|os|arch|init|account_uid|account_gid|config_sha256|unit_sha256|status)$/) valid=0
+            seen[$1]++
+        }
+        END {
+            if (NR != 22) valid=0
+            for (key in seen) if (seen[key] != 1) valid=0
+            exit valid ? 0 : 1
+        }
+    ' "$S5_STATE" 2>/dev/null
+}
+
 s5_state_write() {
     _sswtmp=$(mktemp "$S5_STATEDIR/.s5state.XXXXXX") || return 1
     rm -f "$_sswtmp" || return 1
@@ -803,6 +845,10 @@ STATE
 s5_state_load() {
     [ -f "$S5_STATE" ] && [ ! -L "$S5_STATE" ] || return 1
     [ "$(stat -c '%a' "$S5_STATE" 2>/dev/null)" = 600 ] || return 1
+    s5_state_schema_valid || return 1
+    [ -d "$S5_PREFIX" ] && [ ! -L "$S5_PREFIX" ] || return 1
+    [ -d "$S5_SYSCONFDIR" ] && [ ! -L "$S5_SYSCONFDIR" ] || return 1
+    [ -d "$S5_STATEDIR" ] && [ ! -L "$S5_STATEDIR" ] || return 1
     [ "$(s5_state_get engine)" = xray ] || return 1
     [ "$(s5_state_get release)" = "$S5_XRAY_VERSION" ] || return 1
     [ "$(s5_state_get commit)" = "$S5_XRAY_COMMIT" ] || return 1
@@ -843,6 +889,7 @@ s5_state_load() {
     [ -f "$S5_UNIT" ] && [ ! -L "$S5_UNIT" ] || return 1
     [ "$(sha256sum "$S5_UNIT" 2>/dev/null | awk '{print $1}')" = "$S5_UNIT_SHA256" ] || return 1
     [ "$(sha256sum "$S5_CFG" 2>/dev/null | awk '{print $1}')" = "$S5_CONFIG_SHA256" ] || return 2
+    [ -f "$S5_BIN" ] && [ ! -L "$S5_BIN" ] && [ -x "$S5_BIN" ] || return 1
     [ "$(sha256sum "$S5_BIN" 2>/dev/null | awk '{print $1}')" = "$S5_BINARY_SHA256" ] || return 1
     s5_account_identity || return 1
     return 0
@@ -1330,7 +1377,7 @@ s5_cmd_status() {
     s5_listener_state
     _ssls=$?
     case "$_ssls" in
-    0) s5_msg_print service.listen "$S5_PORT" ;;
+    0) s5_msg_print service.ready "$S5_PORT" ;;
     1) s5_msg_print service.listen "$S5_PORT" ;;
     *) s5_msg_print service.unverified "$S5_PORT" ;;
     esac

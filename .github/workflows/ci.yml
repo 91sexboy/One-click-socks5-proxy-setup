@@ -311,8 +311,8 @@ jobs:
           test ! -e /etc/xray-socks5
           test ! -e /var/lib/xray-socks5
           test ! -e /usr/local/libexec/xray-socks5
-          grep -q 'CISecret_123~x' "$work/install.log" && exit 1 || true
-          grep -q 'CISecret_123~x' "$work/status.log" && exit 1 || true
+          if sudo grep -q 'CISecret_123~x' "$work/install.log"; then exit 1; else rc=$?; test "$rc" = 1 || exit 1; fi
+          if sudo grep -q 'CISecret_123~x' "$work/status.log"; then exit 1; else rc=$?; test "$rc" = 1 || exit 1; fi
 
 
   memory-report:
@@ -392,5 +392,5 @@ jobs:
           test "$(awk '$1 == "oom" {print $2}' "$cgdir/memory.events")" = 0
           test "$(awk '$1 == "oom_kill" {print $2}' "$cgdir/memory.events")" = 0
           sudo systemctl is-active --quiet xray-socks5.service
-          grep -q 'CISecret_123~x' "$root/install.log" && exit 1 || true
-          grep -q 'CISecret_123~x' "$root/held.log" && exit 1 || true
+          if sudo grep -q 'CISecret_123~x' "$root/install.log"; then exit 1; else rc=$?; test "$rc" = 1 || exit 1; fi
+          if grep -q 'CISecret_123~x' "$root/held.log"; then exit 1; else rc=$?; test "$rc" = 1 || exit 1; fi
