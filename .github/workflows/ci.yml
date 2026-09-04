@@ -246,10 +246,14 @@ jobs:
           PY
           sudo sh .github/scripts/run-socks5.sh status \
             "$work/answers.lang" "$work/status.log" "$work/pass"
+          printf 'lifecycle: status-ok\n'
           grep -q 'mixed' "$work/status.log"
+          printf 'lifecycle: status-content-ok\n'
           sudo sh .github/scripts/run-socks5.sh restart \
             "$work/answers.lang" "$work/restart.log" "$work/pass"
+          printf 'lifecycle: restart-command-ok\n'
           sudo systemctl is-active --quiet xray-socks5.service
+          printf 'lifecycle: restart-active-ok\n'
           # SPEC 5: systemd recovers a crash, and a configuration error exits 23
           # without entering a restart loop.
           restarts_before=$(systemctl show xray-socks5.service -p NRestarts --value)
