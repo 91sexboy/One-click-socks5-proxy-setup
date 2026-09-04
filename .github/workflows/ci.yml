@@ -299,6 +299,13 @@ jobs:
             REPORT="$work/report" OUT="$work/probe" \
             sh tests/protocol/run_xray_mixed.sh
           sudo sh tests/protocol/post_install_audit.sh / "$work/pass"
+          printf 'lifecycle: audit-ok\n'
+          printf 'lifecycle: uninstall-preflight\n'
+          sudo systemctl is-active xray-socks5.service || true
+          sudo systemctl show xray-socks5.service -p MainPID -p ExecMainStatus -p NRestarts
+          sudo id xray-socks5
+          sudo stat -c '%M %U:%G %n' /etc/xray-socks5/config.json /var/lib/xray-socks5/state /usr/local/libexec/xray-socks5/xray
+          sudo find /etc/xray-socks5 /var/lib/xray-socks5 /usr/local/libexec/xray-socks5 -maxdepth 2 -printf '%M %U:%G %p\n'
           sudo sh .github/scripts/run-socks5.sh uninstall \
             "$work/answers.uninstall" "$work/uninstall.log" "$work/pass"
           test ! -e /etc/xray-socks5
