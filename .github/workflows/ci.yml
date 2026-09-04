@@ -216,7 +216,10 @@ jobs:
           chmod 0600 "$work/answers"
           printf '2\n' >"$work/answers.lang"
           printf '2\ny\n' >"$work/answers.uninstall"
-          sudo sh socks5.sh install <"$work/answers" >"$work/install.log" 2>&1
+          printf 'ciuser\nCISecret_123~x\n' >"$work/pass"
+          chmod 0600 "$work/pass"
+          sudo sh .github/scripts/run-socks5.sh install \
+            "$work/answers" "$work/install.log" "$work/pass"
           test -f /etc/xray-socks5/config.json
           test -f /var/lib/xray-socks5/state
           test -x /usr/local/libexec/xray-socks5/xray
@@ -228,9 +231,11 @@ jobs:
           s = socket.create_connection(('127.0.0.1', 23456), 5)
           s.close()
           PY
-          sudo sh socks5.sh status <"$work/answers.lang" >"$work/status.log" 2>&1
+          sudo sh .github/scripts/run-socks5.sh status \
+            "$work/answers.lang" "$work/status.log" "$work/pass"
           grep -q 'mixed' "$work/status.log"
-          sudo sh socks5.sh restart <"$work/answers.lang" >"$work/restart.log" 2>&1
+          sudo sh .github/scripts/run-socks5.sh restart \
+            "$work/answers.lang" "$work/restart.log" "$work/pass"
           sudo systemctl is-active --quiet xray-socks5.service
           # SPEC 5: systemd recovers a crash, and a configuration error exits 23
           # without entering a restart loop.
@@ -266,8 +271,6 @@ jobs:
           sudo cp "$work/good.json" /etc/xray-socks5/config.json
           sudo systemctl restart xray-socks5.service
           sudo systemctl is-active --quiet xray-socks5.service
-          printf 'ciuser\nCISecret_123~x\n' >"$work/pass"
-          chmod 0600 "$work/pass"
           python3 tests/protocol/duplex_target.py --ready-file "$work/target.port" --count-file "$work/count" --report-file "$work/report" >"$work/target.log" 2>&1 &
           target_pid=$!
           for n in $(seq 1 50); do test -s "$work/target.port" && break; sleep 0.1; done
@@ -276,7 +279,8 @@ jobs:
             REPORT="$work/report" OUT="$work/probe" \
             sh tests/protocol/run_xray_mixed.sh
           sudo sh tests/protocol/post_install_audit.sh / "$work/pass"
-          sudo sh socks5.sh uninstall <"$work/answers.uninstall" >"$work/uninstall.log" 2>&1
+          sudo sh .github/scripts/run-socks5.sh uninstall \
+            "$work/answers.uninstall" "$work/uninstall.log" "$work/pass"
           test ! -e /etc/xray-socks5
           test ! -e /var/lib/xray-socks5
           test ! -e /usr/local/libexec/xray-socks5
@@ -311,7 +315,8 @@ jobs:
           chmod 0600 "$root/answers"
           printf 'ciuser\nCISecret_123~x\n' >"$root/pass"
           chmod 0600 "$root/pass"
-          sudo sh socks5.sh install <"$root/answers" >"$root/install.log" 2>&1
+          sudo sh .github/scripts/run-socks5.sh install \
+            "$root/answers" "$root/install.log" "$root/pass"
           pid=$(systemctl show xray-socks5.service -p MainPID --value)
           test "$pid" -gt 0
           printf 'xray_process_pid=%s\n' "$pid"
