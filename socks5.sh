@@ -525,7 +525,16 @@ s5_config_render() {
 }
 
 s5_config_test() {
-    "$S5_BIN" run -test -c "$1" >/dev/null 2>&1
+    _sct=''
+    if _sct=$("$S5_BIN" run -test -c "$1" 2>&1); then
+        _sct=''
+        return 0
+    fi
+    # The engine's own diagnostic is the only thing that says why a candidate was
+    # rejected. s5_warn removes the password before it reaches a log or CI output.
+    s5_warn "$_sct"
+    _sct=''
+    return 1
 }
 
 s5_config_extract() {
@@ -633,7 +642,11 @@ s5_account_identity() {
 
 s5_account_remove() {
     if [ -n "$S5_ACCOUNT_UID" ] && [ -n "$S5_ACCOUNT_GID" ]; then
-        s5_account_identity || { s5_msg_err account.identity; return 1; }
+        s5_account_identity || {
+            s5_warn "account identity mismatch: recorded $S5_ACCOUNT_UID/$S5_ACCOUNT_GID, observed $(id -u "$S5_SERVICE_USER" 2>&1)/$(id -g "$S5_SERVICE_USER" 2>&1)"
+            s5_msg_err account.identity
+            return 1
+        }
     elif [ "$S5_CREATED_USER_NAMED" != 1 ] && [ "$S5_CREATED_GROUP_NAMED" != 1 ]; then
         s5_msg_err account.identity
         return 1

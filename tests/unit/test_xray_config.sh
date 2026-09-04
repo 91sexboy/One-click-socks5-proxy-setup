@@ -87,6 +87,26 @@ if s5_config_test "$S5_CFG"; then t_ok; else t_bad "config-test wrapper succeeds
 assert_contains "config-test uses run -test -c" \
     'run -test -c /tmp' "$(cat "$S5_TEST_ROOT/xray-calls")"
 
+# A rejected candidate has to explain itself: the engine's own diagnostic is the
+# only thing that says why, and it must arrive with the password removed.
+cat >"$S5_BIN" <<'XRAY'
+#!/bin/sh
+printf 'xray: refusing config carrying pass Secret_123~x\n' >&2
+exit 23
+XRAY
+chmod 0755 "$S5_BIN"
+S5_SECRET='Secret_123~x'
+t_run s5_config_test "$S5_CFG"
+assert_ne "a rejected candidate fails" 0 "$T_STATUS"
+assert_contains "the engine reason reaches the operator" 'refusing config' "$T_OUT"
+assert_not_contains "the engine reason is redacted" 'Secret_123~x' "$T_OUT"
+cat >"$S5_BIN" <<'XRAY'
+#!/bin/sh
+printf '%s\n' "$*" >>"$S5_TEST_ROOT/xray-calls"
+exit 0
+XRAY
+chmod 0755 "$S5_BIN"
+
 # A malformed candidate must be rejected before it can be published.
 S5_CFG="$S5_TEST_ROOT/published.json"
 printf '{broken\n' >"$S5_TEST_ROOT/candidate.json"
