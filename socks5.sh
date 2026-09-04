@@ -653,17 +653,21 @@ s5_account_remove() {
     fi
     if [ "$S5_CREATED_USER" = 1 ] || [ -n "$S5_ACCOUNT_UID" ]; then
         if ! userdel "$S5_SERVICE_USER" >/dev/null 2>&1; then
+            s5_warn "could not remove service account: $S5_SERVICE_USER"
             return 1
         fi
         if getent passwd "$S5_SERVICE_USER" >/dev/null 2>&1; then
+            s5_warn "service account still exists after removal: $S5_SERVICE_USER"
             return 1
         fi
     fi
     if [ "$S5_CREATED_GROUP" = 1 ] || [ -n "$S5_ACCOUNT_GID" ]; then
         if ! groupdel "$S5_SERVICE_GROUP" >/dev/null 2>&1; then
+            s5_warn "could not remove service group: $S5_SERVICE_GROUP"
             return 1
         fi
         if getent group "$S5_SERVICE_GROUP" >/dev/null 2>&1; then
+            s5_warn "service group still exists after removal: $S5_SERVICE_GROUP"
             return 1
         fi
     fi
