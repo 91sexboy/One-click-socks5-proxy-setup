@@ -75,7 +75,7 @@ printf '900\n' >"$S5_OPENRC_OPTION_DIR/child_pid"
 export S5_OPENRC_OPTION_DIR
 _REAL_CAT=$(command -v cat)
 export REAL_CAT=$_REAL_CAT
-cat >"$S5_TEST_ROOT/bin/cat" <<'CAT'
+"$_REAL_CAT" >"$S5_TEST_ROOT/bin/cat" <<'CAT'
 #!/bin/sh
 case "${1:-}" in
 "$S5_OPENRC_OPTION_DIR/child_pid") printf '900\n' ;;
