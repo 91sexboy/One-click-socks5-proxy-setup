@@ -222,12 +222,16 @@ jobs:
           chmod 0600 "$work/pass"
           sudo sh .github/scripts/run-socks5.sh install \
             "$work/answers" "$work/install.log" "$work/pass"
+          printf 'lifecycle: install-ok\n'
           test -f /etc/xray-socks5/config.json
           test -f /var/lib/xray-socks5/state
           test -x /usr/local/libexec/xray-socks5/xray
+          printf 'lifecycle: files-ok\n'
           test "$(sudo stat -c '%a' /etc/xray-socks5/config.json)" = 640
           test "$(sudo stat -c '%a' /var/lib/xray-socks5/state)" = 600
+          printf 'lifecycle: modes-ok\n'
           sudo systemctl is-active --quiet xray-socks5.service
+          printf 'lifecycle: active-ok\n'
           python3 - <<'PY'
           import socket
           s = socket.create_connection(('127.0.0.1', 23456), 5)
