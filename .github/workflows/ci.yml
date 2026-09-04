@@ -248,7 +248,7 @@ jobs:
             "$work/answers.lang" "$work/status.log" "$work/pass"
           printf 'lifecycle: status-ok\n'
           printf 'lifecycle: status-log='
-          sudo tr '\n' ' ' <"$work/status.log"
+          sudo cat "$work/status.log" | tr '\n' ' '
           printf '\n'
           sudo grep -q 'mixed' "$work/status.log"
           printf 'lifecycle: status-content-ok\n'
