@@ -34,6 +34,7 @@ S5_CREATED_STATEDIR=0
 S5_CREATED_BIN=0
 S5_CREATED_CFG=0
 S5_CREATED_UNIT=0
+S5_UNIT_ENABLED=0
 S5_SERVICE_STARTED=0
 S5_INSTALL_COMPLETE=0
 S5_IN_CLEANUP=0
@@ -924,7 +925,9 @@ def http():
         conn.sendall(request.encode())
         data = b""
         while b"\r\n\r\n" not in data:
-            data += conn.recv(4096)
+            chunk = conn.recv(4096)
+            if not chunk: raise RuntimeError("closed")
+            data += chunk
             if len(data) > 8192: raise RuntimeError("http response")
         if not data.startswith((b"HTTP/1.1 200", b"HTTP/1.0 200")): raise RuntimeError("http connect")
         conn.sendall(b"http-data")
@@ -999,11 +1002,19 @@ s5_listener_state() {
         _sladdr=$(printf '%s\n' "$_slrow" | awk '{print $4}')
         case "$_sladdr" in
         "$S5_LISTEN:$S5_PORT") ;;
+        0.0.0.0:$S5_PORT)
+            [ "$S5_LISTEN" = 0.0.0.0 ] || continue
+            ;;
+        *:$S5_PORT)
+            [ "$S5_LISTEN" = 0.0.0.0 ] || continue
+            [ "$_sladdr" = "*:$S5_PORT" ] || continue
+            ;;
         *) continue ;;
         esac
         _slcount=$((_slcount + 1))
         case "$_slrow" in
-        *pid=$_slpid,* | *pid=$_slpid) _slmatch=$((_slmatch + 1)); _slmatchstate=$_slstate ;;
+        *pid=$_slpid,*) _slmatch=$((_slmatch + 1)); _slmatchstate=$_slstate ;;
+        *pid=$_slpid\)*) _slmatch=$((_slmatch + 1)); _slmatchstate=$_slstate ;;
         esac
     done <<EOF
 $_slss
@@ -1058,6 +1069,11 @@ s5_cleanup() {
         if [ "$S5_SERVICE_STARTED" = 1 ]; then
             s5_service_stop || true
             S5_SERVICE_STARTED=0
+        fi
+        if [ "$S5_UNIT_ENABLED" = 1 ]; then
+            systemctl disable "$S5_PROJECT.service" >/dev/null 2>&1 || true
+            systemctl daemon-reload >/dev/null 2>&1 || true
+            S5_UNIT_ENABLED=0
         fi
         if [ "$S5_CREATED_UNIT" = 1 ]; then rm -f "$S5_UNIT" 2>/dev/null || true; fi
         if [ "$S5_CREATED_CFG" = 1 ]; then rm -f "$S5_CFG" 2>/dev/null || true; fi
@@ -1183,6 +1199,7 @@ s5_install_new() {
     S5_UNIT_SHA256=$(sha256sum "$S5_UNIT" | awk '{print $1}')
     systemctl daemon-reload >/dev/null 2>&1 || return 1
     systemctl enable "$S5_PROJECT.service" >/dev/null 2>&1 || return 1
+    S5_UNIT_ENABLED=1
     s5_service_start || { s5_msg_err service.start; return 1; }
     S5_SERVICE_STARTED=1
     s5_service_active; _sina=$?
