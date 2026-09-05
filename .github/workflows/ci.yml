@@ -338,7 +338,10 @@ jobs:
             printf "2\ny\n23456\nciuser\nCISecret_123~x\n" >"$work/answers"
             printf "ciuser\nCISecret_123~x\n" >"$work/pass"
             chmod 0600 "$work/answers" "$work/pass"
-            sh socks5.sh install <"$work/answers" >"$work/install.log" 2>&1
+            if ! sh socks5.sh install <"$work/answers" >"$work/install.log" 2>&1; then
+              cat "$work/install.log"
+              exit 1
+            fi
             printf "2\n" | sh socks5.sh status >"$work/status.log"
             printf "2\n" | sh socks5.sh restart
             rc-service xray-socks5 status
