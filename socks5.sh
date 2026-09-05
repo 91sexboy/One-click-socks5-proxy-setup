@@ -624,7 +624,7 @@ s5_download_engine() {
     [ "$(wc -c <"$_sdezip" | tr -d '[:space:]')" = "$S5_ASSET_SIZE" ] || { s5_msg_err asset.invalid size; return 1; }
     [ "$(sha256sum "$_sdezip" | awk '{print $1}')" = "$S5_ASSET_SHA256" ] || { s5_msg_err asset.invalid sha256; return 1; }
     _sdem=$S5_WORKDIR/members
-    unzip -Z1 "$_sdezip" >"$_sdem" 2>/dev/null || return 1
+    unzip -Z1 "$_sdezip" >"$_sdem" 2>/dev/null || { s5_msg_err asset.invalid members; return 1; }
     [ "$(grep -cxF xray "$_sdem" || true)" = 1 ] || { s5_msg_err asset.invalid members; return 1; }
     for _sden in geoip.dat geosite.dat LICENSE README.md; do
         [ "$(grep -cxF "$_sden" "$_sdem" || true)" = 1 ] || { s5_msg_err asset.invalid members; return 1; }
@@ -1315,31 +1315,36 @@ s5_on_signal() {
     exit "$1"
 }
 
+s5_runtime_packages() {
+    case "${1:-}" in install | update) ;; *) return 0 ;; esac
+    [ "$S5_INIT" = openrc ] || return 0
+    _srp=''
+    command -v curl >/dev/null 2>&1 || _srp="$_srp curl ca-certificates"
+    # BusyBox provides a stripped unzip without -Z, so a present unzip proves
+    # nothing about archive inspection; Info-ZIP is always requested.
+    _srp="$_srp unzip"
+    command -v file >/dev/null 2>&1 || _srp="$_srp file"
+    command -v python3 >/dev/null 2>&1 || _srp="$_srp python3"
+    command -v ss >/dev/null 2>&1 || _srp="$_srp iproute2"
+    printf '%s' "${_srp# }"
+}
+
 s5_install_runtime_dependencies() {
     [ "${S5_TEST_MODE:-0}" = 1 ] && return 0
-    [ "$S5_INIT" = openrc ] || return 0
+    _sird=$(s5_runtime_packages "${1:-}") || return 1
+    [ -n "$_sird" ] || return 0
     command -v apk >/dev/null 2>&1 || return 1
-    _sird=''
-    command -v curl >/dev/null 2>&1 || _sird="$_sird curl ca-certificates"
-    command -v unzip >/dev/null 2>&1 || _sird="$_sird unzip"
-    command -v file >/dev/null 2>&1 || _sird="$_sird file"
-    command -v python3 >/dev/null 2>&1 || _sird="$_sird python3"
-    if ! command -v ss >/dev/null 2>&1; then
-        _sird="$_sird iproute2"
-    fi
-    if [ -n "$_sird" ]; then
-        # Package names are fixed, and only missing runtime tools are requested.
-        # No compiler, VCS, build system, or source headers are installed.
-        set -f
-        # shellcheck disable=SC2086
-        apk add --no-cache $_sird >/dev/null 2>&1
-        _s5apk=$?
-        set +f
-        [ "$_s5apk" -eq 0 ] || {
-            s5_msg_err detect.commands "Alpine runtime packages"
-            return 1
-        }
-    fi
+    # Package names are fixed, and only runtime tools are requested.
+    # No compiler, VCS, build system, or source headers are installed.
+    set -f
+    # shellcheck disable=SC2086
+    apk add --no-cache $_sird >/dev/null 2>&1
+    _s5apk=$?
+    set +f
+    [ "$_s5apk" -eq 0 ] || {
+        s5_msg_err detect.commands "Alpine runtime packages"
+        return 1
+    }
     return 0
 }
 
@@ -1354,7 +1359,7 @@ s5_precheck() {
         s5_msg_err detect.unsupported "$S5_OS_ID" "$S5_OS_VERSION_ID" "$S5_ARCHNAME"
         return 1
     }
-    s5_install_runtime_dependencies || return 1
+    s5_install_runtime_dependencies "$_spcmode" || return 1
     s5_require_commands awk sed grep tr tail head id getent mkdir rmdir rm mv cp cat printf stat sha256sum mktemp ln sleep wc chmod || return 1
     case "$S5_INIT:$_spcmode" in
     openrc:install|openrc:update)
@@ -1465,10 +1470,17 @@ s5_install_new() {
     return 0
 }
 
+s5_backend_supported() {
+    if [ "$S5_OS_FAMILY" = alpine ]; then
+        [ "$S5_INIT" = openrc ]
+    else
+        [ "$S5_INIT" = systemd ]
+    fi
+}
+
 s5_install_update() {
     s5_state_load || { s5_msg_err state.invalid "$S5_STATE"; return 1; }
-    [ "$S5_OS_FAMILY" = alpine ] && [ "$S5_INIT" = openrc ] ||
-        [ "$S5_OS_FAMILY" != alpine ] && [ "$S5_INIT" = systemd ] || return 1
+    s5_backend_supported || { s5_msg_err state.invalid "$S5_STATE"; return 1; }
     s5_config_extract || return 1
     s5_confirm_update || return 1
     s5_prompt_port || return 1

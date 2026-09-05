@@ -32,6 +32,44 @@ assert_ne "Alpine below 3.20 rejected" 0 "$T_STATUS"
 S5_OSRELEASE="$ROOT/tests/fixtures/os-release/alpine-3.20"
 s5_detect_platform
 
+# Only alpine/openrc and non-alpine/systemd are supported pairings. Chaining && and
+# || in a single guard is left-associative, which silently rejected alpine/openrc
+# and made every Alpine update fail with no diagnostic.
+_obfamily=$S5_OS_FAMILY
+_obinit=$S5_INIT
+for _obcase in alpine:openrc:ok debian:systemd:ok el:systemd:ok \
+    alpine:systemd:no debian:openrc:no el:openrc:no; do
+    S5_OS_FAMILY=${_obcase%%:*}
+    _obrest=${_obcase#*:}
+    S5_INIT=${_obrest%:*}
+    t_run s5_backend_supported
+    if [ "${_obrest##*:}" = ok ]; then
+        assert_eq "$S5_OS_FAMILY/$S5_INIT is a supported backend" 0 "$T_STATUS"
+    else
+        assert_ne "$S5_OS_FAMILY/$S5_INIT is refused" 0 "$T_STATUS"
+    fi
+done
+S5_OS_FAMILY=$_obfamily
+S5_INIT=$_obinit
+
+# BusyBox ships a stripped unzip that has no -Z, so `command -v unzip` succeeds on a
+# bare Alpine host while the archive inspection in s5_download_engine cannot work.
+# Info-ZIP must therefore be requested unconditionally.
+assert_contains "Alpine install requests Info-ZIP unzip" unzip "$(s5_runtime_packages install)"
+assert_contains "Alpine update requests Info-ZIP unzip" unzip "$(s5_runtime_packages update)"
+
+# Only install and update may install packages; read-only and destructive modes
+# must never mutate the host's package set.
+assert_eq "Alpine status installs no packages" '' "$(s5_runtime_packages status)"
+assert_eq "Alpine restart installs no packages" '' "$(s5_runtime_packages restart)"
+assert_eq "Alpine uninstall installs no packages" '' "$(s5_runtime_packages uninstall)"
+assert_eq "Alpine show installs no packages" '' "$(s5_runtime_packages show)"
+
+# systemd targets never use apk at all.
+S5_INIT=systemd
+assert_eq "systemd install requests no apk packages" '' "$(s5_runtime_packages install)"
+S5_INIT=openrc
+
 # The artifact is an executable OpenRC script, not a systemd unit, and carries
 # no credential-bearing command arguments.
 s5_write_unit
