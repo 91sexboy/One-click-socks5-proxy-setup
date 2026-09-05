@@ -389,7 +389,7 @@ jobs:
             done
             # Redirection truncates in place, so the config keeps the owner and
             # mode the installer gave it. BusyBox cp replaces the destination and
-            # would silently hand it the backup copy's private attributes.
+            # would hand it the private attributes of the backup copy.
             cat "$work/good.json" >/etc/xray-socks5/config.json
             test "$(stat -c "%U:%G %a" /etc/xray-socks5/config.json)" = "root:xray-socks5 640"
             rc-service xray-socks5 restart

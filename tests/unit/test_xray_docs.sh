@@ -247,6 +247,14 @@ assert_contains "Alpine gate restores the config in place" \
 assert_eq "the config owner and mode are asserted on both gates and after a restore" 3 \
     "$(printf '%s\n' "$ci_text" | grep -c 'root:xray-socks5 640')"
 
+# The Alpine lifecycle is one single-quoted argument to docker run, so any
+# apostrophe inside it closes that argument and silently hands the rest of the
+# script to the host shell. This has already broken the gate twice, so the only
+# two quotes allowed in the block are its own delimiters.
+openrc_block=$(sed -n '/^  openrc-integration:/,/^  memory-report:/p' "$ROOT/.github/workflows/ci.yml")
+assert_eq "the Alpine lifecycle block has no stray apostrophe" 2 \
+    "$(printf '%s\n' "$openrc_block" | tr -cd "'" | wc -c | tr -d '[:space:]')"
+
 # The audit is shared between backends, so it must not hard-code systemd paths.
 audit_text=$(cat "$ROOT/tests/protocol/post_install_audit.sh")
 assert_contains "the audit accepts an init backend" 'INIT=${3:-systemd}' "$audit_text"
