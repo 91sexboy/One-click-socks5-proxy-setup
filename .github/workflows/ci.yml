@@ -41,6 +41,11 @@ jobs:
           for f in tests/protocol/*.py; do
             python3 -m py_compile "$f"
           done
+          # py_compile accepts a call with the wrong argument count, so a
+          # signature change that misses one caller stays green until the job
+          # that runs it gets there -- for hold_connections.py that is the whole
+          # memory gate.
+          python3 tests/protocol/arity_audit.py
       - name: ShellCheck
         # socks5.sh is linted with no exclusions: a clean production file is the
         # baseline the test exemptions are measured against. The test-side -e
@@ -131,11 +136,17 @@ jobs:
             asset: Xray-linux-64.zip
             size: 21136402
             sha: 23cd9af937744d97776ee35ecad4972cf4b2109d1e0fe6be9930467608f7c8ae
+            binary_size: 36577406
+            binary_sha: 8255dd939c34cf966cc91517b6324dd3c8d0bcf49ffac8beca049a38c46845ed
+            elf_arch: x86-64
           - runner: ubuntu-24.04-arm
             arch: arm64
             asset: Xray-linux-arm64-v8a.zip
             size: 19716427
             sha: 4d30283ae614e3057f730f67cd088a42be6fdf91f8639d82cb69e48cde80413c
+            binary_size: 34209918
+            binary_sha: c2d20a7045250497083afea0d79db0672f6c89a25aaaf37c92de034d6b764b04
+            elf_arch: aarch64
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
       - name: Verify pinned Xray archive
@@ -143,6 +154,9 @@ jobs:
           XRAY_ASSET: ${{ matrix.asset }}
           XRAY_SIZE: ${{ matrix.size }}
           XRAY_SHA: ${{ matrix.sha }}
+          XRAY_BINARY_SIZE: ${{ matrix.binary_size }}
+          XRAY_BINARY_SHA: ${{ matrix.binary_sha }}
+          XRAY_ELF_ARCH: ${{ matrix.elf_arch }}
         run: |
           curl -fsSL --proto '=https' --proto-redir '=https' --max-filesize "$((XRAY_SIZE + 1))" \
             -o "$XRAY_ASSET" "https://github.com/XTLS/Xray-core/releases/download/v26.3.27/$XRAY_ASSET"
@@ -152,7 +166,14 @@ jobs:
           test "$(unzip -Z1 "$XRAY_ASSET" | wc -l | tr -d '[:space:]')" = 5
           unzip -p "$XRAY_ASSET" xray > xray
           chmod 0755 xray
+          # socks5.sh enforces the extracted binary's own size and digest and the
+          # ELF architecture, and this is the only job that runs on arm64. Checking
+          # the archive alone left a wrong arm64 binary pin breaking every arm64
+          # install with CI green.
+          test "$(wc -c <xray | tr -d '[:space:]')" = "$XRAY_BINARY_SIZE"
+          test "$(sha256sum xray | awk '{print $1}')" = "$XRAY_BINARY_SHA"
           file -b xray | grep -q 'ELF 64-bit'
+          file -b xray | grep -q "$XRAY_ELF_ARCH"
           ! file -b xray | grep -q 'dynamically linked'
           ./xray version
 
@@ -163,6 +184,8 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
       - name: Install protocol tools
         run: sudo apt-get update && sudo apt-get install -y python3 curl unzip file
+      - name: Add the test target addresses
+        run: sudo sh .github/scripts/add-test-target-addresses.sh
       - name: Run mixed protocol and duplex checks
         run: |
           set -eu
@@ -175,7 +198,11 @@ jobs:
           trap cleanup EXIT HUP INT TERM
           printf 'ciuser\nCISecret_123~x\n' >"$root/pass"
           chmod 0600 "$root/pass"
-          python3 tests/protocol/duplex_target.py \
+          # Bound on every address so the same target answers at both the
+          # permitted 192.0.2.1 and the denied 127.0.0.1. The boundary case needs a
+          # live listener at the denied address, or a refusal would only prove that
+          # nothing was listening there.
+          python3 tests/protocol/duplex_target.py --host 0.0.0.0 --host6 :: \
             --ready-file "$root/target.port" --count-file "$root/count" --report-file "$root/report" &
           target_pid=$!
           for n in $(seq 1 50); do test -s "$root/target.port" && break; sleep 0.1; done
@@ -197,6 +224,8 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
       - name: Install runtime dependencies
         run: sudo apt-get update && sudo apt-get install -y python3 curl unzip file iproute2
+      - name: Add the test target addresses
+        run: sudo sh .github/scripts/add-test-target-addresses.sh
       - name: Run real systemd lifecycle
         run: |
           set -eu
@@ -205,11 +234,7 @@ jobs:
           printf 'lifecycle: workdir-ready\n'
           cleanup() {
             rm -f "$work/pass" "$work/answers" "$work/target.log" "$work/install.log" "$work/status.log" "$work/restart.log" "$work/uninstall.log" "$work/pass.update" "$work/answers.update" "$work/update.log"
-            sudo systemctl stop xray-socks5.service 2>/dev/null || true
-            sudo rm -rf /etc/xray-socks5 /var/lib/xray-socks5 /usr/local/libexec/xray-socks5 /etc/systemd/system/xray-socks5.service
-            sudo userdel xray-socks5 2>/dev/null || true
-            sudo groupdel xray-socks5 2>/dev/null || true
-            sudo systemctl daemon-reload 2>/dev/null || true
+            sh .github/scripts/remove-xray-namespace.sh
             rm -rf "$work"
           }
           trap cleanup EXIT HUP INT TERM
@@ -292,7 +317,7 @@ jobs:
           test "$(sudo stat -c '%U:%G %a' /etc/xray-socks5/config.json)" = "root:xray-socks5 640"
           sudo systemctl restart xray-socks5.service
           sudo systemctl is-active --quiet xray-socks5.service
-          python3 tests/protocol/duplex_target.py --ready-file "$work/target.port" --count-file "$work/count" --report-file "$work/report" >"$work/target.log" 2>&1 &
+          python3 tests/protocol/duplex_target.py --host 0.0.0.0 --host6 :: --ready-file "$work/target.port" --count-file "$work/count" --report-file "$work/report" >"$work/target.log" 2>&1 &
           target_pid=$!
           for n in $(seq 1 50); do test -s "$work/target.port" && break; sleep 0.1; done
           target_port=$(cat "$work/target.port")
@@ -412,6 +437,19 @@ jobs:
               printf "a broken config left the service running\n" >&2
               exit 1
             fi
+            # SPEC 8: a configuration error exits 23. OpenRC bounds respawns by
+            # count rather than by exit status, so the status has to come from the
+            # supervised binary, and the respawn guard is proven by child_pid
+            # holding still across the settle window below.
+            respawn_before=$(cat /run/openrc/options/xray-socks5/child_pid 2>/dev/null || printf none)
+            broken_status=0
+            /usr/local/libexec/xray-socks5/xray run -c /etc/xray-socks5/config.json \
+              >"$work/broken.log" 2>&1 || broken_status=$?
+            if test "$broken_status" != 23; then
+              printf "a broken config exited %s, expected 23\n" "$broken_status" >&2
+              cat "$work/broken.log" >&2
+              exit 1
+            fi
             for n in $(seq 1 12); do
               if ss -H -ltn 2>/dev/null | grep -q ":23456 "; then
                 printf "a broken config produced a listener\n" >&2
@@ -419,6 +457,12 @@ jobs:
               fi
               sleep 1
             done
+            respawn_after=$(cat /run/openrc/options/xray-socks5/child_pid 2>/dev/null || printf none)
+            if test "$respawn_after" != "$respawn_before"; then
+              printf "a broken config respawned: child_pid %s then %s\n" \
+                "$respawn_before" "$respawn_after" >&2
+              exit 1
+            fi
             # Redirection truncates in place, so the config keeps the owner and
             # mode the installer gave it. BusyBox cp replaces the destination and
             # would hand it the private attributes of the backup copy.
@@ -438,8 +482,12 @@ jobs:
               exit 1
             fi
             # SPEC 6: independent SOCKS5 and HTTP verification, separate from the
-            # data-plane check the installer runs itself.
-            python3 tests/protocol/duplex_target.py --ready-file "$work/target.port" \
+            # data-plane check the installer runs itself. The target binds every
+            # address so it answers at both the permitted 192.0.2.1 and the denied
+            # 127.0.0.1, which is what makes a boundary bypass visible.
+            sh .github/scripts/add-test-target-addresses.sh
+            python3 tests/protocol/duplex_target.py --host 0.0.0.0 --host6 :: \
+              --ready-file "$work/target.port" \
               --count-file "$work/count" --report-file "$work/report" >"$work/target.log" 2>&1 &
             for n in $(seq 1 50); do test -s "$work/target.port" && break; sleep 0.2; done
             test -s "$work/target.port"
@@ -464,6 +512,8 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
       - name: Install memory tools
         run: sudo apt-get update && sudo apt-get install -y python3 curl unzip file iproute2
+      - name: Add the test target addresses
+        run: sudo sh .github/scripts/add-test-target-addresses.sh
       - name: Measure Xray process and cgroup memory
         run: |
           set -eu
@@ -471,11 +521,7 @@ jobs:
           cleanup() {
             if test -n "${holder_pid:-}"; then kill "$holder_pid" 2>/dev/null || true; wait "$holder_pid" 2>/dev/null || true; fi
             if test -n "${target_pid:-}"; then kill "$target_pid" 2>/dev/null || true; wait "$target_pid" 2>/dev/null || true; fi
-            sudo systemctl stop xray-socks5.service 2>/dev/null || true
-            sudo rm -rf /etc/xray-socks5 /var/lib/xray-socks5 /usr/local/libexec/xray-socks5 /etc/systemd/system/xray-socks5.service
-            sudo userdel xray-socks5 2>/dev/null || true
-            sudo groupdel xray-socks5 2>/dev/null || true
-            sudo systemctl daemon-reload 2>/dev/null || true
+            sh .github/scripts/remove-xray-namespace.sh
             rm -rf "$root"
           }
           trap cleanup EXIT HUP INT TERM
@@ -497,7 +543,7 @@ jobs:
           printf 'xray_startup_usec=%s\n' "$((entered - exited))"
           cgroup=$(systemctl show xray-socks5.service -p ControlGroup --value)
           cgdir="/sys/fs/cgroup$cgroup"
-          python3 tests/protocol/duplex_target.py \
+          python3 tests/protocol/duplex_target.py --host 0.0.0.0 --host6 :: \
             --ready-file "$root/target.port" --count-file "$root/count" \
             --report-file "$root/report" >"$root/target.log" 2>&1 &
           target_pid=$!
@@ -511,7 +557,7 @@ jobs:
           for stage in 1 32 128; do
             rm -f "$root/held"
             python3 tests/protocol/hold_connections.py --host 127.0.0.1 --port 23456 \
-              --target-host 127.0.0.1 --target-port "$target_port" \
+              --target-host 192.0.2.1 --target-port "$target_port" \
               --passfile "$root/pass" --count "$stage" \
               --ready-file "$root/held" --max-seconds 60 >"$root/held.log" 2>&1 &
             holder_pid=$!

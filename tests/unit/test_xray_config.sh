@@ -30,6 +30,30 @@ assert_contains "config has one direct outbound" '"protocol": "freedom"' "$confi
 assert_not_contains "config has no public API" '"api"' "$config"
 assert_not_contains "config has no stats service" '"stats"' "$config"
 
+# SPEC 3 and 7: the destination boundary. An authenticated client must not reach
+# the proxy host's own loopback, the private and CGNAT ranges behind it, or the
+# link-local range that carries cloud instance metadata at 169.254.169.254. The
+# expected ranges are written out here from the spec rather than read back from
+# the renderer, so a range dropped from the config cannot also vanish from the
+# oracle.
+assert_contains "denied destinations reach a blackhole outbound" \
+    '{"protocol": "blackhole", "settings": {}, "tag": "blocked"}' "$config"
+assert_contains "the deny rule routes to that outbound" \
+    '"outboundTag": "blocked"' "$config"
+assert_contains "a hostname target is matched on its resolved address" \
+    '"domainStrategy": "IPIfNonMatch"' "$config"
+# The installer extracts only the xray executable, so a geoip rule would name a
+# database that is never on disk.
+assert_not_contains "the boundary needs no geoip database" 'geoip' "$config"
+for _dc in 0.0.0.0/8 10.0.0.0/8 100.64.0.0/10 127.0.0.0/8 169.254.0.0/16 \
+    172.16.0.0/12 192.168.0.0/16 224.0.0.0/4 240.0.0.0/4 \
+    '::1/128' 'fc00::/7' 'fe80::/10'; do
+    assert_contains "the boundary denies $_dc" "\"$_dc\"" "$config"
+done
+# A range added without a decision is as much a change as one removed.
+assert_eq "the boundary denies exactly twelve ranges" 12 \
+    "$(printf '%s\n' "$config" | sed -n '/"ip": \[/,/\]/p' | grep -c '/')"
+
 printf '%s\n' "$config" >"$S5_TEST_ROOT/config.json"
 if python3 -m json.tool "$S5_TEST_ROOT/config.json" >/dev/null 2>&1; then
     t_ok
@@ -123,7 +147,11 @@ S5_CONFIG_TEST_STATUS=1
 s5_config_test() { return "$S5_CONFIG_TEST_STATUS"; }
 t_run s5_write_config_candidate
 assert_ne "config-test failure rejects the candidate" 0 "$T_STATUS"
-assert_file_absent "config-test failure leaves no candidate output" "$T_OUT"
+# The failure branch returns no path, so a survivor can only be found by the
+# writer's own candidate pattern. An unmatched glob stays literal, which is the
+# absent path the assertion then sees.
+set -- "$S5_SYSCONFDIR"/.s5new.*.json
+assert_file_absent "config-test failure leaves no candidate file" "$1"
 
 # The mixed contract is strict: a caller cannot accidentally downgrade auth or
 # enable UDP by changing the renderer inputs.

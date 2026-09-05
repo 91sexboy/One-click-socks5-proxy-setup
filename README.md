@@ -145,6 +145,13 @@ account used by the former 3proxy project.
   a VPN when confidentiality is required;
 - anyone holding the credentials who can reach the port can use the proxy, and
   the traffic appears to originate from the server;
+- the generated configuration blackholes twelve destination ranges, so an
+  authenticated client cannot use the tunnel to reach the server's own loopback,
+  the private and CGNAT ranges behind it, or the link-local range that carries
+  cloud instance metadata at `169.254.169.254`. Hostname destinations are matched
+  on the address they resolve to. Everything else is reached directly, and the
+  script still changes no firewall rule, so this is a boundary on the proxy and
+  not a substitute for one on the host;
 - accepting both SOCKS5 and HTTP on one port is a deliberate compatibility
   choice of this project;
 - UDP is disabled, so this is not a UDP relay and not a VPN;
@@ -153,6 +160,11 @@ account used by the former 3proxy project.
 - the script configures no firewall and no cloud network policy;
 - `show` prints the password only on a real TTY; redirection and pipes are
   refused;
+- `show` resolves the server's own public IPv4 with one bounded HTTPS request to
+  `icanhazip.com` so the card carries a usable URI. Only a strictly validated
+  public address is accepted, so a private, CGNAT or loopback answer is refused;
+  set `S5_SERVER_IPV4` to name the address yourself and skip the request. When
+  neither is available the card prints `SERVER_IPV4` and says to replace it;
 - install, update, restart and uninstall take an operation lock, and
   configuration replacement and failure recovery use atomic file flows;
 - a failed configuration test happens before a healthy service is stopped, and a
@@ -202,8 +214,10 @@ unverified.
 A successful Xray archive download is not evidence that a distribution's service
 lifecycle has been verified.
 
-The update path has no lifecycle job on either backend: re-running `install` over
-an existing installation is accepted but unverified.
+Re-running `install` over an existing installation is an in-place update, and
+both lifecycle jobs exercise one: the credentials are rotated, the new identity
+is required in both the config and the state, no transaction evidence may
+survive, and the namespace audit re-runs against the rotated passfile.
 
 The service contract uses the native init system: systemd on Ubuntu, Debian and
 CentOS, and OpenRC on Alpine 3.20+. The installer refuses unsupported init

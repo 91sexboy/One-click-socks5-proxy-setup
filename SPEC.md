@@ -46,6 +46,13 @@ A fresh install then asks for:
 The password is visible while typed. `show` displays credentials only to root on
 a real TTY. Redirected output never receives the credential card.
 
+The card names the server by its own public IPv4, resolved with one bounded
+HTTPS request to `icanhazip.com` whose body must be a single strictly validated
+public address; a private, CGNAT, loopback or documentation answer is refused.
+`S5_SERVER_IPV4` overrides the lookup with any canonical IPv4 and skips the
+request. With neither available the card prints the literal `SERVER_IPV4` and
+states that it has to be replaced.
+
 ## 3. Xray release and runtime
 
 The default release is the official stable Xray-core `v26.3.27`, tag commit
@@ -59,7 +66,8 @@ The default release is the official stable Xray-core `v26.3.27`, tag commit
 Official Linux assets are architecture-oriented static binaries. The target
 does not compile source code and does not receive Go, Git, GCC, Make, or headers.
 
-The generated configuration has exactly one inbound and one direct outbound:
+The generated configuration has exactly one inbound, one direct outbound, and one
+blackhole outbound carrying the destination boundary:
 
 ```json
 {
@@ -75,12 +83,49 @@ The generated configuration has exactly one inbound and one direct outbound:
     },
     "tag": "xray-mixed-in"
   }],
-  "outbounds": [{"protocol": "freedom", "settings": {}, "tag": "direct"}]
+  "outbounds": [
+    {"protocol": "freedom", "settings": {}, "tag": "direct"},
+    {"protocol": "blackhole", "settings": {}, "tag": "blocked"}
+  ],
+  "routing": {
+    "domainStrategy": "IPIfNonMatch",
+    "rules": [{
+      "type": "field",
+      "outboundTag": "blocked",
+      "ip": [
+        "0.0.0.0/8",
+        "10.0.0.0/8",
+        "100.64.0.0/10",
+        "127.0.0.0/8",
+        "169.254.0.0/16",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        "224.0.0.0/4",
+        "240.0.0.0/4",
+        "::1/128",
+        "fc00::/7",
+        "fe80::/10"
+      ]
+    }]
+  }
 }
 ```
 
-No API, stats, metrics, routing, GeoIP, GeoSite, TLS, REALITY, WebSocket, gRPC,
-XHTTP, or second public listener is configured.
+These twelve ranges are the destination boundary, and it is a release blocker for
+an authenticated client to reach any of them. They cover the proxy host's own
+loopback, the private and CGNAT ranges reachable behind it, and the link-local
+range that carries cloud instance metadata at `169.254.169.254`. The ranges are
+literal CIDRs rather than `geoip:private`, because the installer extracts only
+the `xray` executable and no GeoIP database is ever placed on disk.
+
+`domainStrategy` is `IPIfNonMatch`, so a hostname destination is resolved and
+matched against the same ranges; with the default `AsIs` an `ip` rule can match
+only a literal address, and any name resolving into a denied range would be
+routed direct. The match is made against the address resolved while routing.
+
+No API, stats, metrics, GeoIP, GeoSite, TLS, REALITY, WebSocket, gRPC, XHTTP, or
+second public listener is configured, and no routing rule exists beyond the one
+above.
 
 Before publication or restart, the candidate is checked with:
 
@@ -151,6 +196,7 @@ Required CI cases:
 - BIND rejected;
 - UDP ASSOCIATE rejected while `udp=false`;
 - IPv4 literal, hostname, and available IPv6 target paths recorded separately;
+- a destination inside the boundary refused even while a listener answers there;
 - one long-lived framed bidirectional tunnel;
 - idle then resume on the same socket;
 - one, 32, and 128 concurrent framed tunnels;
@@ -158,7 +204,9 @@ Required CI cases:
 
 Tests use a local target, monotonic deadlines, exact reads, unique connection IDs,
 nonces, and sequence numbers. A successful handshake is never treated as proof
-of a successful data plane.
+of a successful data plane. The local target sits on `192.0.2.1` and
+`2001:db8::1`, which the boundary of section 3 does not deny, so the boundary
+holds in full while the data-plane cases run.
 
 ## 7. Security requirements
 
@@ -168,6 +216,8 @@ of a successful data plane.
   unexpected members; install only the verified `xray` executable.
 - Set restrictive temporary-file permissions before writing credentials.
 - Reject JSON injection through strict input validation.
+- Deny the destination boundary of section 3 in the engine configuration, matching
+  hostname destinations on the address they resolve to.
 - Keep credentials out of argv, environment, xtrace, logs, journal, and CI output.
 - Fail closed on malformed state, external replacement, symlinks, changed account
   identity, unknown residual entries, or unobservable service state.
@@ -207,6 +257,7 @@ and a configuration error must exit 23 without entering a restart loop.
 
 No 3x-ui, panel, database, API, subscription, QR code, multi-node deployment,
 multiple-account UI, UDP enablement, TLS/REALITY, WebSocket, gRPC, XHTTP,
-GeoIP/GeoSite, complex routing, automatic firewall changes, cloud API changes,
+GeoIP/GeoSite, routing beyond the section 3 destination boundary, automatic
+firewall changes, cloud API changes,
 source compilation, custom Xray builds, legacy 3proxy migration, or unmeasured
 `MemoryMax`.

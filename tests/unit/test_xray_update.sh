@@ -100,6 +100,21 @@ s5_prompt_port() { return 0; }
 s5_install_new || { printf 'setup install failed\n' >&2; exit 1; }
 assert_eq "state records the installed port" 23456 "$(s5_state_get port)"
 
+# debian and el share the systemd unit path, so the init cross-check alone accepts
+# a state file written on the other family, and the family is what chooses the
+# package manager an update installs from. The recorded value was read into a
+# variable nothing ever compared.
+_upfamily=$S5_OS_FAMILY
+t_run s5_state_load
+assert_eq "the recorded family is accepted on the host that wrote it" \
+    0 "$T_STATUS"
+S5_OS_FAMILY=el
+t_run s5_state_load
+assert_ne "a state file from another OS family is refused" 0 "$T_STATUS"
+S5_OS_FAMILY=$_upfamily
+t_run s5_state_load
+assert_eq "the family check does not reject the recorded family" 0 "$T_STATUS"
+
 # The update reuses the installed binary rather than downloading again.
 s5_binary_ready() { return 0; }
 
@@ -166,5 +181,39 @@ assert_eq "the old config is restored" \
 assert_eq "the old state is restored" \
     "$_upstate" "$(sha256sum "$S5_STATE" | awk '{print $1}')"
 assert_file_absent "the transaction evidence is removed" "$S5_TXNDIR"
+
+# Uninstall had no unit coverage at all, and it removed the unit, config, binary,
+# account and state before checking that the directories were empty. A leftover
+# from an interrupted update therefore aborted it after the destructive half, and
+# the re-run reported success through the state.missing short-circuit while the
+# namespace, including a transaction copy of the old config, survived.
+s5_precheck() { return 0; }
+s5_wait_stopped() { return 0; }
+s5_service_disable() { return 0; }
+s5_account_remove() { S5_CREATED_USER=0; S5_CREATED_GROUP=0; return 0; }
+mkdir -p "$S5_TXNDIR"
+printf '{}\n' >"$S5_TXNDIR/old.config.json"
+printf 'engine\txray\n' >"$S5_TXNDIR/old.state"
+chmod 0600 "$S5_TXNDIR/old.config.json" "$S5_TXNDIR/old.state"
+: >"$S5_SYSCONFDIR/.s5new.leftover.json"
+printf 'y\n' >"$S5_TEST_ROOT/answers.uninstall"
+T_OUT=$(s5_cmd_uninstall <"$S5_TEST_ROOT/answers.uninstall" 2>&1) &&
+    T_STATUS=0 || T_STATUS=$?
+assert_eq "uninstall completes despite an interrupted update's leftovers" \
+    0 "$T_STATUS"
+assert_file_absent "uninstall removes the config directory" "$S5_SYSCONFDIR"
+assert_file_absent "uninstall removes the state directory" "$S5_STATEDIR"
+assert_file_absent "uninstall removes the install prefix" "$S5_PREFIX"
+
+# A second run must not call an empty state file success while residue survives.
+mkdir -p "$S5_STATEDIR"
+: >"$S5_STATEDIR/.s5state.residue"
+T_OUT=$(s5_cmd_uninstall <"$S5_TEST_ROOT/answers.uninstall" 2>&1) &&
+    T_STATUS=0 || T_STATUS=$?
+assert_ne "a missing state file with residue is not success" 0 "$T_STATUS"
+rm -rf "$S5_STATEDIR"
+T_OUT=$(s5_cmd_uninstall <"$S5_TEST_ROOT/answers.uninstall" 2>&1) &&
+    T_STATUS=0 || T_STATUS=$?
+assert_eq "a clean namespace reports nothing installed" 0 "$T_STATUS"
 
 t_summary

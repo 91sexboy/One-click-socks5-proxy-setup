@@ -13,25 +13,37 @@ import threading
 MAGIC = b"X5"
 HEADER = 2 + 1 + 4 + 4 + 8
 STOP = threading.Event()
-COUNT_LOCK = threading.Lock()
+# Reentrant: write_metrics takes this lock itself, and the accept path calls it
+# with the lock already held so the count it flushes is the one it just bumped.
+COUNT_LOCK = threading.RLock()
 ACCEPTED = 0
 FRAMES = 0
 FAMILIES = []
 
 
 def write_text(path, text):
-    tmp = path + ".tmp"
+    # The temporary is unique per call: two writers sharing one name truncate each
+    # other's bytes, and the loser of the rename has no source left to rename.
+    tmp = "%s.%s.tmp" % (path, os.urandom(6).hex())
     with open(tmp, "w", encoding="ascii") as handle:
         handle.write(text)
     os.replace(tmp, path)
 
 
 def write_metrics(count_path, report_path):
-    data = {"accepted": ACCEPTED, "frames": FRAMES, "families": list(FAMILIES)}
-    if count_path:
-        write_text(count_path, str(ACCEPTED) + "\n")
-    if report_path:
-        write_text(report_path, json.dumps(data, sort_keys=True) + "\n")
+    """Flush the counters, serialised against every other writer of them.
+
+    main leaves its accept loop one select timeout after STOP while workers linger
+    up to their socket timeout, so its last flush overlaps theirs. The gate
+    reconciles its own frame counts against this report, and a spliced one fails
+    the run on a confusing error instead of the real outcome.
+    """
+    with COUNT_LOCK:
+        data = {"accepted": ACCEPTED, "frames": FRAMES, "families": list(FAMILIES)}
+        if count_path:
+            write_text(count_path, str(ACCEPTED) + "\n")
+        if report_path:
+            write_text(report_path, json.dumps(data, sort_keys=True) + "\n")
 
 
 def read_exact(sock, size):
@@ -136,12 +148,11 @@ def serve_connection(sock, count_path, report_path):
         sock.close()
         # Flushed here as well as on accept so the report is readable, and final
         # for every closed tunnel, while the target is still running.
-        with COUNT_LOCK:
-            write_metrics(count_path, report_path)
+        write_metrics(count_path, report_path)
 
 
-def make_listeners(host, port):
-    """Bind one port on IPv4 and, where ::1 is usable, on IPv6 as well.
+def make_listeners(host, port, host6):
+    """Bind one port on IPv4 and, where host6 is usable, on IPv6 as well.
 
     SPEC 6 records the IPv4-literal, hostname and IPv6 target paths separately,
     and all three have to arrive at the same target port.
@@ -159,7 +170,7 @@ def make_listeners(host, port):
             v6 = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
             v6.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             v6.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
-            v6.bind(("::1", bound))
+            v6.bind((host6, bound))
             v6.listen(256)
         except OSError:
             if v6 is not None:
@@ -198,6 +209,7 @@ def stop_handler(signum, frame_info):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--host6", default="::1")
     parser.add_argument("--port", type=int, default=0)
     parser.add_argument("--ready-file", required=True)
     parser.add_argument("--count-file", required=True)
@@ -205,7 +217,7 @@ def main():
     args = parser.parse_args()
     signal.signal(signal.SIGTERM, stop_handler)
     signal.signal(signal.SIGINT, stop_handler)
-    listeners, bound = make_listeners(args.host, args.port)
+    listeners, bound = make_listeners(args.host, args.port, args.host6)
     write_text(args.ready_file, str(bound) + "\n")
     write_metrics(args.count_file, args.report_file)
     try:

@@ -105,6 +105,47 @@ rm -f "$S5_TEST_ROOT/active"
 s5_service_start
 assert_ne "OpenRC inactive start remains failure" 0 "$?"
 
+# s5_service_active must fail closed like the systemd arm, where only exit 3
+# proves the service is down. 16 is OpenRC's `inactive`, which supervise-daemon
+# leaves behind while the supervised process is still alive and still holding the
+# port, and 1 is a plain rc-service error; treating either as stopped let
+# uninstall delete the config, binary and account from under a live proxy.
+cat >"$S5_TEST_ROOT/bin/rc-service" <<'RC'
+#!/bin/sh
+if [ "$2" = status ]; then exit "$(cat "$S5_TEST_ROOT/statuscode")"; fi
+exit "$(cat "$S5_TEST_ROOT/actioncode")"
+RC
+chmod 755 "$S5_TEST_ROOT/bin/rc-service"
+printf '0\n' >"$S5_TEST_ROOT/actioncode"
+for _sacase in 0:0 8:0 3:1 16:2 1:2 32:2 4:2; do
+    printf '%s\n' "${_sacase%%:*}" >"$S5_TEST_ROOT/statuscode"
+    s5_service_active
+    assert_eq "rc-service status ${_sacase%%:*} means ${_sacase#*:}" \
+        "${_sacase#*:}" "$?"
+done
+
+# s5_wait_stopped may only report success on a state that proves the process is
+# gone. sleep is stubbed because the real wait is fifteen one-second polls.
+sleep() { :; }
+printf '3\n' >"$S5_TEST_ROOT/statuscode"
+t_run s5_wait_stopped
+assert_eq "a stopped service satisfies the stop wait" 0 "$T_STATUS"
+printf '16\n' >"$S5_TEST_ROOT/statuscode"
+t_run s5_wait_stopped
+assert_ne "an inactive service does not satisfy the stop wait" 0 "$T_STATUS"
+unset -f sleep
+
+# The "nonzero but already active" fallback is sound for start and wrong for
+# restart: an old instance that survived a failed stop also looks active, so a
+# restart whose stop phase failed used to report success.
+printf '0\n' >"$S5_TEST_ROOT/statuscode"
+printf '7\n' >"$S5_TEST_ROOT/actioncode"
+t_run s5_service_restart
+assert_ne "a failed restart is a failure even while active" 0 "$T_STATUS"
+t_run s5_service_start
+assert_eq "a start against an active service still succeeds" 0 "$T_STATUS"
+printf '0\n' >"$S5_TEST_ROOT/actioncode"
+
 # supervise-daemon records the supervised process itself in child_pid, and the
 # pidfile holds the supervisor. Alpine CI evidence: child_pid=378, pidfile=377,
 # ps shows 377 supervising 378, and the kernel attributes the listener to 378.
@@ -136,5 +177,18 @@ assert_ne "OpenRC listener refuses a supervisor-owned endpoint" 0 "$T_STATUS"
 rm -f "$S5_OPENRC_OPTION_DIR/child_pid"
 t_run s5_listener_state
 assert_eq "OpenRC missing child_pid reports absent" 1 "$T_STATUS"
+
+# A failed init-script write must not report success. The OpenRC arm ended in
+# `return $?` after an assignment, and an assignment always succeeds, so the
+# caller recorded S5_CREATED_UNIT for a file that was never created and then ran
+# sha256sum on a missing path. This case comes last: it leaves s5_atomic_write
+# stubbed for the remainder of the file.
+s5_atomic_write() { return 1; }
+t_run s5_write_unit
+assert_ne "a failed OpenRC artifact write is a failure" 0 "$T_STATUS"
+S5_INIT=systemd
+t_run s5_write_unit
+assert_ne "a failed systemd unit write is a failure" 0 "$T_STATUS"
+S5_INIT=openrc
 
 t_summary

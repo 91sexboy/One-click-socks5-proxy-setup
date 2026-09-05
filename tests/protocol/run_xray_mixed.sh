@@ -12,6 +12,14 @@ TARGET_PORT=${TARGET_PORT:?TARGET_PORT must be set}
 REPORT=${REPORT:?REPORT must be set}
 OUT=${OUT:?OUT must be set}
 PROBE=${PROBE:-$(dirname "$0")/xray_mixed.py}
+# SPEC 6's local target sits outside the SPEC 3 destination boundary, so the
+# boundary holds in full while the data-plane cases run. The denied host is where
+# the same target also listens, which is what makes a bypass visible.
+TARGET_HOST=${TARGET_HOST:-192.0.2.1}
+TARGET_HOSTNAME=${TARGET_HOSTNAME:-xray-target.test}
+TARGET_IPV6=${TARGET_IPV6:-2001:db8::1}
+DENIED_HOST=${DENIED_HOST:-127.0.0.1}
+DENIED_HOSTNAME=${DENIED_HOSTNAME:-denied-target.test}
 
 [ -f "$PASSFILE" ] || exit 2
 [ ! -L "$PASSFILE" ] || exit 2
@@ -19,7 +27,9 @@ PROBE=${PROBE:-$(dirname "$0")/xray_mixed.py}
 mkdir -p "$OUT" || exit 2
 
 if ! python3 "$PROBE" --host 127.0.0.1 --port "$PORT" \
-    --target-host 127.0.0.1 --target-port "$TARGET_PORT" \
+    --target-host "$TARGET_HOST" --target-port "$TARGET_PORT" \
+    --target-hostname "$TARGET_HOSTNAME" --target-ipv6 "$TARGET_IPV6" \
+    --denied-host "$DENIED_HOST" --denied-hostname "$DENIED_HOSTNAME" \
     --passfile "$PASSFILE" --stats-file "$OUT/stats" >"$OUT/probe.log" 2>&1; then
     cat "$OUT/probe.log" >&2
     exit 1
@@ -29,6 +39,8 @@ cat "$OUT/probe.log"
 grep -q '^mixed_target_ipv4=ok$' "$OUT/probe.log" || exit 1
 grep -q '^mixed_target_hostname=ok$' "$OUT/probe.log" || exit 1
 grep -qE '^mixed_target_ipv6=(ok|unavailable)$' "$OUT/probe.log" || exit 1
+grep -q '^mixed_denied_destination=ok$' "$OUT/probe.log" || exit 1
+grep -q '^mixed_denied_hostname=ok$' "$OUT/probe.log" || exit 1
 
 # The target flushes its counters as each tunnel closes, so the two sides
 # converge shortly after the probe exits rather than only at shutdown.

@@ -36,13 +36,13 @@ def main():
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
     user, password = xray_mixed.read_passfile(args.passfile)
+    proxy = xray_mixed.Endpoint(args.host, args.port)
+    target = xray_mixed.Endpoint(args.target_host, args.target_port)
+    creds = xray_mixed.Credentials(user, password)
     socks = []
     try:
         for index in range(args.count):
-            sock = xray_mixed.socks5_connect(
-                args.host, args.port, args.target_host, args.target_port,
-                user, password, "ipv4",
-            )
+            sock = xray_mixed.socks5_connect(proxy, target, creds, "ipv4")
             cid = 5000 + index
             nonce = struct.pack("!Q", cid * 104729 + 17)
             sock.sendall(xray_mixed.make_frame(ord("H"), cid, 0, nonce, b"hello"))

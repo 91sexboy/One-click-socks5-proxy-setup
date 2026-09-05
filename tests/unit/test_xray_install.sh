@@ -16,6 +16,14 @@ export S5_LIB_ONLY S5_ASSUME_ROOT S5_SKIP_OWNERSHIP S5_OSRELEASE
 . "$ROOT/socks5.sh"
 
 S5_LANG=en
+# socks5.sh initialises its own globals, so the platform facts have to be set
+# after sourcing. Set before it, they were reset to empty and s5_state_write
+# recorded an empty arch, family and init -- a state file that fails the schema
+# check the product itself enforces, which made every later s5_state_load in this
+# file refuse for that reason rather than the one under test.
+S5_ARCHNAME=amd64
+S5_OS_FAMILY=debian
+S5_INIT=systemd
 S5_PORT=23456
 S5_USERNAME=alice
 S5_PASSWORD='Secret_123~x'
@@ -114,6 +122,8 @@ status=$?
 assert_eq "new Xray installation completes" 0 "$status"
 assert_file_exists "Xray config exists" "$S5_CFG"
 assert_file_exists "Xray state exists" "$S5_STATE"
+# S5_UNIT comes from the sourced socks5.sh; it is not a typo for S5_INIT.
+# shellcheck disable=SC2153
 assert_file_exists "Xray unit exists" "$S5_UNIT"
 assert_eq "state engine marker" xray "$(s5_state_get engine)"
 assert_eq "state protocol marker" mixed "$(s5_state_get protocol)"
@@ -124,10 +134,17 @@ assert_mode "config is group-readable only" 640 "$S5_CFG"
 assert_mode "state is private" 600 "$S5_STATE"
 
 # A changed config makes status fail closed rather than reporting a healthy
-# installation from stale state.
+# installation from stale state. The status is its own value: the state file is
+# intact and the config is what changed, and every command reports that as
+# config.external rather than as a corrupt state file.
 printf 'external change\n' >"$S5_CFG"
 t_run s5_state_load
-assert_ne "external config change is rejected" 0 "$T_STATUS"
+assert_eq "an externally changed config has its own status" 2 "$T_STATUS"
+t_run s5_report_state_load 2
+assert_contains "the diagnosis names the config, not the state" \
+    'changed externally' "$T_OUT"
+assert_not_contains "the diagnosis does not call the state invalid" \
+    'invalid state file' "$T_OUT"
 
 # Old namespace remains untouched.
 mkdir -p "$S5_TEST_ROOT/etc/socks5-manager"
@@ -162,5 +179,84 @@ assert_file_absent "cleanup removes its own state temporary" \
 assert_file_absent "cleanup removes its own binary temporary" \
     "$S5_PREFIX/.xray.qqq111"
 assert_file_exists "cleanup leaves the published config alone" "$S5_CFG"
+
+# Unquoted patterns were expanded against the caller's working directory instead
+# of reaching the inner glob, so a matching dotfile anywhere in the cwd replaced
+# the pattern with a literal name the inner glob could never find in the target
+# directory. The decoy cwd is deliberately not the directory being cleaned: when
+# the two coincide the bug is harmless, which is what makes it easy to miss.
+: >"$S5_SYSCONFDIR/.s5tmp.cwdcase"
+mkdir -p "$S5_TEST_ROOT/decoycwd"
+: >"$S5_TEST_ROOT/decoycwd/.s5tmp.decoy"
+_cwdsave=$PWD
+cd "$S5_TEST_ROOT/decoycwd" || exit 1
+s5_cleanup_own_temps "$S5_SYSCONFDIR"
+cd "$_cwdsave" || exit 1
+assert_file_absent "cleanup ignores a matching name in the caller's cwd" \
+    "$S5_SYSCONFDIR/.s5tmp.cwdcase"
+
+# supervise-daemon's runtime files belong to whatever service is running.
+# Declining the update prompt, or interrupting the port prompt, used to delete
+# them for an installation this run never touched, leaving a healthy Alpine proxy
+# unstoppable and unobservable.
+_initsave=$S5_INIT
+S5_INIT=openrc
+mkdir -p "$S5_OPENRC_OPTION_DIR" "$(dirname "$S5_PIDFILE")"
+: >"$S5_PIDFILE"
+: >"$S5_OPENRC_OPTION_DIR/child_pid"
+S5_SERVICE_STARTED=0
+S5_CREATED_UNIT=0
+s5_cleanup
+assert_file_exists "cleanup keeps a foreign OpenRC pidfile" "$S5_PIDFILE"
+assert_file_exists "cleanup keeps a foreign child_pid" \
+    "$S5_OPENRC_OPTION_DIR/child_pid"
+S5_SERVICE_STARTED=1
+s5_cleanup
+assert_file_absent "cleanup removes the runtime files it owns" "$S5_PIDFILE"
+S5_INIT=$_initsave
+S5_SERVICE_STARTED=0
+
+# /run is tmpfs, so nothing else ever clears a lock left behind by a killed run.
+# Only s5_cmd_install installed traps, so one interrupt during status, show,
+# restart or uninstall wedged every later command -- uninstall included -- until
+# the host rebooted. The owner token records boot_id and pid precisely so a dead
+# owner can be told from a live one.
+_lkboot=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || uname -n)
+# Called directly rather than through t_run: t_run runs its command in a command
+# substitution, so S5_LOCK_HELD would be set in a subshell and lost here.
+S5_LOCK_HELD=0
+s5_lock_acquire
+assert_eq "the lock is acquired when free" 0 "$?"
+s5_lock_acquire
+assert_eq "acquiring a lock this process holds is a no-op" 0 "$?"
+s5_lock_release
+assert_file_absent "releasing removes the lock directory" "$S5_LOCKDIR"
+
+# A live owner still wins: this test's own pid is alive by definition.
+mkdir -p "$S5_LOCKDIR"
+printf '%s\n%s\n' "$_lkboot" "$$" >"$S5_LOCK_OWNER"
+S5_LOCK_HELD=0
+s5_lock_acquire 2>/dev/null
+assert_ne "a lock held by a live owner is refused" 0 "$?"
+assert_file_exists "a live owner's lock is left in place" "$S5_LOCK_OWNER"
+
+# A dead owner on this boot is reclaimed. The pid is reaped first, so it is gone.
+(exit 0) &
+_lkdead=$!
+wait "$_lkdead" 2>/dev/null || true
+printf '%s\n%s\n' "$_lkboot" "$_lkdead" >"$S5_LOCK_OWNER"
+S5_LOCK_HELD=0
+s5_lock_acquire 2>/dev/null
+assert_eq "a lock left by a dead owner is reclaimed" 0 "$?"
+s5_lock_release
+
+# A lock recorded against a different boot cannot have a live owner.
+mkdir -p "$S5_LOCKDIR"
+printf '%s\n%s\n' "boot-from-a-previous-life" "$$" >"$S5_LOCK_OWNER"
+S5_LOCK_HELD=0
+s5_lock_acquire 2>/dev/null
+assert_eq "a lock from a previous boot is reclaimed" 0 "$?"
+s5_lock_release
+assert_file_absent "the reclaimed lock is released cleanly" "$S5_LOCKDIR"
 
 t_summary

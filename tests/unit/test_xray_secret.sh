@@ -86,4 +86,41 @@ else
     t_bad "launcher must chmod the config before writing it (chmod at ${_chmod_at:-none}, write at ${_write_at:-none})"
 fi
 
+# SPEC 7 keeps credentials out of the environment. A plain assignment preserves
+# an inherited export attribute, so a caller that exported any of these names
+# would have the entered value pushed into every child environment. The username
+# counts: it is half the auth pair. The probe reports a count rather than the
+# matched line, because a failure message must not publish the credential it is
+# checking for.
+_probe=$S5_TEST_ROOT/exportprobe.sh
+cat >"$_probe" <<'EOF'
+_probesrc=$1
+_probeans=$2
+S5_LIB_ONLY=1
+S5_ASSUME_ROOT=1
+S5_SKIP_OWNERSHIP=1
+. "$_probesrc"
+S5_LANG=en
+{
+    s5_prompt_username >/dev/null 2>&1 || exit 3
+    s5_prompt_password >/dev/null 2>&1 || exit 3
+} <"$_probeans"
+env | grep -cE '^(S5_PASSWORD|S5_SECRET|S5_USERNAME)=' || true
+EOF
+_answers=$S5_TEST_ROOT/answers.credentials
+printf 'chosenuser\nExported_secret~1\n' >"$_answers"
+
+# shellcheck disable=SC2086
+t_run env S5_PASSWORD=placeholder S5_SECRET=placeholder S5_USERNAME=placeholder \
+    ${S5_TEST_SHELL:-sh} "$_probe" "$ROOT/socks5.sh" "$_answers"
+assert_eq "the prompts succeed when the caller exported the names" 0 "$T_STATUS"
+assert_eq "an exported credential name leaves nothing in the environment" \
+    0 "$T_OUT"
+
+# shellcheck disable=SC2086
+t_run env -u S5_PASSWORD -u S5_SECRET -u S5_USERNAME \
+    ${S5_TEST_SHELL:-sh} "$_probe" "$ROOT/socks5.sh" "$_answers"
+assert_eq "the prompts succeed with a clean environment" 0 "$T_STATUS"
+assert_eq "a clean caller leaves nothing in the environment" 0 "$T_OUT"
+
 t_summary

@@ -1,29 +1,43 @@
 #!/usr/bin/env python3
-"""Self-test for the duplex target's frame writer.
+"""Self-test for the duplex target's frame writer and metrics writer.
 
-A frame is deliberately sent in two pieces so the client has to reassemble it.
-Two threads write the same connection -- the echo path and the unsolicited
+Both halves are the same class of bug: two threads touching one shared thing with
+no mutual exclusion.
+
+The frame writer sends each frame in two pieces so the client has to reassemble
+it. Two threads write the same connection -- the echo path and the unsolicited
 server-frame sender -- so those two pieces must not interleave. When they do, the
 client reads a spliced stream: with a small frame the split lands inside the cid
 field, so the header still parses and the mismatch surfaces as a wrong cid and
 nonce rather than as a bad magic.
 
-The interleaving here is forced rather than raced: the first writer holds a fixed
-gap between its two pieces and the second writer starts inside that gap. A writer
-that serialises correctly makes the second wait, so this is deterministic in both
-directions and never deadlocks.
+The metrics writer is what the protocol gate reconciles its own frame counters
+against. Its report is written to a temporary and renamed into place, so two
+concurrent writers must neither share that temporary -- one truncates the other's
+bytes and renames it away, which surfaces as a spliced report or a
+FileNotFoundError from the rename -- nor read the counters at the same time.
+
+Every interleaving here is forced rather than raced. A writer holds a fixed gap
+in the middle of its work and the second writer starts inside that gap: for
+frames, between the two pieces; for metrics, between a temporary file's write and
+its close. A writer that serialises correctly makes the second wait, so this is
+deterministic in both directions and never deadlocks.
 """
 
+import json
 import os
+import shutil
 import socket
 import struct
 import sys
+import tempfile
 import threading
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import duplex_target  # noqa: E402
 
+GAP = 0.25
 FAILURES = []
 CHECKS = []
 
@@ -52,6 +66,109 @@ class GappedSocket:
             time.sleep(self._gap)
 
 
+class GappedOpen:
+    """Stands in for open() inside duplex_target, gapping one thread only.
+
+    The gap sits between a temporary file's write and its close, so a second
+    writer let in during the gap truncates and renames that temporary before the
+    first writer has flushed or renamed it.
+    """
+
+    def __init__(self, gap):
+        self._gap = gap
+        self.slow_ident = None
+        self.inside = threading.Event()
+
+    def __call__(self, path, mode="r", **kwargs):
+        handle = open(path, mode, **kwargs)
+        if threading.get_ident() != self.slow_ident:
+            return handle
+        return GappedHandle(handle, self._gap, self.inside)
+
+
+class GappedHandle:
+    """A file handle that signals, then holds the gap, before it closes."""
+
+    def __init__(self, handle, gap, inside):
+        self._handle = handle
+        self._gap = gap
+        self._inside = inside
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        self._inside.set()
+        time.sleep(self._gap)
+        return self._handle.__exit__(*exc_info)
+
+    def write(self, text):
+        return self._handle.write(text)
+
+
+def run_paired(slow_call, fast_call):
+    """Run two writers so the second runs entirely inside the first's gap.
+
+    The fast writer starts on the signal the gapped handle raises from inside the
+    slow writer's temporary file, so the overlap is forced rather than raced. A
+    writer that serialises makes the fast one wait for the lock instead, which the
+    finish order records.
+
+    Returns the order the two finished in, what each raised, and any that hung.
+    """
+    gapped = GappedOpen(GAP)
+    order = []
+    order_lock = threading.Lock()
+    errors = {}
+
+    def record(label, call):
+        try:
+            call()
+        except Exception as exc:  # whatever a writer raises is a reported check
+            errors[label] = "%s: %s" % (type(exc).__name__, exc)
+        with order_lock:
+            order.append(label)
+
+    def slow():
+        gapped.slow_ident = threading.get_ident()
+        try:
+            record("slow", slow_call)
+        finally:
+            gapped.inside.set()
+
+    def fast():
+        gapped.inside.wait(10)
+        record("fast", fast_call)
+
+    duplex_target.open = gapped
+    threads = [
+        threading.Thread(target=slow, name="slow", daemon=True),
+        threading.Thread(target=fast, name="fast", daemon=True),
+    ]
+    try:
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(30)
+    finally:
+        del duplex_target.open
+    return order, errors, [thread.name for thread in threads if thread.is_alive()]
+
+
+def locked_metrics(count_path, report_path):
+    with duplex_target.COUNT_LOCK:
+        duplex_target.write_metrics(count_path, report_path)
+
+
+def slurp(path):
+    """The file's text, or None when no writer managed to rename one into place."""
+    try:
+        with open(path, encoding="ascii") as handle:
+            return handle.read()
+    except OSError:
+        return None
+
+
 def read_frames(sock, expected, deadline):
     frames = []
     buffered = b""
@@ -78,7 +195,7 @@ def read_frames(sock, expected, deadline):
     return frames, None
 
 
-def main():
+def frame_writer_checks():
     reader, writer_sock = socket.socketpair()
     try:
         writer = duplex_target.FrameWriter(GappedSocket(writer_sock, 0.05))
@@ -106,6 +223,82 @@ def main():
     finally:
         reader.close()
         writer_sock.close()
+
+
+def text_writer_checks(scratch):
+    path = os.path.join(scratch, "shared")
+    # The gapped writer takes the shorter text, so a flush that lands on the other
+    # writer's bytes leaves a tail behind and the splice is visible in the file.
+    slow_text = "A" * 40 + "\n"
+    fast_text = "B" * 200 + "\n"
+    # Both writers race for one path here, so the finish order carries no meaning:
+    # write_text takes no lock. What matters is that neither corrupts the other.
+    _, errors, hung = run_paired(
+        lambda: duplex_target.write_text(path, slow_text),
+        lambda: duplex_target.write_text(path, fast_text),
+    )
+    check("both file writers finished", not hung)
+    check("neither file writer raised", not errors)
+    for label in sorted(errors):
+        print("# %s writer: %s" % (label, errors[label]))
+    written = slurp(path)
+    whole = written in (slow_text, fast_text)
+    check("the file holds one whole text and no splice", whole)
+    if not whole:
+        print("# file holds %r" % ((written or "")[:64],))
+
+
+def metrics_writer_checks(scratch):
+    duplex_target.ACCEPTED = 7
+    duplex_target.FRAMES = 11
+    del duplex_target.FAMILIES[:]
+    duplex_target.FAMILIES.extend(["ipv4", "ipv6"])
+    count_path = os.path.join(scratch, "count")
+    report_path = os.path.join(scratch, "report")
+    order, errors, hung = run_paired(
+        lambda: duplex_target.write_metrics(count_path, report_path),
+        lambda: duplex_target.write_metrics(count_path, report_path),
+    )
+    check("both metrics writers finished", not hung)
+    check("neither metrics writer raised", not errors)
+    for label in sorted(errors):
+        print("# %s metrics writer: %s" % (label, errors[label]))
+    check("the second metrics write waits for the first", order == ["slow", "fast"])
+    if order != ["slow", "fast"]:
+        print("# metrics writers finished in the order %s" % ",".join(order))
+
+    report = None
+    problem = None
+    try:
+        report = json.loads(slurp(report_path) or "")
+    except ValueError as exc:
+        problem = str(exc)
+    check("the report is readable JSON", problem is None)
+    if problem:
+        print("# %s" % problem)
+    check("the report holds every counter",
+          report == {"accepted": 7, "frames": 11, "families": ["ipv4", "ipv6"]})
+    check("the count file holds the accepted count", slurp(count_path) == "7\n")
+
+    # Last, and on a daemon thread: a metrics lock that is not reentrant leaves
+    # this writer blocked while it still holds the lock, which would wedge every
+    # call after it rather than fail one check.
+    holder = threading.Thread(
+        target=locked_metrics, args=(count_path, report_path), daemon=True
+    )
+    holder.start()
+    holder.join(5)
+    check("write_metrics runs with the count lock already held", not holder.is_alive())
+
+
+def main():
+    frame_writer_checks()
+    scratch = tempfile.mkdtemp(prefix="s5target.")
+    try:
+        text_writer_checks(scratch)
+        metrics_writer_checks(scratch)
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
 
     print("TESTS %d %d" % (len(CHECKS) - len(FAILURES), len(FAILURES)))
     return 1 if FAILURES else 0

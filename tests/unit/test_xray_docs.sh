@@ -150,6 +150,15 @@ assert_contains "the workflow guards its own timeout coverage" \
 
 assert_contains "shellcheck is pinned, not taken from the distro" \
     'shellcheck-v0.10.0' "$ci_text"
+# The asset job verified the archive but never the binary it extracts, and it is
+# the only job that runs on arm64, so a wrong arm64 binary pin broke every arm64
+# install while CI stayed green. Anchor on the comparisons themselves.
+assert_contains "the asset job compares the extracted binary size" \
+    '= "$XRAY_BINARY_SIZE"' "$ci_text"
+assert_contains "the asset job compares the extracted binary digest" \
+    '= "$XRAY_BINARY_SHA"' "$ci_text"
+assert_contains "the asset job checks the ELF architecture" \
+    '"$XRAY_ELF_ARCH"' "$ci_text"
 assert_contains "the shellcheck download is checksum-verified" \
     'sha256sum -c' "$ci_text"
 assert_contains "the shellcheck pin carries its digest" \
@@ -279,6 +288,14 @@ assert_contains "the lifecycle job kills the service to prove recovery" \
     'sudo kill -9 "$crash_pid"' "$ci_text"
 assert_contains "the lifecycle job proves the exit-23 restart guard" \
     'ExecMainStatus' "$ci_text"
+# OpenRC has no exit-status guard, so the Alpine gate takes the status from the
+# supervised binary and proves the respawn guard separately. Both assertions
+# anchor on the comparison rather than on a variable name or a message, because
+# an oracle a deleted guard survives is not an oracle.
+assert_contains "the Alpine gate requires the configuration error to exit 23" \
+    'if test "$broken_status" != 23' "$ci_text"
+assert_contains "the Alpine gate requires no respawn after a configuration error" \
+    'if test "$respawn_after" != "$respawn_before"' "$ci_text"
 for _doc in README.md README.zh-CN.md SPEC.md; do
     _doctext=$(cat "$ROOT/$_doc")
     if grep -qi 'alpine' "$ROOT/$_doc" && grep -qi 'openrc' "$ROOT/$_doc"; then
@@ -289,5 +306,64 @@ for _doc in README.md README.zh-CN.md SPEC.md; do
         t_bad "$_doc documents the OpenRC backend"
     fi
 done
+
+# show makes an outbound request to name the server in the credential card, so
+# the endpoint is a documented fact on every surface. Anchored on the constant:
+# changing the endpoint in socks5.sh, or dropping the placeholder a card falls
+# back to, fails here rather than in the field.
+case "$S5_ADDR_ENDPOINT" in
+https://*) t_ok ;;
+*) t_bad "the card address endpoint is HTTPS: $S5_ADDR_ENDPOINT" ;;
+esac
+_addrhost=${S5_ADDR_ENDPOINT#https://}
+for _doc in README.md README.zh-CN.md SPEC.md; do
+    _addrtext=$(cat "$ROOT/$_doc")
+    assert_contains "$_doc names the card address endpoint" \
+        "$_addrhost" "$_addrtext"
+    assert_contains "$_doc documents the card address placeholder" \
+        SERVER_IPV4 "$_addrtext"
+done
+
+# SPEC 3 inlines the destination boundary and section 7 makes denying it a
+# requirement, so those ranges are hand-copied exactly like the release digests
+# are. Comparing the sorted sets both ways catches a range dropped from the
+# config and a range the spec claims but the config does not deny.
+S5_PORT=23456
+S5_USERNAME=testuser
+S5_PASSWORD='TestPassword_123~x'
+_dcextract() {
+    sed -n '/"ip": \[/,/\]/p' | sed -n 's/.*"\([0-9a-f:.]*\/[0-9]*\)".*/\1/p' | sort
+}
+_dcrendered=$(s5_config_render | _dcextract)
+_dcspec=$(_dcextract <"$ROOT/SPEC.md")
+_dcengine=$(_dcextract <"$ROOT/tests/protocol/start_engine.sh")
+assert_ne "the renderer denies some range at all" '' "$_dcrendered"
+assert_eq "SPEC 3 names exactly the ranges the renderer denies" \
+    "$_dcrendered" "$_dcspec"
+# start_engine.sh stays independent of socks5.sh so a renderer defect cannot mask
+# a protocol defect, which makes its copy of the boundary another hand-copied fact.
+assert_eq "the protocol launcher denies exactly the same ranges" \
+    "$_dcrendered" "$_dcengine"
+assert_contains "the protocol launcher resolves hostname destinations" \
+    '"domainStrategy": "IPIfNonMatch"' "$(cat "$ROOT/tests/protocol/start_engine.sh")"
+for _dcdoc in README.md README.zh-CN.md; do
+    assert_contains "$_dcdoc states the destination boundary" \
+        '169.254.169.254' "$(cat "$ROOT/$_dcdoc")"
+done
+
+# SPEC 6's local target has to be put on the host before any job drives traffic
+# through the proxy, or the permitted address would not exist and the denied
+# hostname would not resolve. Three jobs run the mixed gate and the memory job
+# holds tunnels through the same target, so all four need that step.
+assert_eq "every job driving the proxy adds the test target addresses" 4 \
+    "$(grep -c 'add-test-target-addresses.sh' "$ROOT/.github/workflows/ci.yml")"
+assert_eq "the mixed gate runs on all three backends" 3 \
+    "$(grep -c 'run_xray_mixed.sh' "$ROOT/.github/workflows/ci.yml")"
+assert_eq "the memory job drives the permitted target" 1 \
+    "$(grep -c 'target-host 192.0.2.1' "$ROOT/.github/workflows/ci.yml")"
+# A target bound only to the permitted address would make the boundary case pass
+# because nothing was listening at the denied one.
+assert_eq "the duplex target answers at the denied address too" 4 \
+    "$(grep -c 'duplex_target.py --host 0.0.0.0 --host6 ::' "$ROOT/.github/workflows/ci.yml")"
 
 t_summary

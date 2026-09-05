@@ -94,6 +94,10 @@ esac
 ENGINE="$WORK/xray"
 : >"$WORK/config.json" || fail 'cannot create Xray config'
 chmod 0600 "$WORK/config.json" || fail 'cannot protect Xray config'
+# The routing block is the destination boundary of SPEC 3, hand-copied here the
+# way the release digests are: this launcher stays independent of socks5.sh so a
+# renderer defect cannot mask a protocol defect. test_xray_docs.sh asserts that
+# the ranges below and the ones s5_config_render emits are the same set.
 cat >"$WORK/config.json" <<CONFIG
 {
   "log": {"loglevel": "warning", "access": "none", "error": ""},
@@ -104,7 +108,31 @@ cat >"$WORK/config.json" <<CONFIG
     "settings": {"auth": "password", "accounts": [{"user": "$user", "pass": "$pass"}], "udp": false},
     "tag": "xray-mixed-in"
   }],
-  "outbounds": [{"protocol": "freedom", "settings": {}, "tag": "direct"}]
+  "outbounds": [
+    {"protocol": "freedom", "settings": {}, "tag": "direct"},
+    {"protocol": "blackhole", "settings": {}, "tag": "blocked"}
+  ],
+  "routing": {
+    "domainStrategy": "IPIfNonMatch",
+    "rules": [{
+      "type": "field",
+      "outboundTag": "blocked",
+      "ip": [
+        "0.0.0.0/8",
+        "10.0.0.0/8",
+        "100.64.0.0/10",
+        "127.0.0.0/8",
+        "169.254.0.0/16",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        "224.0.0.0/4",
+        "240.0.0.0/4",
+        "::1/128",
+        "fc00::/7",
+        "fe80::/10"
+      ]
+    }]
+  }
 }
 CONFIG
 "$ENGINE" run -test -c "$WORK/config.json" >"$WORK/config-test.log" 2>&1 || {
