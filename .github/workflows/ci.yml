@@ -341,13 +341,17 @@ jobs:
             # TEMPORARY: the installer rolls back and stops the service on
             # failure, so readiness state must be sampled while install runs.
             (
+              set +e
               while :; do
                 printf "=== sample ===\n"
-                find /run/openrc -maxdepth 4 2>&1 | head -40
-                cat /run/openrc/options/xray-socks5/child_pid 2>&1
-                cat /run/xray-socks5.pid 2>&1
+                find /run/openrc/options /run/openrc/daemons -maxdepth 3 2>&1
+                for f in /run/openrc/options/xray-socks5/* \
+                  /run/openrc/daemons/xray-socks5/* /run/xray-socks5.pid; do
+                  printf "[%s]\n" "$f"
+                  cat "$f" 2>&1
+                done
                 ss -H -ltnp 2>&1 | head -10
-                ps -o pid,ppid,comm 2>&1 | head -20
+                ps -o pid,ppid,comm 2>&1 | head -25
                 sleep 0.5
               done
             ) >"$work/sampler.log" 2>&1 &
@@ -356,7 +360,7 @@ jobs:
               kill "$sampler" 2>/dev/null || true
               cat "$work/install.log"
               printf "\n===== readiness samples (tail) =====\n"
-              tail -160 "$work/sampler.log" || true
+              tail -80 "$work/sampler.log" || true
               exit 1
             fi
             kill "$sampler" 2>/dev/null || true
