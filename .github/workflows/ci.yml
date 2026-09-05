@@ -334,6 +334,9 @@ jobs:
               -o /tmp/xray-ci-probe.zip \
               https://github.com/XTLS/Xray-core/releases/download/v26.3.27/Xray-linux-64.zip
             test "$(wc -c </tmp/xray-ci-probe.zip | tr -d '[:space:]')" = 21136402
+            unzip -Z1 /tmp/xray-ci-probe.zip
+            unzip -Z -v /tmp/xray-ci-probe.zip | grep -c 'Unix file attributes'
+            file /tmp/xray-ci-probe.zip
             rm -f /tmp/xray-ci-probe.zip
             mkdir -p /run/openrc
             touch /run/openrc/softlevel
