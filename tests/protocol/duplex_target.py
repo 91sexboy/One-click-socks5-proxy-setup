@@ -66,10 +66,25 @@ def parse_frame(data):
     return kind, cid, seq, body[9:17], body[17:]
 
 
-def write_frame(sock, data):
-    split = max(1, len(data) // 3)
-    sock.sendall(data[:split])
-    sock.sendall(data[split:])
+class FrameWriter:
+    """Serialises frame writes for one connection.
+
+    Each frame goes out in two pieces so the client has to reassemble it. Two
+    threads write a connection -- the echo path and the server-frame sender -- so
+    without this lock their pieces interleave and the client parses a spliced
+    header. With a small frame the split lands inside the cid field, so the
+    corruption surfaces as a wrong cid and nonce rather than as a bad magic.
+    """
+
+    def __init__(self, sock):
+        self._sock = sock
+        self._lock = threading.Lock()
+
+    def send(self, data):
+        split = max(1, len(data) // 3)
+        with self._lock:
+            self._sock.sendall(data[:split])
+            self._sock.sendall(data[split:])
 
 
 def serve_connection(sock, count_path, report_path):
@@ -83,12 +98,13 @@ def serve_connection(sock, count_path, report_path):
         if kind != ord("H"):
             return
         sender_stop = threading.Event()
+        writer = FrameWriter(sock)
 
         def send_server_frames():
             server_seq = 0
             while not sender_stop.wait(0.25):
                 try:
-                    write_frame(sock, frame(ord("S"), cid, server_seq, nonce, b"server-" + str(server_seq).encode("ascii")))
+                    writer.send(frame(ord("S"), cid, server_seq, nonce, b"server-" + str(server_seq).encode("ascii")))
                     server_seq += 1
                 except OSError:
                     return
@@ -109,7 +125,7 @@ def serve_connection(sock, count_path, report_path):
                 return
             with COUNT_LOCK:
                 FRAMES += 1
-            write_frame(sock, frame(ord("E"), cid, frame_seq, nonce, frame_payload))
+            writer.send(frame(ord("E"), cid, frame_seq, nonce, frame_payload))
     except (EOFError, OSError, ValueError):
         return
     finally:
