@@ -229,7 +229,7 @@ assert_contains "Alpine gate proves the listener returns after a crash" \
 assert_contains "Alpine gate rejects a broken configuration" \
     'printf "{broken\n" >/etc/xray-socks5/config.json' "$ci_text"
 assert_contains "Alpine gate audits the installed namespace" \
-    'post_install_audit.sh / "$work/pass" openrc' "$ci_text"
+    'post_install_audit.sh / "$work/pass.update" openrc' "$ci_text"
 assert_contains "Alpine gate runs the independent protocol probe" \
     'sh tests/protocol/run_xray_mixed.sh' "$ci_text"
 assert_contains "Alpine gate keeps credentials out of argv" \
@@ -244,7 +244,7 @@ assert_contains "Alpine gate proves no packages are installed outside install" \
 # in place and then assert the installer's owner and mode survived.
 assert_contains "Alpine gate restores the config in place" \
     'cat "$work/good.json" >/etc/xray-socks5/config.json' "$ci_text"
-assert_eq "the config owner and mode are asserted on both gates and after a restore" 3 \
+assert_eq "the config owner and mode are asserted after install, update and restore" 5 \
     "$(printf '%s\n' "$ci_text" | grep -c 'root:xray-socks5 640')"
 
 # The Alpine lifecycle is one single-quoted argument to docker run, so any
@@ -254,6 +254,16 @@ assert_eq "the config owner and mode are asserted on both gates and after a rest
 openrc_block=$(sed -n '/^  openrc-integration:/,/^  memory-report:/p' "$ROOT/.github/workflows/ci.yml")
 assert_eq "the Alpine lifecycle block has no stray apostrophe" 2 \
     "$(printf '%s\n' "$openrc_block" | tr -cd "'" | wc -c | tr -d '[:space:]')"
+
+# SPEC 5 calls re-running install an in-place update, and that path had no gate
+# on either backend. Both lifecycle jobs now run one and check the new identity
+# landed in the config and the state with no transaction evidence left over.
+assert_eq "both lifecycle gates run an in-place update" 2 \
+    "$(printf '%s\n' "$ci_text" | grep -c 'chmod 0600 "\$work/answers.update"')"
+assert_eq "both gates require the updated identity in the state" 2 \
+    "$(printf '%s\n' "$ci_text" | grep -c 'username\[\[:space:\]\]+ciuser2')"
+assert_eq "both gates require no transaction evidence after an update" 2 \
+    "$(printf '%s\n' "$ci_text" | grep -c 'test ! -e /var/lib/xray-socks5/transaction')"
 
 # The audit is shared between backends, so it must not hard-code systemd paths.
 audit_text=$(cat "$ROOT/tests/protocol/post_install_audit.sh")

@@ -204,7 +204,7 @@ jobs:
           work=$(mktemp -d)
           printf 'lifecycle: workdir-ready\n'
           cleanup() {
-            rm -f "$work/pass" "$work/answers" "$work/target.log" "$work/install.log" "$work/status.log" "$work/restart.log" "$work/uninstall.log"
+            rm -f "$work/pass" "$work/answers" "$work/target.log" "$work/install.log" "$work/status.log" "$work/restart.log" "$work/uninstall.log" "$work/pass.update" "$work/answers.update" "$work/update.log"
             sudo systemctl stop xray-socks5.service 2>/dev/null || true
             sudo rm -rf /etc/xray-socks5 /var/lib/xray-socks5 /usr/local/libexec/xray-socks5 /etc/systemd/system/xray-socks5.service
             sudo userdel xray-socks5 2>/dev/null || true
@@ -301,6 +301,22 @@ jobs:
             sh tests/protocol/run_xray_mixed.sh
           sudo sh tests/protocol/post_install_audit.sh / "$work/pass" systemd
           printf 'lifecycle: audit-ok\n'
+          # SPEC 5: re-running install over an existing installation is an
+          # in-place update. Rotate the credentials, keep the port, and require
+          # the new identity in both the config and the state.
+          printf '2\ny\n23456\nciuser2\nCISecret_456~y\n' >"$work/answers.update"
+          printf 'ciuser2\nCISecret_456~y\n' >"$work/pass.update"
+          chmod 0600 "$work/answers.update" "$work/pass.update"
+          sudo sh .github/scripts/run-socks5.sh install \
+            "$work/answers.update" "$work/update.log" "$work/pass.update"
+          printf 'lifecycle: update-ok\n'
+          sudo grep -q 'ciuser2' /etc/xray-socks5/config.json
+          sudo grep -qE '^username[[:space:]]+ciuser2$' /var/lib/xray-socks5/state
+          test ! -e /var/lib/xray-socks5/transaction
+          test "$(sudo stat -c '%U:%G %a' /etc/xray-socks5/config.json)" = "root:xray-socks5 640"
+          sudo systemctl is-active --quiet xray-socks5.service
+          sudo sh tests/protocol/post_install_audit.sh / "$work/pass.update" systemd
+          printf 'lifecycle: update-audit-ok\n'
           printf 'lifecycle: uninstall-preflight\n'
           sudo systemctl is-active xray-socks5.service || true
           sudo systemctl show xray-socks5.service -p MainPID -p ExecMainStatus -p NRestarts
@@ -314,6 +330,7 @@ jobs:
           test ! -e /usr/local/libexec/xray-socks5
           if sudo grep -q 'CISecret_123~x' "$work/install.log"; then exit 1; else rc=$?; test "$rc" = 1 || exit 1; fi
           if sudo grep -q 'CISecret_123~x' "$work/status.log"; then exit 1; else rc=$?; test "$rc" = 1 || exit 1; fi
+          if sudo grep -q 'CISecret_456~y' "$work/update.log"; then exit 1; else rc=$?; test "$rc" = 1 || exit 1; fi
 
 
   openrc-integration:
@@ -346,6 +363,21 @@ jobs:
             test "$(stat -c "%U:%G %a" /etc/init.d/xray-socks5)" = "root:root 755"
             test "$(stat -c "%U:%G %a" /etc/xray-socks5/config.json)" = "root:xray-socks5 640"
             test "$(stat -c "%U:%G %a" /var/lib/xray-socks5/state)" = "root:root 600"
+            # SPEC 5: re-running install over an existing installation is an
+            # in-place update. Rotate the credentials, keep the port, and require
+            # the new identity in both the config and the state.
+            printf "2\ny\n23456\nciuser2\nCISecret_456~y\n" >"$work/answers.update"
+            printf "ciuser2\nCISecret_456~y\n" >"$work/pass.update"
+            chmod 0600 "$work/answers.update" "$work/pass.update"
+            if ! sh socks5.sh install <"$work/answers.update" >"$work/update.log" 2>&1; then
+              cat "$work/update.log"
+              exit 1
+            fi
+            grep -q "ciuser2" /etc/xray-socks5/config.json
+            grep -qE "^username[[:space:]]+ciuser2$" /var/lib/xray-socks5/state
+            test ! -e /var/lib/xray-socks5/transaction
+            test "$(stat -c "%U:%G %a" /etc/xray-socks5/config.json)" = "root:xray-socks5 640"
+            rc-service xray-socks5 status
             pkgs_before=$(apk info | sort | sha256sum)
             printf "2\n" | sh socks5.sh status >"$work/status.log"
             printf "2\n" | sh socks5.sh restart
@@ -394,14 +426,14 @@ jobs:
             test "$(stat -c "%U:%G %a" /etc/xray-socks5/config.json)" = "root:xray-socks5 640"
             rc-service xray-socks5 restart
             rc-service xray-socks5 status
-            sh tests/protocol/post_install_audit.sh / "$work/pass" openrc
+            sh tests/protocol/post_install_audit.sh / "$work/pass.update" openrc
             # SPEC 10: credentials reach neither argv nor the service environment.
             live_pid=$(cat /run/openrc/options/xray-socks5/child_pid)
-            if tr "\0" "\n" <"/proc/$live_pid/cmdline" | grep -q "CISecret_123~x"; then
+            if tr "\0" "\n" <"/proc/$live_pid/cmdline" | grep -qE "CISecret_123~x|CISecret_456~y"; then
               printf "credential appeared in argv\n" >&2
               exit 1
             fi
-            if tr "\0" "\n" <"/proc/$live_pid/environ" | grep -q "CISecret_123~x"; then
+            if tr "\0" "\n" <"/proc/$live_pid/environ" | grep -qE "CISecret_123~x|CISecret_456~y"; then
               printf "credential appeared in the service environment\n" >&2
               exit 1
             fi
@@ -411,7 +443,7 @@ jobs:
               --count-file "$work/count" --report-file "$work/report" >"$work/target.log" 2>&1 &
             for n in $(seq 1 50); do test -s "$work/target.port" && break; sleep 0.2; done
             test -s "$work/target.port"
-            PASSFILE="$work/pass" PORT=23456 TARGET_PORT="$(cat "$work/target.port")" \
+            PASSFILE="$work/pass.update" PORT=23456 TARGET_PORT="$(cat "$work/target.port")" \
               REPORT="$work/report" OUT="$work/probe" \
               sh tests/protocol/run_xray_mixed.sh
             printf "2\ny\n" | sh socks5.sh uninstall
@@ -422,6 +454,7 @@ jobs:
             test ! -e /etc/init.d/xray-socks5
             test ! -e /run/xray-socks5.pid
             ! grep -q "CISecret_123~x" "$work/install.log"
+            ! grep -q "CISecret_456~y" "$work/update.log"
           '
 
   memory-report:

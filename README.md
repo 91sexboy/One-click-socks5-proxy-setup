@@ -190,14 +190,20 @@ The platform check in `socks5.sh` accepts:
 - Debian 12+ on amd64 and arm64;
 - CentOS Stream 9+ on amd64 and arm64.
 
-The full service lifecycle — install, status, restart, crash recovery, protocol,
-uninstall — is exercised in CI on **Ubuntu 24.04 amd64 only**. Alpine 3.20+ uses
-OpenRC and has a dedicated lifecycle matrix; arm64 has archive and binary
-verification but no lifecycle job. Ubuntu 22.04, Ubuntu 20.04, Debian 12 and
-CentOS Stream have no lifecycle job, so they are accepted but unverified.
+The full service lifecycle — install, status, restart, crash recovery,
+configuration-error containment, namespace audit, protocol, uninstall — is
+exercised in CI on **Ubuntu 24.04 amd64** and on **Alpine 3.20 and 3.24 amd64**,
+each through its own init backend. The Alpine job installs only OpenRC up front,
+so the installer has to provision its own runtime tools there. arm64 has archive
+and binary verification but no lifecycle job. Ubuntu 22.04, Ubuntu 20.04,
+Debian 12 and CentOS Stream have no lifecycle job, so they are accepted but
+unverified.
 
 A successful Xray archive download is not evidence that a distribution's service
 lifecycle has been verified.
+
+The update path has no lifecycle job on either backend: re-running `install` over
+an existing installation is accepted but unverified.
 
 The service contract uses the native init system: systemd on Ubuntu, Debian and
 CentOS, and OpenRC on Alpine 3.20+. The installer refuses unsupported init

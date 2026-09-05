@@ -154,12 +154,15 @@ xray run -c /etc/xray-socks5/config.json
 - CentOS Stream 9+ amd64/arm64；
 - Alpine Linux 3.20+ amd64/arm64。
 
-接受不等于有证据。完整服务生命周期（安装、status、restart、崩溃恢复、协议、卸载）
-只在 **Ubuntu 24.04 amd64** 上由 CI 验证。Alpine 3.20+ 使用 OpenRC，并由独立的
-lifecycle matrix 验证；arm64 只有 archive 与二进制校验，没有生命周期 job。Ubuntu 22.04、
+接受不等于有证据。完整服务生命周期（安装、status、restart、崩溃恢复、配置错误遏制、
+命名空间审计、协议、卸载）由 CI 在 **Ubuntu 24.04 amd64** 和 **Alpine 3.20 / 3.24 amd64**
+上分别通过各自的 init 后端验证。Alpine job 只预装 OpenRC，因此安装器必须自行 provision
+运行时工具。arm64 只有 archive 与二进制校验，没有生命周期 job。Ubuntu 22.04、
 Ubuntu 20.04、Debian 12 和 CentOS Stream 都没有生命周期 job，属于被接受但未验证。
 
 不能仅凭 Xray archive 下载成功就声称某个发行版的服务生命周期已验证。
+
+更新路径在两个后端上都没有生命周期 job：对已有安装重新执行 `install` 属于被接受但未验证。
 
 服务契约使用系统原生 init：Ubuntu、Debian 和 CentOS 使用 systemd，Alpine 3.20+ 使用
 OpenRC。对于不支持的 init 系统，`socks5.sh` 会拒绝安装。
