@@ -329,7 +329,12 @@ jobs:
           docker run --rm --privileged -v "$PWD:/src" -w /src "${{ matrix.image }}" sh -c '
             set -eu
             apk add --no-cache openrc python3 >/dev/null
-            mkdir -p /run/openrc
+            curl --version
+            curl -fsSL --proto '=https' --proto-redir '=https' --max-time 30 \
+              -o /tmp/xray-ci-probe.zip \
+              https://github.com/XTLS/Xray-core/releases/download/v26.3.27/Xray-linux-64.zip
+            test "$(wc -c </tmp/xray-ci-probe.zip | tr -d '[:space:]')" = 21136402
+            rm -f /tmp/xray-ci-probe.zip
             touch /run/openrc/softlevel
             rc-status -a >/dev/null 2>&1 || true
             umask 077
