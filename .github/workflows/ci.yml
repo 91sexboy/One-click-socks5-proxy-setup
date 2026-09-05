@@ -328,16 +328,7 @@ jobs:
         run: |
           docker run --rm --privileged -v "$PWD:/src" -w /src "${{ matrix.image }}" sh -c '
             set -eu
-            apk add --no-cache openrc python3 curl unzip file >/dev/null
-            curl --version
-            curl -fsSL --proto '=https' --proto-redir '=https' --max-time 30 \
-              -o /tmp/xray-ci-probe.zip \
-              https://github.com/XTLS/Xray-core/releases/download/v26.3.27/Xray-linux-64.zip
-            test "$(wc -c </tmp/xray-ci-probe.zip | tr -d '[:space:]')" = 21136402
-            unzip -Z1 /tmp/xray-ci-probe.zip
-            unzip -Z -v /tmp/xray-ci-probe.zip | grep -c 'Unix file attributes'
-            file /tmp/xray-ci-probe.zip
-            rm -f /tmp/xray-ci-probe.zip
+            apk add --no-cache openrc >/dev/null
             mkdir -p /run/openrc
             touch /run/openrc/softlevel
             rc-status -a >/dev/null 2>&1 || true
@@ -351,11 +342,14 @@ jobs:
               cat "$work/install.log"
               exit 1
             fi
+            test "$(stat -c "%U:%G %a" /etc/init.d/xray-socks5)" = "root:root 755"
+            pkgs_before=$(apk info | sort | sha256sum)
             printf "2\n" | sh socks5.sh status >"$work/status.log"
             printf "2\n" | sh socks5.sh restart
             rc-service xray-socks5 status
             grep -q "mixed" "$work/status.log"
             printf "2\ny\n" | sh socks5.sh uninstall
+            test "$(apk info | sort | sha256sum)" = "$pkgs_before"
             test ! -e /etc/xray-socks5
             test ! -e /var/lib/xray-socks5
             test ! -e /usr/local/libexec/xray-socks5
