@@ -328,7 +328,7 @@ jobs:
         run: |
           docker run --rm --privileged -v "$PWD:/src" -w /src "${{ matrix.image }}" sh -c '
             set -eu
-            apk add --no-cache openrc python3 curl >/dev/null
+            apk add --no-cache openrc python3 curl unzip file >/dev/null
             curl --version
             curl -fsSL --proto '=https' --proto-redir '=https' --max-time 30 \
               -o /tmp/xray-ci-probe.zip \
