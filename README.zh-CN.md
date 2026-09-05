@@ -177,7 +177,7 @@ OpenRC。对于不支持的 init 系统，`socks5.sh` 会拒绝安装。
 - systemd restart、`SIGKILL` 后的崩溃恢复，以及 `RestartPreventExitStatus=23` 对配置错误重启循环的阻断；
 - Xray 进程 `VmRSS`、服务的 systemd `MemoryCurrent` 与 `MemoryPeak`，以及 restart count。
 
-尚未公布内存预算。内存 job 目前只记录原始证据：Xray 进程 `VmRSS`、systemd `MemoryCurrent` 与 `MemoryPeak`，以及 restart count 为零。OOM 计数、启动时间，以及 idle/1/32/128 连接各自的峰值尚未记录，也不设置未经测量的 `MemoryMax`。
+尚未公布内存预算。内存 job 只记录原始证据：Xray 进程 `VmRSS`、systemd `MemoryCurrent` 与 `MemoryPeak`、每个阶段前重置的 cgroup 峰值、idle/1/32/128 连接各自的峰值、来自 systemd 单调时间戳的启动时间、OOM 计数，以及 restart count 为零。不设置未经测量的 `MemoryMax`，且这些证据仅在 systemd 上采集。
 
 公布任何数字都必须同时给出 Xray 版本、平台、配置、连接数、持续时间和产生该数字的 CI run；不能从 archive 大小推断 RSS，也不能把面板部署的内存当成 Xray-only 内存。
 

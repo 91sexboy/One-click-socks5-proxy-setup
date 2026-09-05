@@ -221,8 +221,10 @@ locally. CI verifies:
 
 No memory budget is published. The memory job records raw evidence only: the
 Xray process `VmRSS`, the service's systemd `MemoryCurrent` and `MemoryPeak`,
-and a restart count of zero. OOM counters, startup time and separate
-idle/1/32/128-connection peaks are not recorded yet, and no `MemoryMax` is set.
+the cgroup peak reset before each stage, separate idle/1/32/128-connection
+peaks, startup time from systemd's monotonic timestamps, OOM counters and a
+restart count of zero. No `MemoryMax` is set, and this evidence is collected on
+systemd only.
 
 A figure will appear here only together with the Xray version, platform,
 configuration, connection count, duration and the CI run that produced it. RSS
