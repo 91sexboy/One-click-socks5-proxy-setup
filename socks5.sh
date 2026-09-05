@@ -590,11 +590,19 @@ s5_config_extract() {
     return 0
 }
 
+s5_tmp_base() {
+    if [ -d /var/tmp ] && [ ! -L /var/tmp ] && [ -w /var/tmp ]; then
+        printf '/var/tmp'
+    else
+        printf '/tmp'
+    fi
+}
+
 s5_download_engine() {
     s5_asset_select || return 1
     if [ ! -d "$S5_PREFIX" ]; then S5_CREATED_PREFIX=1; fi
     s5_mkdir_private "$S5_PREFIX" || return 1
-    [ -n "$S5_WORKDIR" ] || S5_WORKDIR=$(mktemp -d "${S5_ROOTDIR:-/var/tmp}/xray-socks5-download.XXXXXX") || return 1
+    [ -n "$S5_WORKDIR" ] || S5_WORKDIR=$(mktemp -d "$(s5_tmp_base)/xray-socks5-download.XXXXXX") || return 1
     _sdezip=$S5_WORKDIR/$S5_ASSET_NAME
     if [ -n "${S5_TEST_ASSET_PATH:-}" ]; then
         cp "$S5_TEST_ASSET_PATH" "$_sdezip" || return 1
