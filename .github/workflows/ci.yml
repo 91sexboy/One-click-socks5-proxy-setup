@@ -335,6 +335,7 @@ jobs:
               https://github.com/XTLS/Xray-core/releases/download/v26.3.27/Xray-linux-64.zip
             test "$(wc -c </tmp/xray-ci-probe.zip | tr -d '[:space:]')" = 21136402
             rm -f /tmp/xray-ci-probe.zip
+            mkdir -p /run/openrc
             touch /run/openrc/softlevel
             rc-status -a >/dev/null 2>&1 || true
             umask 077
