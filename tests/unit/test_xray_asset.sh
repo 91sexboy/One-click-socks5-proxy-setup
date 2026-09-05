@@ -45,7 +45,7 @@ source=$(cat "$ROOT/socks5.sh")
 assert_not_contains "asset URL is not latest" '/releases/latest' "$source"
 assert_not_contains "asset URL is not dev-latest" 'dev-latest' "$source"
 assert_contains "asset download is HTTPS-only" "--proto '=https'" "$source"
-assert_contains "asset download is bounded" '--max-time' "$source"
+assert_contains "asset download is bounded" '--max-filesize' "$source"
 
 # The production service command uses Xray's config-test and explicit config path.
 assert_contains "config test uses Xray run test" 'run -test -c' "$source"

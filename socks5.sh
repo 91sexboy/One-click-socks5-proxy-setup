@@ -600,25 +600,11 @@ s5_download_engine() {
         cp "$S5_TEST_ASSET_PATH" "$_sdezip" || return 1
     else
         s5_msg_print asset.download "$S5_ASSET_NAME" >&2
-        # curl --proto '=https' is invoked by the bounded Python reader below.
-        python3 -c 'import subprocess
-import sys
-out, limit = sys.argv[1], int(sys.argv[2])
-url = sys.argv[3]
-proc = subprocess.Popen(["curl", "-fsSL", "--proto", "=https", "--proto-redir", "=https", "--max-time", "120", url], stdout=subprocess.PIPE)
-total = 0
-with open(out, "wb") as handle:
-    while True:
-        chunk = proc.stdout.read(65536)
-        if not chunk:
-            break
-        total += len(chunk)
-        if total <= limit:
-            handle.write(chunk)
-rc = proc.wait()
-if rc != 0 or total > limit:
-    sys.exit(1)
-' "$_sdezip" "$((S5_ASSET_SIZE + 1))" "$S5_XRAY_BASE/$S5_ASSET_NAME" || {
+        # curl enforces the hard upper bound while streaming; the exact byte
+        # count below remains the independent acceptance check.
+        curl -fsSL --proto '=https' --proto-redir '=https' \
+            --max-time 120 --max-filesize "$((S5_ASSET_SIZE + 1))" \
+            -o "$_sdezip" "$S5_XRAY_BASE/$S5_ASSET_NAME" || {
             s5_msg_err asset.invalid download
             return 1
         }
