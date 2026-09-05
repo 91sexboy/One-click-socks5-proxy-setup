@@ -298,7 +298,7 @@ jobs:
           PASSFILE="$work/pass" PORT=23456 TARGET_PORT="$target_port" \
             REPORT="$work/report" OUT="$work/probe" \
             sh tests/protocol/run_xray_mixed.sh
-          sudo sh tests/protocol/post_install_audit.sh / "$work/pass"
+          sudo sh tests/protocol/post_install_audit.sh / "$work/pass" systemd
           printf 'lifecycle: audit-ok\n'
           printf 'lifecycle: uninstall-preflight\n'
           sudo systemctl is-active xray-socks5.service || true
@@ -348,6 +348,53 @@ jobs:
             printf "2\n" | sh socks5.sh restart
             rc-service xray-socks5 status
             grep -q "mixed" "$work/status.log"
+            # SPEC 5: OpenRC recovers a crash with the listener returning, and a
+            # configuration error does not enter an automatic restart loop.
+            crash_pid=$(cat /run/openrc/options/xray-socks5/child_pid)
+            test "$crash_pid" -gt 0
+            kill -9 "$crash_pid"
+            new_pid=0
+            for n in $(seq 1 60); do
+              new_pid=$(cat /run/openrc/options/xray-socks5/child_pid 2>/dev/null || printf 0)
+              if test "$new_pid" != "$crash_pid" && test "$new_pid" -gt 0; then break; fi
+              sleep 1
+            done
+            test "$new_pid" != "$crash_pid"
+            test "$new_pid" -gt 0
+            for n in $(seq 1 60); do
+              ss -H -ltnp 2>/dev/null | grep -q "pid=$new_pid," && break
+              sleep 1
+            done
+            ss -H -ltnp | grep -q "pid=$new_pid,"
+            cp /etc/xray-socks5/config.json "$work/good.json"
+            printf "{broken\n" >/etc/xray-socks5/config.json
+            rc-service xray-socks5 restart || true
+            for n in $(seq 1 30); do
+              rc-service xray-socks5 status >/dev/null 2>&1 || break
+              sleep 1
+            done
+            if rc-service xray-socks5 status >/dev/null 2>&1; then exit 1; fi
+            for n in $(seq 1 12); do
+              if ss -H -ltn 2>/dev/null | grep -q ":23456 "; then exit 1; fi
+              sleep 1
+            done
+            cp "$work/good.json" /etc/xray-socks5/config.json
+            rc-service xray-socks5 restart
+            rc-service xray-socks5 status
+            sh tests/protocol/post_install_audit.sh / "$work/pass" openrc
+            # SPEC 10: credentials reach neither argv nor the service environment.
+            live_pid=$(cat /run/openrc/options/xray-socks5/child_pid)
+            if tr "\0" "\n" <"/proc/$live_pid/cmdline" | grep -q "CISecret_123~x"; then exit 1; fi
+            if tr "\0" "\n" <"/proc/$live_pid/environ" | grep -q "CISecret_123~x"; then exit 1; fi
+            # SPEC 6: independent SOCKS5 and HTTP verification, separate from the
+            # data-plane check the installer runs itself.
+            python3 tests/protocol/duplex_target.py --ready-file "$work/target.port" \
+              --count-file "$work/count" --report-file "$work/report" >"$work/target.log" 2>&1 &
+            for n in $(seq 1 50); do test -s "$work/target.port" && break; sleep 0.2; done
+            test -s "$work/target.port"
+            PASSFILE="$work/pass" PORT=23456 TARGET_PORT="$(cat "$work/target.port")" \
+              REPORT="$work/report" OUT="$work/probe" \
+              sh tests/protocol/run_xray_mixed.sh
             printf "2\ny\n" | sh socks5.sh uninstall
             test "$(apk info | sort | sha256sum)" = "$pkgs_before"
             test ! -e /etc/xray-socks5

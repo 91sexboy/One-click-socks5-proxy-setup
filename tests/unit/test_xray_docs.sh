@@ -216,6 +216,35 @@ assert_contains "OpenRC lifecycle job covers Alpine" 'openrc-integration' "$ci_t
 assert_contains "OpenRC lifecycle job tests both supported versions" 'alpine:3.20' "$ci_text"
 assert_contains "OpenRC lifecycle job tests current Alpine" 'alpine:3.24' "$ci_text"
 
+# The Alpine gate must prove the same SPEC guarantees as the systemd one rather
+# than only reaching a healthy install, and it must exercise the installer's own
+# provisioning: pre-installing the runtime tools once hid a real BusyBox defect.
+assert_contains "Alpine gate installs only OpenRC up front" \
+    'apk add --no-cache openrc >/dev/null' "$ci_text"
+assert_not_contains "Alpine gate does not pre-install archive tools" \
+    'apk add --no-cache openrc python3' "$ci_text"
+assert_contains "Alpine gate recovers a killed Xray" 'kill -9 "$crash_pid"' "$ci_text"
+assert_contains "Alpine gate proves the listener returns after a crash" \
+    'grep -q "pid=$new_pid,"' "$ci_text"
+assert_contains "Alpine gate rejects a broken configuration" \
+    'printf "{broken\n" >/etc/xray-socks5/config.json' "$ci_text"
+assert_contains "Alpine gate audits the installed namespace" \
+    'post_install_audit.sh / "$work/pass" openrc' "$ci_text"
+assert_contains "Alpine gate runs the independent protocol probe" \
+    'sh tests/protocol/run_xray_mixed.sh' "$ci_text"
+assert_contains "Alpine gate keeps credentials out of argv" \
+    '/proc/$live_pid/cmdline' "$ci_text"
+assert_contains "Alpine gate keeps credentials out of the environment" \
+    '/proc/$live_pid/environ' "$ci_text"
+assert_contains "Alpine gate proves no packages are installed outside install" \
+    'test "$(apk info | sort | sha256sum)" = "$pkgs_before"' "$ci_text"
+
+# The audit is shared between backends, so it must not hard-code systemd paths.
+audit_text=$(cat "$ROOT/tests/protocol/post_install_audit.sh")
+assert_contains "the audit accepts an init backend" 'INIT=${3:-systemd}' "$audit_text"
+assert_contains "the audit knows the OpenRC artifact" \
+    'unit="$ROOT/etc/init.d/xray-socks5"' "$audit_text"
+
 # SPEC 5 crash recovery and the exit-23 guard are documented claims, so each
 # needs a step behind it. The backend-specific lifecycle checks must remain
 # consistent with the target platform; systemd uses its native guard and Alpine
