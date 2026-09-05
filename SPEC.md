@@ -208,6 +208,13 @@ of a successful data plane. The local target sits on `192.0.2.1` and
 `2001:db8::1`, which the boundary of section 3 does not deny, so the boundary
 holds in full while the data-plane cases run.
 
+Install and restart run their own verification on the host. Every address it can
+reach without changing the host's networking is inside the boundary, so the
+payload round trip is proven here in CI and not there; what it proves instead is
+that the listener speaks both protocols, that both discriminate on the
+credential, and that this host's boundary refuses a destination that is listening
+and answering.
+
 ## 7. Security requirements
 
 - Download only over HTTPS with bounded response size.

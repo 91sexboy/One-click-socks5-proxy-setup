@@ -1161,6 +1161,13 @@ s5_state_load() {
 }
 
 s5_verify_dataplane() {
+    # What this can prove on the operator's host is bounded by the destination
+    # boundary the config carries: every address reachable without changing the
+    # host's own networking is inside it, so a payload round trip through the
+    # proxy is not available here. It is proven in CI on both backends instead.
+    # What runs here is what only this host can answer: that its listener speaks
+    # both protocols, that both discriminate on the credential, and that its
+    # boundary actually refuses a destination that is listening and answering.
     if [ "${S5_TEST_MODE:-0}" = 1 ]; then
         if [ -n "${S5_PROTOCOL_VERIFY:-}" ]; then
             "$S5_PROTOCOL_VERIFY" "$S5_PORT"
@@ -1217,52 +1224,89 @@ def exact(conn, n):
         data += part
     return data
 
-def socks():
+class BoundaryBypassed(Exception):
+    pass
+
+def direct_echo():
+    """The positive control for the boundary case below.
+
+    Without it a refusal through the proxy could just as well mean nothing was
+    listening at the destination.
+    """
+    conn = socket.create_connection(("127.0.0.1", target.port), 5)
+    try:
+        conn.settimeout(5)
+        conn.sendall(b"direct-echo")
+        if exact(conn, 11) != b"direct-echo": raise RuntimeError("target echo")
+    finally: conn.close()
+
+def socks_auth_then_refused():
+    """RFC 1929 with the real credential is accepted, and the destination inside
+    the boundary is then refused even though it is listening and answering."""
     conn = socket.create_connection(("127.0.0.1", port), 5)
     try:
+        conn.settimeout(5)
         conn.sendall(b"\x05\x01\x02")
         if exact(conn, 2) != b"\x05\x02": raise RuntimeError("auth method")
         ub, pb = user.encode(), password.encode()
         conn.sendall(b"\x01" + bytes([len(ub)]) + ub + bytes([len(pb)]) + pb)
         if exact(conn, 2) != b"\x01\x00": raise RuntimeError("auth")
         conn.sendall(b"\x05\x01\x00\x01" + socket.inet_aton("127.0.0.1") + target.port.to_bytes(2, "big"))
-        reply = exact(conn, 10)
-        if reply[:2] != b"\x05\x00": raise RuntimeError("connect")
-        conn.sendall(b"socks5-data")
-        if exact(conn, 11) != b"socks5-data": raise RuntimeError("echo")
+        try:
+            if exact(conn, 10)[:2] != b"\x05\x00": return
+            conn.sendall(b"boundary-probe")
+            echoed = exact(conn, 14)
+        except (RuntimeError, OSError):
+            return
+        if echoed == b"boundary-probe": raise BoundaryBypassed("loopback reached")
     finally: conn.close()
 
-def http():
+def socks_bad_auth_refused():
     conn = socket.create_connection(("127.0.0.1", port), 5)
     try:
-        token = base64.b64encode((user + ":" + password).encode()).decode()
+        conn.settimeout(5)
+        conn.sendall(b"\x05\x01\x02")
+        if exact(conn, 2) != b"\x05\x02": raise RuntimeError("negative auth method")
+        ub, pb = user.encode(), (password + "x").encode()
+        conn.sendall(b"\x01" + bytes([len(ub)]) + ub + bytes([len(pb)]) + pb)
+        if exact(conn, 2) == b"\x01\x00": raise RuntimeError("bad auth accepted")
+    finally: conn.close()
+
+def http_status(secret):
+    conn = socket.create_connection(("127.0.0.1", port), 5)
+    try:
+        conn.settimeout(5)
+        token = base64.b64encode((user + ":" + secret).encode()).decode()
         request = ("CONNECT 127.0.0.1:%d HTTP/1.1\r\nHost: 127.0.0.1\r\n"
                    "Proxy-Authorization: Basic %s\r\n\r\n") % (target.port, token)
         conn.sendall(request.encode())
         data = b""
         while b"\r\n\r\n" not in data:
             chunk = conn.recv(4096)
-            if not chunk: raise RuntimeError("closed")
+            if not chunk: break
             data += chunk
             if len(data) > 8192: raise RuntimeError("http response")
-        if not data.startswith((b"HTTP/1.1 200", b"HTTP/1.0 200")): raise RuntimeError("http connect")
-        conn.sendall(b"http-data")
-        if exact(conn, 9) != b"http-data": raise RuntimeError("echo")
+        return data.split(b"\r\n", 1)[0]
     finally: conn.close()
+
+def http_auth_discriminates():
+    """A wrong credential has to be refused with 407 and the real one must not be.
+
+    The destination is inside the boundary, so a 200 is neither expected nor
+    required; what the differential rules out is a proxy that answers the same way
+    to both, which an empty reply from a broken inbound would otherwise pass.
+    """
+    if b"407" not in http_status(password + "x"): raise RuntimeError("http bad auth accepted")
+    if b"407" in http_status(password): raise RuntimeError("http auth")
 
 t = threading.Thread(target=target, daemon=True)
 t.start()
 try:
     if not ready.wait(5): raise RuntimeError("target")
-    socks()
-    http()
-    bad = socket.create_connection(("127.0.0.1", port), 5)
-    bad.sendall(b"\x05\x01\x02")
-    if exact(bad, 2) != b"\x05\x02": raise RuntimeError("negative auth")
-    ub, pb = user.encode(), (password + "x").encode()
-    bad.sendall(b"\x01" + bytes([len(ub)]) + ub + bytes([len(pb)]) + pb)
-    if exact(bad, 2) == b"\x01\x00": raise RuntimeError("bad auth accepted")
-    bad.close()
+    direct_echo()
+    socks_auth_then_refused()
+    socks_bad_auth_refused()
+    http_auth_discriminates()
 except Exception as exc:
     raise SystemExit("data-plane verification failed: %s" % type(exc).__name__)
 finally:
