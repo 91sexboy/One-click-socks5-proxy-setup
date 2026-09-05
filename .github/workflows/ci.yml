@@ -343,6 +343,8 @@ jobs:
               exit 1
             fi
             test "$(stat -c "%U:%G %a" /etc/init.d/xray-socks5)" = "root:root 755"
+            test "$(stat -c "%U:%G %a" /etc/xray-socks5/config.json)" = "root:xray-socks5 640"
+            test "$(stat -c "%U:%G %a" /var/lib/xray-socks5/state)" = "root:root 600"
             pkgs_before=$(apk info | sort | sha256sum)
             printf "2\n" | sh socks5.sh status >"$work/status.log"
             printf "2\n" | sh socks5.sh restart

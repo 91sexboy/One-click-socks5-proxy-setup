@@ -40,6 +40,23 @@ check() {
     fi
 }
 
+# Modes carry the actual owner and mode into the message: "expected 640" alone
+# does not say whether the file was created wrong or changed afterwards.
+check_mode() {
+    _cmlabel=$1
+    _cmpath=$2
+    _cmwant=$3
+    if ! _cmgot=$(stat -c '%U:%G %a' "$_cmpath" 2>/dev/null); then
+        printf 'audit failed on %s: %s is missing\n' "$INIT" "$_cmlabel" >&2
+        exit 1
+    fi
+    if [ "${_cmgot##* }" != "$_cmwant" ]; then
+        printf 'audit failed on %s: %s is [%s], expected mode %s\n' \
+            "$INIT" "$_cmlabel" "$_cmgot" "$_cmwant" >&2
+        exit 1
+    fi
+}
+
 check "config is a regular file" test -f "$cfg"
 check "config is not a symlink" test ! -L "$cfg"
 check "state is a regular file" test -f "$state"
@@ -48,12 +65,11 @@ check "binary is a regular file" test -f "$bin"
 check "binary is not a symlink" test ! -L "$bin"
 check "service artifact is a regular file" test -f "$unit"
 check "service artifact is not a symlink" test ! -L "$unit"
-check "config mode is 640" test "$(stat -c '%a' "$cfg")" = 640
-check "state mode is 600" test "$(stat -c '%a' "$state")" = 600
-check "binary mode is 755" test "$(stat -c '%a' "$bin")" = 755
-check "service artifact mode is $unit_mode" \
-    test "$(stat -c '%a' "$unit")" = "$unit_mode"
-check "passfile mode is 600" test "$(stat -c '%a' "$PASSFILE")" = 600
+check_mode config "$cfg" 640
+check_mode state "$state" 600
+check_mode binary "$bin" 755
+check_mode "service artifact" "$unit" "$unit_mode"
+check_mode passfile "$PASSFILE" 600
 check "passfile carries a password line" \
     test "$(sed -n '2p' "$PASSFILE" | wc -c | tr -d '[:space:]')" -gt 1
 
