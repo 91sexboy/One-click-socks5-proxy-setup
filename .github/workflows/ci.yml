@@ -338,10 +338,28 @@ jobs:
             printf "2\ny\n23456\nciuser\nCISecret_123~x\n" >"$work/answers"
             printf "ciuser\nCISecret_123~x\n" >"$work/pass"
             chmod 0600 "$work/answers" "$work/pass"
+            # TEMPORARY: the installer rolls back and stops the service on
+            # failure, so readiness state must be sampled while install runs.
+            (
+              while :; do
+                printf "=== sample ===\n"
+                find /run/openrc -maxdepth 4 2>&1 | head -40
+                cat /run/openrc/options/xray-socks5/child_pid 2>&1
+                cat /run/xray-socks5.pid 2>&1
+                ss -H -ltnp 2>&1 | head -10
+                ps -o pid,ppid,comm 2>&1 | head -20
+                sleep 0.5
+              done
+            ) >"$work/sampler.log" 2>&1 &
+            sampler=$!
             if ! sh socks5.sh install <"$work/answers" >"$work/install.log" 2>&1; then
+              kill "$sampler" 2>/dev/null || true
               cat "$work/install.log"
+              printf "\n===== readiness samples (tail) =====\n"
+              tail -160 "$work/sampler.log" || true
               exit 1
             fi
+            kill "$sampler" 2>/dev/null || true
             test "$(stat -c "%U:%G %a" /etc/init.d/xray-socks5)" = "root:root 755"
             pkgs_before=$(apk info | sort | sha256sum)
             printf "2\n" | sh socks5.sh status >"$work/status.log"
