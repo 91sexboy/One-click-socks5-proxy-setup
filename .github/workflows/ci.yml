@@ -373,9 +373,15 @@ jobs:
               rc-service xray-socks5 status >/dev/null 2>&1 || break
               sleep 1
             done
-            if rc-service xray-socks5 status >/dev/null 2>&1; then exit 1; fi
+            if rc-service xray-socks5 status >/dev/null 2>&1; then
+              printf "a broken config left the service running\n" >&2
+              exit 1
+            fi
             for n in $(seq 1 12); do
-              if ss -H -ltn 2>/dev/null | grep -q ":23456 "; then exit 1; fi
+              if ss -H -ltn 2>/dev/null | grep -q ":23456 "; then
+                printf "a broken config produced a listener\n" >&2
+                exit 1
+              fi
               sleep 1
             done
             cp "$work/good.json" /etc/xray-socks5/config.json
@@ -384,8 +390,14 @@ jobs:
             sh tests/protocol/post_install_audit.sh / "$work/pass" openrc
             # SPEC 10: credentials reach neither argv nor the service environment.
             live_pid=$(cat /run/openrc/options/xray-socks5/child_pid)
-            if tr "\0" "\n" <"/proc/$live_pid/cmdline" | grep -q "CISecret_123~x"; then exit 1; fi
-            if tr "\0" "\n" <"/proc/$live_pid/environ" | grep -q "CISecret_123~x"; then exit 1; fi
+            if tr "\0" "\n" <"/proc/$live_pid/cmdline" | grep -q "CISecret_123~x"; then
+              printf "credential appeared in argv\n" >&2
+              exit 1
+            fi
+            if tr "\0" "\n" <"/proc/$live_pid/environ" | grep -q "CISecret_123~x"; then
+              printf "credential appeared in the service environment\n" >&2
+              exit 1
+            fi
             # SPEC 6: independent SOCKS5 and HTTP verification, separate from the
             # data-plane check the installer runs itself.
             python3 tests/protocol/duplex_target.py --ready-file "$work/target.port" \

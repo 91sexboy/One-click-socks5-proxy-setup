@@ -29,16 +29,33 @@ openrc)
     ;;
 esac
 
-[ -f "$cfg" ] && [ ! -L "$cfg" ]
-[ -f "$state" ] && [ ! -L "$state" ]
-[ -f "$bin" ] && [ ! -L "$bin" ]
-[ -f "$unit" ] && [ ! -L "$unit" ]
-[ "$(stat -c '%a' "$cfg")" = 640 ]
-[ "$(stat -c '%a' "$state")" = 600 ]
-[ "$(stat -c '%a' "$bin")" = 755 ]
-[ "$(stat -c '%a' "$unit")" = "$unit_mode" ]
-[ "$(stat -c '%a' "$PASSFILE")" = 600 ]
-[ "$(sed -n '2p' "$PASSFILE" | wc -c | tr -d '[:space:]')" -gt 1 ]
+# A silent bare-test chain reports nothing about which guarantee broke, which
+# turns one failing audit into a second CI round trip.
+check() {
+    _label=$1
+    shift
+    if ! "$@"; then
+        printf 'audit failed on %s: %s\n' "$INIT" "$_label" >&2
+        exit 1
+    fi
+}
+
+check "config is a regular file" test -f "$cfg"
+check "config is not a symlink" test ! -L "$cfg"
+check "state is a regular file" test -f "$state"
+check "state is not a symlink" test ! -L "$state"
+check "binary is a regular file" test -f "$bin"
+check "binary is not a symlink" test ! -L "$bin"
+check "service artifact is a regular file" test -f "$unit"
+check "service artifact is not a symlink" test ! -L "$unit"
+check "config mode is 640" test "$(stat -c '%a' "$cfg")" = 640
+check "state mode is 600" test "$(stat -c '%a' "$state")" = 600
+check "binary mode is 755" test "$(stat -c '%a' "$bin")" = 755
+check "service artifact mode is $unit_mode" \
+    test "$(stat -c '%a' "$unit")" = "$unit_mode"
+check "passfile mode is 600" test "$(stat -c '%a' "$PASSFILE")" = 600
+check "passfile carries a password line" \
+    test "$(sed -n '2p' "$PASSFILE" | wc -c | tr -d '[:space:]')" -gt 1
 
 # The password reaches grep on stdin, never as an argument: an argument would be
 # published through /proc/<pid>/cmdline, and without -q grep would print the very
@@ -64,8 +81,9 @@ if pass_leaks "$unit" "$state"; then
     exit 1
 fi
 
-grep -qF 'engine	xray' "$state"
-grep -qF 'protocol	mixed' "$state"
-grep -qF 'auth	password' "$state"
-grep -qF 'udp	false' "$state"
-grep -qF "$unit_cmd" "$unit"
+check "state records the Xray engine" grep -qF 'engine	xray' "$state"
+check "state records the mixed protocol" grep -qF 'protocol	mixed' "$state"
+check "state records password auth" grep -qF 'auth	password' "$state"
+check "state records UDP disabled" grep -qF 'udp	false' "$state"
+check "service artifact runs Xray with the config path" \
+    grep -qF "$unit_cmd" "$unit"
