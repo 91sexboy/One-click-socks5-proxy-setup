@@ -1173,15 +1173,12 @@ s5_listener_state() {
     fi
     _slpid=''
     if [ "$S5_INIT" = openrc ]; then
+        # supervise-daemon records the supervised process in child_pid and its
+        # own pid in the pidfile, so child_pid is already the listener owner.
+        # Xray spawns a logger child per output stream, which makes any walk
+        # below child_pid ambiguous.
         _slpid=$(cat "$S5_OPENRC_OPTION_DIR/child_pid" 2>/dev/null) || return 1
         case "$_slpid" in '' | *[!0-9]* | 0) return 1 ;; esac
-        _slchildren=$(cat "/proc/$_slpid/task/$_slpid/children" 2>/dev/null) || return 1
-        # The kernel children file is a whitespace-separated PID list; require
-        # exactly one numeric child before using it for listener ownership.
-        # shellcheck disable=SC2086
-        set -- $_slchildren
-        [ "$#" -eq 1 ] || return 1
-        _slpid=$1
     else
         _slpid=$(systemctl show "$S5_PROJECT.service" -p MainPID --value 2>/dev/null) || return 2
     fi

@@ -105,37 +105,36 @@ rm -f "$S5_TEST_ROOT/active"
 s5_service_start
 assert_ne "OpenRC inactive start remains failure" 0 "$?"
 
-# OpenRC records the supervisor PID in its option state. Readiness must resolve
-# that supervisor to its single Xray child before comparing the kernel listener
-# owner; treating the supervisor as the listener owner falsely rejects a healthy
-# service.
+# supervise-daemon records the supervised process itself in child_pid, and the
+# pidfile holds the supervisor. Alpine CI evidence: child_pid=378, pidfile=377,
+# ps shows 377 supervising 378, and the kernel attributes the listener to 378.
+# Walking to /proc children from child_pid lands on Xray's two logger children,
+# which made a healthy service look like it was not listening.
 mkdir -p "$S5_OPENRC_OPTION_DIR"
-printf '900\n' >"$S5_OPENRC_OPTION_DIR/child_pid"
-export S5_OPENRC_OPTION_DIR
-_REAL_CAT=$(command -v cat)
-export REAL_CAT="$_REAL_CAT"
-"$_REAL_CAT" >"$S5_TEST_ROOT/bin/cat" <<'CAT'
-#!/bin/sh
-case "${1:-}" in
-"$S5_OPENRC_OPTION_DIR/child_pid") printf '900\n' ;;
-/proc/900/task/900/children) printf '901\n' ;;
-*) exec "$REAL_CAT" "$@" ;;
-esac
-CAT
-chmod 755 "$S5_TEST_ROOT/bin/cat"
+printf '378\n' >"$S5_OPENRC_OPTION_DIR/child_pid"
 cat >"$S5_TEST_ROOT/bin/ss" <<'SS'
 #!/bin/sh
-printf '%s\n' 'LISTEN 0 128 127.0.0.1:23456 0.0.0.0:* users:(("xray",pid=901,fd=3))'
+printf '%s\n' 'LISTEN 0 4096 127.0.0.1:23456 0.0.0.0:* users:(("xray",pid=378,fd=3))'
 SS
 chmod 755 "$S5_TEST_ROOT/bin/ss"
-export REAL_CAT="$_REAL_CAT"
-if [ "${S5_TEST_SHELL:-}" != 'busybox sh' ]; then
 s5_listener_state
-assert_eq "OpenRC listener resolves supervised Xray child" 0 "$?"
+assert_eq "OpenRC listener accepts the supervised child" 0 "$?"
 # shellcheck disable=SC2154
-assert_eq "OpenRC listener uses child PID" 901 "$_slpid"
-else
-    t_skip "OpenRC listener child resolution" "BusyBox test shell cannot stub /proc safely"
-fi
+assert_eq "OpenRC listener owner is child_pid" 378 "$_slpid"
+
+# The supervisor never owns the listener, so a supervisor-owned endpoint is not
+# proof that Xray itself is listening.
+cat >"$S5_TEST_ROOT/bin/ss" <<'SS'
+#!/bin/sh
+printf '%s\n' 'LISTEN 0 4096 127.0.0.1:23456 0.0.0.0:* users:(("supervise-daemon",pid=377,fd=3))'
+SS
+chmod 755 "$S5_TEST_ROOT/bin/ss"
+t_run s5_listener_state
+assert_ne "OpenRC listener refuses a supervisor-owned endpoint" 0 "$T_STATUS"
+
+# An absent child_pid means the service is not running, not an unobservable state.
+rm -f "$S5_OPENRC_OPTION_DIR/child_pid"
+t_run s5_listener_state
+assert_eq "OpenRC missing child_pid reports absent" 1 "$T_STATUS"
 
 t_summary
