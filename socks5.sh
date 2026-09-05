@@ -376,6 +376,17 @@ s5_port_free() {
     return 2
 }
 
+s5_port_owned_by_service() {
+    # An update keeps the port it already runs on: the live service holds that
+    # listener, so the generic in-use probe reports it busy. Ownership is
+    # verified rather than assumed, so a foreign or unobservable listener on the
+    # recorded port is still refused. On a fresh install S5_PORT is empty and no
+    # candidate can match it.
+    [ -n "${S5_PORT:-}" ] || return 1
+    [ "$1" = "$S5_PORT" ] || return 1
+    s5_listener_state
+}
+
 s5_prompt_port() {
     while :; do
         s5_msg input.port >&2
@@ -390,7 +401,13 @@ s5_prompt_port() {
         _sppr=$?
         case "$_sppr" in
         0) S5_PORT=$_spp; return 0 ;;
-        1) s5_msg_err input.port.used "$_spp" ;;
+        1)
+            if s5_port_owned_by_service "$_spp"; then
+                S5_PORT=$_spp
+                return 0
+            fi
+            s5_msg_err input.port.used "$_spp"
+            ;;
         *) s5_msg_err detect.probe "$_spp"; return 1 ;;
         esac
     done

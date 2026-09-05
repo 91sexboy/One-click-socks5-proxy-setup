@@ -114,6 +114,30 @@ assert_file_absent "update leaves no transaction directory" "$S5_TXNDIR"
 assert_eq "service listens on the new port" 23999 "$(cat "$S5_TEST_ROOT/svc_active")"
 s5_prompt_port() { return 0; }
 
+# An update has to be able to keep its own port. The running service holds that
+# listener, so the generic in-use probe reports it busy and the prompt would
+# refuse the port the installation already owns.
+s5_port_free 23999
+assert_eq "the running port reads as busy" 1 "$?"
+S5_PORT=23999
+t_run s5_port_owned_by_service 23999
+assert_eq "the port this service owns is accepted" 0 "$T_STATUS"
+t_run s5_port_owned_by_service 24001
+assert_ne "a port this service does not own is refused" 0 "$T_STATUS"
+
+# Ownership is verified rather than assumed, so an unowned or unobservable
+# listener on the recorded port is still refused.
+S5_LISTENER_PROBE=$S5_TEST_ROOT/foreignprobe
+cat >"$S5_LISTENER_PROBE" <<'FP'
+#!/bin/sh
+exit 2
+FP
+chmod 0755 "$S5_LISTENER_PROBE"
+export S5_LISTENER_PROBE
+t_run s5_port_owned_by_service 23999
+assert_ne "a foreign listener on the recorded port is refused" 0 "$T_STATUS"
+unset S5_LISTENER_PROBE
+
 # SPEC 5: a rejected candidate config is caught before a healthy service is
 # stopped, and it leaves the published config in place.
 _upcfg=$(sha256sum "$S5_CFG" | awk '{print $1}')
