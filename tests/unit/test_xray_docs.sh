@@ -239,6 +239,14 @@ assert_contains "Alpine gate keeps credentials out of the environment" \
 assert_contains "Alpine gate proves no packages are installed outside install" \
     'test "$(apk info | sort | sha256sum)" = "$pkgs_before"' "$ci_text"
 
+# Restoring the config with cp hands it the backup copy's private attributes on
+# BusyBox, which looked like a product defect. Both gates restore by truncating
+# in place and then assert the installer's owner and mode survived.
+assert_contains "Alpine gate restores the config in place" \
+    'cat "$work/good.json" >/etc/xray-socks5/config.json' "$ci_text"
+assert_eq "the config owner and mode are asserted on both gates and after a restore" 3 \
+    "$(printf '%s\n' "$ci_text" | grep -c 'root:xray-socks5 640')"
+
 # The audit is shared between backends, so it must not hard-code systemd paths.
 audit_text=$(cat "$ROOT/tests/protocol/post_install_audit.sh")
 assert_contains "the audit accepts an init backend" 'INIT=${3:-systemd}' "$audit_text"

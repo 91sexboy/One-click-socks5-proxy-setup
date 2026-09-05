@@ -289,6 +289,7 @@ jobs:
           sleep 12
           test "$(systemctl show xray-socks5.service -p NRestarts --value)" = "$loop_restarts"
           sudo cp "$work/good.json" /etc/xray-socks5/config.json
+          test "$(sudo stat -c '%U:%G %a' /etc/xray-socks5/config.json)" = "root:xray-socks5 640"
           sudo systemctl restart xray-socks5.service
           sudo systemctl is-active --quiet xray-socks5.service
           python3 tests/protocol/duplex_target.py --ready-file "$work/target.port" --count-file "$work/count" --report-file "$work/report" >"$work/target.log" 2>&1 &
@@ -386,7 +387,11 @@ jobs:
               fi
               sleep 1
             done
-            cp "$work/good.json" /etc/xray-socks5/config.json
+            # Redirection truncates in place, so the config keeps the owner and
+            # mode the installer gave it. BusyBox cp replaces the destination and
+            # would silently hand it the backup copy's private attributes.
+            cat "$work/good.json" >/etc/xray-socks5/config.json
+            test "$(stat -c "%U:%G %a" /etc/xray-socks5/config.json)" = "root:xray-socks5 640"
             rc-service xray-socks5 restart
             rc-service xray-socks5 status
             sh tests/protocol/post_install_audit.sh / "$work/pass" openrc
