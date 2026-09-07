@@ -62,7 +62,11 @@ jobs:
             tests/protocol/*.sh .github/scripts/*.sh
       - name: Active production path is Xray-only
         run: |
-          ! grep -nE '3proxy|users\.cfg|socks -4|auth strong|source-build' socks5.sh
+          # set -e does not apply to a command a ! inverts, so `! grep ...` did not
+          # fail this step: a reintroduced 3proxy reference passed lint silently.
+          if grep -nE '3proxy|users\.cfg|socks -4|auth strong|source-build' socks5.sh; then
+            echo "the production path must not reference the 3proxy engine" >&2; exit 1
+          fi
           grep -q 'protocol.*mixed' README.md
           grep -q 'protocol.*mixed' README.zh-CN.md
       - name: The release gates must have no escape hatch
@@ -108,6 +112,11 @@ jobs:
             command: sh
           - runner: ubuntu-24.04
             command: dash
+          # bash is the /bin/sh of the EL family, which SPEC 1 lists as supported.
+          # The sh leg above is dash on this runner, so without bash the matrix
+          # covered one interpreter twice and left the other untested.
+          - runner: ubuntu-24.04
+            command: bash
           - runner: ubuntu-24.04
             command: busybox sh
     steps:
@@ -118,6 +127,7 @@ jobs:
         run: |
           sh -n socks5.sh
           dash -n socks5.sh
+          bash -n socks5.sh
           busybox sh -n socks5.sh
       - name: Unit suite
         env:
@@ -174,7 +184,11 @@ jobs:
           test "$(sha256sum xray | awk '{print $1}')" = "$XRAY_BINARY_SHA"
           file -b xray | grep -q 'ELF 64-bit'
           file -b xray | grep -q "$XRAY_ELF_ARCH"
-          ! file -b xray | grep -q 'dynamically linked'
+          # A ! before a pipeline is not a check under set -e, so this requirement
+          # was dead: a dynamically linked upstream build would have passed.
+          if file -b xray | grep -q 'dynamically linked'; then
+            echo "the pinned binary is dynamically linked" >&2; exit 1
+          fi
           ./xray version
 
   xray-mixed:
@@ -227,135 +241,10 @@ jobs:
       - name: Add the test target addresses
         run: sudo sh .github/scripts/add-test-target-addresses.sh
       - name: Run real systemd lifecycle
-        run: |
-          set -eu
-          printf 'lifecycle: start\n'
-          work=$(mktemp -d)
-          printf 'lifecycle: workdir-ready\n'
-          cleanup() {
-            rm -f "$work/pass" "$work/answers" "$work/target.log" "$work/install.log" "$work/status.log" "$work/restart.log" "$work/uninstall.log" "$work/pass.update" "$work/answers.update" "$work/update.log"
-            sh .github/scripts/remove-xray-namespace.sh
-            rm -rf "$work"
-          }
-          trap cleanup EXIT HUP INT TERM
-          chmod 0700 "$work"
-          printf '2\ny\n23456\nciuser\nCISecret_123~x\n' >"$work/answers"
-          chmod 0600 "$work/answers"
-          printf '2\n' >"$work/answers.lang"
-          printf '2\ny\n' >"$work/answers.uninstall"
-          printf 'ciuser\nCISecret_123~x\n' >"$work/pass"
-          chmod 0600 "$work/pass"
-          sudo sh .github/scripts/run-socks5.sh install \
-            "$work/answers" "$work/install.log" "$work/pass"
-          printf 'lifecycle: install-ok\n'
-          sudo find /etc/xray-socks5 /var/lib/xray-socks5 /usr/local/libexec/xray-socks5 \
-            -maxdepth 2 -printf '%M %u:%g %p\n' 2>&1 || true
-          test -e /etc/xray-socks5
-          printf 'lifecycle: config-dir-entry-ok\n'
-          sudo test -f /etc/xray-socks5/config.json
-          printf 'lifecycle: config-file-ok\n'
-          sudo test -f /var/lib/xray-socks5/state
-          printf 'lifecycle: state-file-ok\n'
-          sudo test -x /usr/local/libexec/xray-socks5/xray
-          printf 'lifecycle: binary-file-ok\n'
-          printf 'lifecycle: files-ok\n'
-          test "$(sudo stat -c '%a' /etc/xray-socks5/config.json)" = 640
-          test "$(sudo stat -c '%a' /var/lib/xray-socks5/state)" = 600
-          printf 'lifecycle: modes-ok\n'
-          sudo systemctl is-active --quiet xray-socks5.service
-          printf 'lifecycle: active-ok\n'
-          python3 - <<'PY'
-          import socket
-          s = socket.create_connection(('127.0.0.1', 23456), 5)
-          s.close()
-          PY
-          sudo sh .github/scripts/run-socks5.sh status \
-            "$work/answers.lang" "$work/status.log" "$work/pass"
-          printf 'lifecycle: status-ok\n'
-          printf 'lifecycle: status-log='
-          sudo cat "$work/status.log" | tr '\n' ' '
-          printf '\n'
-          sudo grep -q 'mixed' "$work/status.log"
-          printf 'lifecycle: status-content-ok\n'
-          sudo sh .github/scripts/run-socks5.sh restart \
-            "$work/answers.lang" "$work/restart.log" "$work/pass"
-          printf 'lifecycle: restart-command-ok\n'
-          sudo systemctl is-active --quiet xray-socks5.service
-          printf 'lifecycle: restart-active-ok\n'
-          # SPEC 5: systemd recovers a crash, and a configuration error exits 23
-          # without entering a restart loop.
-          restarts_before=$(systemctl show xray-socks5.service -p NRestarts --value)
-          crash_pid=$(systemctl show xray-socks5.service -p MainPID --value)
-          test "$crash_pid" -gt 0
-          sudo kill -9 "$crash_pid"
-          for n in $(seq 1 60); do
-            new_pid=$(systemctl show xray-socks5.service -p MainPID --value)
-            if test "$new_pid" != "$crash_pid" && test "$new_pid" -gt 0; then break; fi
-            sleep 1
-          done
-          sudo systemctl is-active --quiet xray-socks5.service
-          test "$(systemctl show xray-socks5.service -p MainPID --value)" != "$crash_pid"
-          test "$(systemctl show xray-socks5.service -p NRestarts --value)" -gt "$restarts_before"
-          python3 - <<'PY'
-          import socket
-          sock = socket.create_connection(('127.0.0.1', 23456), 20)
-          sock.close()
-          PY
-          sudo cp /etc/xray-socks5/config.json "$work/good.json"
-          printf '{broken\n' | sudo tee /etc/xray-socks5/config.json >/dev/null
-          sudo systemctl restart xray-socks5.service || true
-          for n in $(seq 1 30); do
-            sudo systemctl is-active --quiet xray-socks5.service || break
-            sleep 1
-          done
-          ! sudo systemctl is-active --quiet xray-socks5.service
-          test "$(systemctl show xray-socks5.service -p ExecMainStatus --value)" = 23
-          loop_restarts=$(systemctl show xray-socks5.service -p NRestarts --value)
-          sleep 12
-          test "$(systemctl show xray-socks5.service -p NRestarts --value)" = "$loop_restarts"
-          sudo cp "$work/good.json" /etc/xray-socks5/config.json
-          test "$(sudo stat -c '%U:%G %a' /etc/xray-socks5/config.json)" = "root:xray-socks5 640"
-          sudo systemctl restart xray-socks5.service
-          sudo systemctl is-active --quiet xray-socks5.service
-          python3 tests/protocol/duplex_target.py --host 0.0.0.0 --host6 :: --ready-file "$work/target.port" --count-file "$work/count" --report-file "$work/report" >"$work/target.log" 2>&1 &
-          target_pid=$!
-          for n in $(seq 1 50); do test -s "$work/target.port" && break; sleep 0.1; done
-          target_port=$(cat "$work/target.port")
-          PASSFILE="$work/pass" PORT=23456 TARGET_PORT="$target_port" \
-            REPORT="$work/report" OUT="$work/probe" \
-            sh tests/protocol/run_xray_mixed.sh
-          sudo sh tests/protocol/post_install_audit.sh / "$work/pass" systemd
-          printf 'lifecycle: audit-ok\n'
-          # SPEC 5: re-running install over an existing installation is an
-          # in-place update. Rotate the credentials, keep the port, and require
-          # the new identity in both the config and the state.
-          printf '2\ny\n23456\nciuser2\nCISecret_456~y\n' >"$work/answers.update"
-          printf 'ciuser2\nCISecret_456~y\n' >"$work/pass.update"
-          chmod 0600 "$work/answers.update" "$work/pass.update"
-          sudo sh .github/scripts/run-socks5.sh install \
-            "$work/answers.update" "$work/update.log" "$work/pass.update"
-          printf 'lifecycle: update-ok\n'
-          sudo grep -q 'ciuser2' /etc/xray-socks5/config.json
-          sudo grep -qE '^username[[:space:]]+ciuser2$' /var/lib/xray-socks5/state
-          test ! -e /var/lib/xray-socks5/transaction
-          test "$(sudo stat -c '%U:%G %a' /etc/xray-socks5/config.json)" = "root:xray-socks5 640"
-          sudo systemctl is-active --quiet xray-socks5.service
-          sudo sh tests/protocol/post_install_audit.sh / "$work/pass.update" systemd
-          printf 'lifecycle: update-audit-ok\n'
-          printf 'lifecycle: uninstall-preflight\n'
-          sudo systemctl is-active xray-socks5.service || true
-          sudo systemctl show xray-socks5.service -p MainPID -p ExecMainStatus -p NRestarts
-          sudo id xray-socks5
-          sudo stat -c '%M %U:%G %n' /etc/xray-socks5/config.json /var/lib/xray-socks5/state /usr/local/libexec/xray-socks5/xray
-          sudo find /etc/xray-socks5 /var/lib/xray-socks5 /usr/local/libexec/xray-socks5 -maxdepth 2 -printf '%M %U:%G %p\n'
-          sudo sh .github/scripts/run-socks5.sh uninstall \
-            "$work/answers.uninstall" "$work/uninstall.log" "$work/pass"
-          test ! -e /etc/xray-socks5
-          test ! -e /var/lib/xray-socks5
-          test ! -e /usr/local/libexec/xray-socks5
-          if sudo grep -q 'CISecret_123~x' "$work/install.log"; then exit 1; else rc=$?; test "$rc" = 1 || exit 1; fi
-          if sudo grep -q 'CISecret_123~x' "$work/status.log"; then exit 1; else rc=$?; test "$rc" = 1 || exit 1; fi
-          if sudo grep -q 'CISecret_456~y' "$work/update.log"; then exit 1; else rc=$?; test "$rc" = 1 || exit 1; fi
+        # The lifecycle body is a file rather than an inline block: 129 lines of
+        # shell in YAML are read by no linter, and extracting its OpenRC sibling
+        # exposed two checks that could not fail.
+        run: sh .github/scripts/systemd-lifecycle.sh
 
 
   openrc-integration:
@@ -369,141 +258,11 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
       - name: Run Alpine OpenRC lifecycle
         run: |
-          docker run --rm --privileged -v "$PWD:/src" -w /src "${{ matrix.image }}" sh -c '
-            set -eu
-            apk add --no-cache openrc >/dev/null
-            mkdir -p /run/openrc
-            touch /run/openrc/softlevel
-            rc-status -a >/dev/null 2>&1 || true
-            umask 077
-            work=$(mktemp -d)
-            trap "rm -rf $work" EXIT HUP INT TERM
-            printf "2\ny\n23456\nciuser\nCISecret_123~x\n" >"$work/answers"
-            printf "ciuser\nCISecret_123~x\n" >"$work/pass"
-            chmod 0600 "$work/answers" "$work/pass"
-            if ! sh socks5.sh install <"$work/answers" >"$work/install.log" 2>&1; then
-              cat "$work/install.log"
-              exit 1
-            fi
-            test "$(stat -c "%U:%G %a" /etc/init.d/xray-socks5)" = "root:root 755"
-            test "$(stat -c "%U:%G %a" /etc/xray-socks5/config.json)" = "root:xray-socks5 640"
-            test "$(stat -c "%U:%G %a" /var/lib/xray-socks5/state)" = "root:root 600"
-            # SPEC 5: re-running install over an existing installation is an
-            # in-place update. Rotate the credentials, keep the port, and require
-            # the new identity in both the config and the state.
-            printf "2\ny\n23456\nciuser2\nCISecret_456~y\n" >"$work/answers.update"
-            printf "ciuser2\nCISecret_456~y\n" >"$work/pass.update"
-            chmod 0600 "$work/answers.update" "$work/pass.update"
-            if ! sh socks5.sh install <"$work/answers.update" >"$work/update.log" 2>&1; then
-              cat "$work/update.log"
-              exit 1
-            fi
-            grep -q "ciuser2" /etc/xray-socks5/config.json
-            grep -qE "^username[[:space:]]+ciuser2$" /var/lib/xray-socks5/state
-            test ! -e /var/lib/xray-socks5/transaction
-            test "$(stat -c "%U:%G %a" /etc/xray-socks5/config.json)" = "root:xray-socks5 640"
-            rc-service xray-socks5 status
-            pkgs_before=$(apk info | sort | sha256sum)
-            printf "2\n" | sh socks5.sh status >"$work/status.log"
-            printf "2\n" | sh socks5.sh restart
-            rc-service xray-socks5 status
-            grep -q "mixed" "$work/status.log"
-            # SPEC 5: OpenRC recovers a crash with the listener returning, and a
-            # configuration error does not enter an automatic restart loop.
-            crash_pid=$(cat /run/openrc/options/xray-socks5/child_pid)
-            test "$crash_pid" -gt 0
-            kill -9 "$crash_pid"
-            new_pid=0
-            for n in $(seq 1 60); do
-              new_pid=$(cat /run/openrc/options/xray-socks5/child_pid 2>/dev/null || printf 0)
-              if test "$new_pid" != "$crash_pid" && test "$new_pid" -gt 0; then break; fi
-              sleep 1
-            done
-            test "$new_pid" != "$crash_pid"
-            test "$new_pid" -gt 0
-            for n in $(seq 1 60); do
-              ss -H -ltnp 2>/dev/null | grep -q "pid=$new_pid," && break
-              sleep 1
-            done
-            ss -H -ltnp | grep -q "pid=$new_pid,"
-            cp /etc/xray-socks5/config.json "$work/good.json"
-            printf "{broken\n" >/etc/xray-socks5/config.json
-            rc-service xray-socks5 restart || true
-            for n in $(seq 1 30); do
-              rc-service xray-socks5 status >/dev/null 2>&1 || break
-              sleep 1
-            done
-            if rc-service xray-socks5 status >/dev/null 2>&1; then
-              printf "a broken config left the service running\n" >&2
-              exit 1
-            fi
-            # SPEC 8: a configuration error exits 23. OpenRC bounds respawns by
-            # count rather than by exit status, so the status has to come from the
-            # supervised binary, and the respawn guard is proven by child_pid
-            # holding still across the settle window below.
-            respawn_before=$(cat /run/openrc/options/xray-socks5/child_pid 2>/dev/null || printf none)
-            broken_status=0
-            /usr/local/libexec/xray-socks5/xray run -c /etc/xray-socks5/config.json \
-              >"$work/broken.log" 2>&1 || broken_status=$?
-            if test "$broken_status" != 23; then
-              printf "a broken config exited %s, expected 23\n" "$broken_status" >&2
-              cat "$work/broken.log" >&2
-              exit 1
-            fi
-            for n in $(seq 1 12); do
-              if ss -H -ltn 2>/dev/null | grep -q ":23456 "; then
-                printf "a broken config produced a listener\n" >&2
-                exit 1
-              fi
-              sleep 1
-            done
-            respawn_after=$(cat /run/openrc/options/xray-socks5/child_pid 2>/dev/null || printf none)
-            if test "$respawn_after" != "$respawn_before"; then
-              printf "a broken config respawned: child_pid %s then %s\n" \
-                "$respawn_before" "$respawn_after" >&2
-              exit 1
-            fi
-            # Redirection truncates in place, so the config keeps the owner and
-            # mode the installer gave it. BusyBox cp replaces the destination and
-            # would hand it the private attributes of the backup copy.
-            cat "$work/good.json" >/etc/xray-socks5/config.json
-            test "$(stat -c "%U:%G %a" /etc/xray-socks5/config.json)" = "root:xray-socks5 640"
-            rc-service xray-socks5 restart
-            rc-service xray-socks5 status
-            sh tests/protocol/post_install_audit.sh / "$work/pass.update" openrc
-            # SPEC 10: credentials reach neither argv nor the service environment.
-            live_pid=$(cat /run/openrc/options/xray-socks5/child_pid)
-            if tr "\0" "\n" <"/proc/$live_pid/cmdline" | grep -qE "CISecret_123~x|CISecret_456~y"; then
-              printf "credential appeared in argv\n" >&2
-              exit 1
-            fi
-            if tr "\0" "\n" <"/proc/$live_pid/environ" | grep -qE "CISecret_123~x|CISecret_456~y"; then
-              printf "credential appeared in the service environment\n" >&2
-              exit 1
-            fi
-            # SPEC 6: independent SOCKS5 and HTTP verification, separate from the
-            # data-plane check the installer runs itself. The target binds every
-            # address so it answers at both the permitted 192.0.2.1 and the denied
-            # 127.0.0.1, which is what makes a boundary bypass visible.
-            sh .github/scripts/add-test-target-addresses.sh
-            python3 tests/protocol/duplex_target.py --host 0.0.0.0 --host6 :: \
-              --ready-file "$work/target.port" \
-              --count-file "$work/count" --report-file "$work/report" >"$work/target.log" 2>&1 &
-            for n in $(seq 1 50); do test -s "$work/target.port" && break; sleep 0.2; done
-            test -s "$work/target.port"
-            PASSFILE="$work/pass.update" PORT=23456 TARGET_PORT="$(cat "$work/target.port")" \
-              REPORT="$work/report" OUT="$work/probe" \
-              sh tests/protocol/run_xray_mixed.sh
-            printf "2\ny\n" | sh socks5.sh uninstall
-            test "$(apk info | sort | sha256sum)" = "$pkgs_before"
-            test ! -e /etc/xray-socks5
-            test ! -e /var/lib/xray-socks5
-            test ! -e /usr/local/libexec/xray-socks5
-            test ! -e /etc/init.d/xray-socks5
-            test ! -e /run/xray-socks5.pid
-            ! grep -q "CISecret_123~x" "$work/install.log"
-            ! grep -q "CISecret_456~y" "$work/update.log"
-          '
+          # The lifecycle body is a file rather than a single-quoted argument:
+          # one apostrophe in it used to close the argument and hand the rest to
+          # the host shell, and as a file it is linted like every other script.
+          docker run --rm --privileged -v "$PWD:/src" -w /src "${{ matrix.image }}" \
+            sh /src/.github/scripts/alpine-lifecycle.sh
 
   memory-report:
     runs-on: ubuntu-24.04
@@ -555,6 +314,11 @@ jobs:
           # SPEC 8 wants the idle/1/32/128 peaks kept apart, so each stage is
           # sampled while exactly that many tunnels are held open.
           for stage in 1 32 128; do
+            # Reset before the connections exist, so this stage's peak covers
+            # establishing them as well as holding them. Resetting after the holder
+            # reported ready measured a few milliseconds of steady state, where peak
+            # cannot differ meaningfully from current.
+            sudo sh .github/scripts/memory-sample.sh "$pid" reset "$cgdir"
             rm -f "$root/held"
             python3 tests/protocol/hold_connections.py --host 127.0.0.1 --port 23456 \
               --target-host 192.0.2.1 --target-port "$target_port" \
@@ -566,7 +330,17 @@ jobs:
               cat "$root/held.log" >&2
               exit 1
             fi
-            sudo sh .github/scripts/memory-sample.sh "$pid" reset "$cgdir"
+            # SPEC 8: the target and driver stay outside the Xray cgroup. Their
+            # memory would otherwise be counted as the proxy's, and the numbers this
+            # job records would describe the harness.
+            procs=$(sudo cat "$cgdir/cgroup.procs")
+            printf 'conn%s_cgroup_procs=%s\n' "$stage" "$(printf '%s' "$procs" | tr '\n' ' ')"
+            for outside in "$target_pid" "$holder_pid"; do
+              if printf '%s\n' "$procs" | grep -qx "$outside"; then
+                printf 'pid %s is inside the Xray cgroup\n' "$outside" >&2
+                exit 1
+              fi
+            done
             sudo sh .github/scripts/memory-sample.sh "$pid" "conn$stage" "$cgdir"
             kill -TERM "$holder_pid" 2>/dev/null || true
             wait "$holder_pid" 2>/dev/null || true

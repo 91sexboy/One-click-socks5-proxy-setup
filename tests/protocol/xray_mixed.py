@@ -19,7 +19,7 @@ FRAME_MAGIC = b"X5"
 # use 1-4 and 1000 upwards, so a frame from either is attributable.
 BOUNDARY_CID = 176
 STATS_LOCK = threading.Lock()
-STATS = {"tunnels": 0, "client_frames": 0}
+STATS = {"tunnels": 0, "client_frames": 0, "control_tunnels": 0, "control_frames": 0}
 
 # The proxy endpoint, the target endpoint and the account used to travel as six
 # positional arguments through every probe, where a transposed pair still reads
@@ -360,6 +360,46 @@ def concurrency(protocol, proxy, target, creds, count):
             future.result(timeout=45)
 
 
+def direct_control(endpoint):
+    """Prove the endpoint resolves and answers, reaching it without the proxy.
+
+    The boundary cases below read a refusal from the absence of data, because Xray
+    replies 0x00 to every CONNECT it accepts: measured against 26.3.27, a
+    blackholed destination, a name that does not resolve, and a reachable target
+    all return the same code. Without this control a name Xray cannot resolve is
+    indistinguishable from a destination the boundary refused, and the hostname
+    case would pass for the wrong reason.
+
+    Counted apart from the tunnels so the target's totals still reconcile exactly.
+    """
+    try:
+        sock = connect(endpoint)
+    except OSError as exc:
+        fail("control connection to %s did not open: %s"
+             % (endpoint.host, type(exc).__name__))
+    try:
+        deadline = time.monotonic() + 8
+        nonce = struct.pack("!Q", BOUNDARY_CID * 104729 + 29)
+        sock.sendall(make_frame(ord("H"), BOUNDARY_CID, 0, nonce, b"hello"))
+        sock.sendall(make_frame(ord("C"), BOUNDARY_CID, 0, nonce, b"control"))
+        with STATS_LOCK:
+            STATS["control_tunnels"] += 1
+            STATS["control_frames"] += 1
+        # The target also sends unsolicited server frames, so read until the echo.
+        while True:
+            kind, ids, frame_nonce, payload = read_frame(sock, deadline)
+            if ids[0] != BOUNDARY_CID or frame_nonce != nonce:
+                fail("control frame identity mismatch")
+            if kind == ord("E"):
+                if payload != b"control":
+                    fail("control echo payload mismatch")
+                return
+            if kind != ord("S"):
+                fail("control connection sent an unexpected frame type")
+    finally:
+        sock.close()
+
+
 def socks5_denied_destination(proxy, target, creds, timeout=8, atyp="ipv4"):
     """True when the proxy refuses a destination inside the SPEC 3 boundary.
 
@@ -468,19 +508,22 @@ def main():
         print("mixed_target_ipv6=ok")
     else:
         print("mixed_target_ipv6=unavailable")
-    # SPEC 3 and 7: the destination boundary. The tunnels above are the positive
-    # control -- if the proxy were simply broken they would have failed first --
-    # so a refusal here is attributable to the boundary and not to a dead engine.
-    # The same target answers at the denied address, so a bypass is observed.
-    if not socks5_denied_destination(proxy, Endpoint(args.denied_host, args.target_port), creds):
+    # SPEC 3 and 7: the destination boundary. The controls come first: they reach
+    # the denied endpoint, by address and by name, without the proxy, so a refusal
+    # below is attributable to the boundary and not to a dead listener or a name
+    # nothing can resolve.
+    denied = Endpoint(args.denied_host, args.target_port)
+    denied_by_name = Endpoint(args.denied_hostname, args.target_port)
+    direct_control(denied)
+    direct_control(denied_by_name)
+    print("mixed_denied_control=ok")
+    if not socks5_denied_destination(proxy, denied, creds):
         fail("mixed proxy reached a destination inside the boundary")
     print("mixed_denied_destination=ok")
     # The literal case above cannot tell IPIfNonMatch from the default AsIs. This
     # one can: the request carries a name, so only a proxy that resolves it before
     # routing sees an address inside the boundary at all.
-    if not socks5_denied_destination(
-            proxy, Endpoint(args.denied_hostname, args.target_port), creds,
-            atyp="hostname"):
+    if not socks5_denied_destination(proxy, denied_by_name, creds, atyp="hostname"):
         fail("mixed proxy reached a hostname resolving inside the boundary")
     print("mixed_denied_hostname=ok")
     if not socks5_wrong_auth(proxy, bad_creds):

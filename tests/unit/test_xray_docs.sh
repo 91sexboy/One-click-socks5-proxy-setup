@@ -131,6 +131,16 @@ done
 # coverage cannot shrink without this file noticing.
 CI=$ROOT/.github/workflows/ci.yml
 ci_text=$(cat "$CI")
+# Both lifecycle bodies are scripts rather than inline blocks, so the assertions
+# about them read those files. gates_text is the triple (ci.yml plus both gate
+# scripts), for the counted assertions that require both backends to prove the
+# same guarantee -- without the systemd script here those counts silently drop by
+# one once its body leaves the YAML.
+ALPINE_GATE=$ROOT/.github/scripts/alpine-lifecycle.sh
+alpine_text=$(cat "$ALPINE_GATE")
+SYSTEMD_GATE=$ROOT/.github/scripts/systemd-lifecycle.sh
+systemd_text=$(cat "$SYSTEMD_GATE")
+gates_text=$(printf '%s\n%s\n%s\n' "$ci_text" "$systemd_text" "$alpine_text")
 
 if grep -qE '^[[:space:]]+continue-on-error[[:space:]]*:' "$CI"; then
     t_bad 'no job in the workflow may declare continue-on-error'
@@ -209,12 +219,28 @@ assert_contains "the memory job passes a cgroup directory to the sampler" \
     'memory-sample.sh "$pid" idle "$cgdir"' "$ci_text"
 assert_contains "the memory job resets peak before sampling" \
     'memory-sample.sh "$pid" reset "$cgdir"' "$ci_text"
+# A stage's peak has to cover establishing its connections, not just holding them.
+# Resetting after the holder reported ready left peak measuring a few milliseconds
+# of steady state, where it cannot differ meaningfully from current, and threw away
+# the allocation spike the number exists to record. The reset therefore precedes
+# the holder, and the assertion anchors on that order rather than on either line.
+assert_contains "each stage resets peak before its connections are established" \
+    'reset "$cgdir"
+            rm -f "$root/held"
+            python3 tests/protocol/hold_connections.py' "$ci_text"
 assert_contains "the memory job resolves the service cgroup" \
     'ControlGroup' "$ci_text"
 assert_contains "the memory job records startup time" \
     'xray_startup_usec' "$ci_text"
 assert_contains "the memory job samples 1, 32 and 128 connections" \
     'for stage in 1 32 128; do' "$ci_text"
+# SPEC 8 says the target and driver stay outside the Xray cgroup. Structurally true,
+# and until now asserted nowhere, so a driver that ended up inside it would have
+# been counted as the proxy's memory.
+assert_contains "the memory job proves the driver is outside the Xray cgroup" \
+    'cgroup.procs' "$ci_text"
+assert_contains "it names the pids that must stay outside" \
+    'is inside the Xray cgroup' "$ci_text"
 assert_contains "each connection stage carries its own label" \
     'memory-sample.sh "$pid" "conn$stage" "$cgdir"' "$ci_text"
 assert_contains "the memory job asserts the cgroup OOM counters" \
@@ -229,50 +255,61 @@ assert_contains "OpenRC lifecycle job tests current Alpine" 'alpine:3.24' "$ci_t
 # than only reaching a healthy install, and it must exercise the installer's own
 # provisioning: pre-installing the runtime tools once hid a real BusyBox defect.
 assert_contains "Alpine gate installs only OpenRC up front" \
-    'apk add --no-cache openrc >/dev/null' "$ci_text"
+    'apk add --no-cache openrc >/dev/null' "$alpine_text"
 assert_not_contains "Alpine gate does not pre-install archive tools" \
-    'apk add --no-cache openrc python3' "$ci_text"
-assert_contains "Alpine gate recovers a killed Xray" 'kill -9 "$crash_pid"' "$ci_text"
+    'apk add --no-cache openrc python3' "$alpine_text"
+assert_contains "Alpine gate recovers a killed Xray" 'kill -9 "$crash_pid"' "$alpine_text"
 assert_contains "Alpine gate proves the listener returns after a crash" \
-    'grep -q "pid=$new_pid,"' "$ci_text"
+    'grep -q "pid=$new_pid,"' "$alpine_text"
 assert_contains "Alpine gate rejects a broken configuration" \
-    'printf "{broken\n" >/etc/xray-socks5/config.json' "$ci_text"
+    'printf "{broken\n" >/etc/xray-socks5/config.json' "$alpine_text"
 assert_contains "Alpine gate audits the installed namespace" \
-    'post_install_audit.sh / "$work/pass.update" openrc' "$ci_text"
+    'post_install_audit.sh / "$work/pass.update" openrc' "$alpine_text"
 assert_contains "Alpine gate runs the independent protocol probe" \
-    'sh tests/protocol/run_xray_mixed.sh' "$ci_text"
+    'sh tests/protocol/run_xray_mixed.sh' "$alpine_text"
 assert_contains "Alpine gate keeps credentials out of argv" \
-    '/proc/$live_pid/cmdline' "$ci_text"
+    '/proc/$live_pid/cmdline' "$alpine_text"
 assert_contains "Alpine gate keeps credentials out of the environment" \
-    '/proc/$live_pid/environ' "$ci_text"
+    '/proc/$live_pid/environ' "$alpine_text"
 assert_contains "Alpine gate proves no packages are installed outside install" \
-    'test "$(apk info | sort | sha256sum)" = "$pkgs_before"' "$ci_text"
+    'test "$(apk info | sort | sha256sum)" = "$pkgs_before"' "$alpine_text"
 
 # Restoring the config with cp hands it the backup copy's private attributes on
 # BusyBox, which looked like a product defect. Both gates restore by truncating
-# in place and then assert the installer's owner and mode survived.
+# in place and then assert the installer's owner and mode survived. Asserting one
+# form per gate is what let the systemd half keep using cp: GNU cp happens to
+# preserve the destination's attributes, so the comment was true of Alpine only.
 assert_contains "Alpine gate restores the config in place" \
-    'cat "$work/good.json" >/etc/xray-socks5/config.json' "$ci_text"
+    'cat "$work/good.json" >/etc/xray-socks5/config.json' "$alpine_text"
+assert_contains "systemd gate restores the config in place" \
+    'sudo tee /etc/xray-socks5/config.json <"$work/good.json"' "$systemd_text"
+assert_not_contains "no gate restores the config with cp" \
+    'cp "$work/good.json" /etc/xray-socks5/config.json' "$gates_text"
 assert_eq "the config owner and mode are asserted after install, update and restore" 5 \
-    "$(printf '%s\n' "$ci_text" | grep -c 'root:xray-socks5 640')"
+    "$(printf '%s\n' "$gates_text" | grep -c 'root:xray-socks5 640')"
 
-# The Alpine lifecycle is one single-quoted argument to docker run, so any
-# apostrophe inside it closes that argument and silently hands the rest of the
-# script to the host shell. This has already broken the gate twice, so the only
-# two quotes allowed in the block are its own delimiters.
+# The lifecycle body used to be one single-quoted argument to docker run, where a
+# single apostrophe closed the argument and handed the rest of the script to the
+# host shell. It broke the gate twice and needed an oracle counting apostrophes to
+# hold it. As a file the body is read by sh -n, dash -n, busybox sh -n and the
+# linter, so what has to be pinned is that it stays out of the YAML.
 openrc_block=$(sed -n '/^  openrc-integration:/,/^  memory-report:/p' "$ROOT/.github/workflows/ci.yml")
-assert_eq "the Alpine lifecycle block has no stray apostrophe" 2 \
-    "$(printf '%s\n' "$openrc_block" | tr -cd "'" | wc -c | tr -d '[:space:]')"
+assert_contains "the Alpine job runs the lifecycle from a script" \
+    'sh /src/.github/scripts/alpine-lifecycle.sh' "$openrc_block"
+assert_not_contains "the Alpine lifecycle body is not inlined in the YAML" \
+    'apk add --no-cache openrc' "$openrc_block"
+assert_contains "the lifecycle script is what installs OpenRC" \
+    'apk add --no-cache openrc' "$alpine_text"
 
 # SPEC 5 calls re-running install an in-place update, and that path had no gate
 # on either backend. Both lifecycle jobs now run one and check the new identity
 # landed in the config and the state with no transaction evidence left over.
 assert_eq "both lifecycle gates run an in-place update" 2 \
-    "$(printf '%s\n' "$ci_text" | grep -c 'chmod 0600 "\$work/answers.update"')"
+    "$(printf '%s\n' "$gates_text" | grep -c 'chmod 0600 "\$work/answers.update"')"
 assert_eq "both gates require the updated identity in the state" 2 \
-    "$(printf '%s\n' "$ci_text" | grep -c 'username\[\[:space:\]\]+ciuser2')"
+    "$(printf '%s\n' "$gates_text" | grep -c 'username\[\[:space:\]\]+ciuser2')"
 assert_eq "both gates require no transaction evidence after an update" 2 \
-    "$(printf '%s\n' "$ci_text" | grep -c 'test ! -e /var/lib/xray-socks5/transaction')"
+    "$(printf '%s\n' "$gates_text" | grep -c 'test ! -e /var/lib/xray-socks5/transaction')"
 
 # The audit is shared between backends, so it must not hard-code systemd paths.
 audit_text=$(cat "$ROOT/tests/protocol/post_install_audit.sh")
@@ -285,17 +322,24 @@ assert_contains "the audit knows the OpenRC artifact" \
 # consistent with the target platform; systemd uses its native guard and Alpine
 # uses the OpenRC integration job.
 assert_contains "the lifecycle job kills the service to prove recovery" \
-    'sudo kill -9 "$crash_pid"' "$ci_text"
+    'sudo kill -9 "$crash_pid"' "$systemd_text"
 assert_contains "the lifecycle job proves the exit-23 restart guard" \
-    'ExecMainStatus' "$ci_text"
+    'ExecMainStatus' "$systemd_text"
 # OpenRC has no exit-status guard, so the Alpine gate takes the status from the
 # supervised binary and proves the respawn guard separately. Both assertions
 # anchor on the comparison rather than on a variable name or a message, because
 # an oracle a deleted guard survives is not an oracle.
 assert_contains "the Alpine gate requires the configuration error to exit 23" \
-    'if test "$broken_status" != 23' "$ci_text"
+    'if test "$broken_status" != 23' "$alpine_text"
 assert_contains "the Alpine gate requires no respawn after a configuration error" \
-    'if test "$respawn_after" != "$respawn_before"' "$ci_text"
+    'if test "$respawn_after" != "$respawn_before"' "$alpine_text"
+# That comparison cannot fail when both sides are absent, which is the state a
+# stopped supervise-daemon leaves behind, so the settle window also has to end with
+# the service provably still down.
+assert_contains "the Alpine gate requires the service to stay down" \
+    'a broken config brought the service back up' "$alpine_text"
+assert_contains "the Alpine gate records the observed child_pid values" \
+    'openrc: child_pid %s then %s' "$alpine_text"
 for _doc in README.md README.zh-CN.md SPEC.md; do
     _doctext=$(cat "$ROOT/$_doc")
     if grep -qi 'alpine' "$ROOT/$_doc" && grep -qi 'openrc' "$ROOT/$_doc"; then
@@ -347,23 +391,49 @@ assert_eq "the protocol launcher denies exactly the same ranges" \
 assert_contains "the protocol launcher resolves hostname destinations" \
     '"domainStrategy": "IPIfNonMatch"' "$(cat "$ROOT/tests/protocol/start_engine.sh")"
 for _dcdoc in README.md README.zh-CN.md; do
+    _dctext=$(cat "$ROOT/$_dcdoc")
     assert_contains "$_dcdoc states the destination boundary" \
-        '169.254.169.254' "$(cat "$ROOT/$_dcdoc")"
+        '169.254.169.254' "$_dctext"
+    # A document that describes the boundary and also denies routing contradicts
+    # itself, and only one of the two halves used to be asserted.
+    assert_not_contains "$_dcdoc does not deny the routing it describes" \
+        'metrics, routing' "$_dctext"
+    assert_not_contains "$_dcdoc does not deny the routing it describes (zh)" \
+        'metrics、routing' "$_dctext"
+    # Install proves auth, the credential differential and the boundary; the
+    # payload round trip is proven in CI. Claiming transport here outlived the
+    # verifier that did it.
+    assert_not_contains "$_dcdoc does not claim install verifies transport" \
+        'bidirectional transport locally' "$_dctext"
+    assert_not_contains "$_dcdoc does not claim install verifies transport (zh)" \
+        '和持续双向传输' "$_dctext"
 done
 
 # SPEC 6's local target has to be put on the host before any job drives traffic
 # through the proxy, or the permitted address would not exist and the denied
 # hostname would not resolve. Three jobs run the mixed gate and the memory job
-# holds tunnels through the same target, so all four need that step.
+# holds tunnels through the same target, so all four need that step. Counted over
+# both gates: the Alpine job's share of these lines lives in its own script.
 assert_eq "every job driving the proxy adds the test target addresses" 4 \
-    "$(grep -c 'add-test-target-addresses.sh' "$ROOT/.github/workflows/ci.yml")"
+    "$(printf '%s\n' "$gates_text" | grep -c 'add-test-target-addresses.sh')"
 assert_eq "the mixed gate runs on all three backends" 3 \
-    "$(grep -c 'run_xray_mixed.sh' "$ROOT/.github/workflows/ci.yml")"
+    "$(printf '%s\n' "$gates_text" | grep -c 'run_xray_mixed.sh')"
 assert_eq "the memory job drives the permitted target" 1 \
     "$(grep -c 'target-host 192.0.2.1' "$ROOT/.github/workflows/ci.yml")"
 # A target bound only to the permitted address would make the boundary case pass
 # because nothing was listening at the denied one.
 assert_eq "the duplex target answers at the denied address too" 4 \
-    "$(grep -c 'duplex_target.py --host 0.0.0.0 --host6 ::' "$ROOT/.github/workflows/ci.yml")"
+    "$(printf '%s\n' "$gates_text" | grep -c 'duplex_target.py --host 0.0.0.0 --host6 ::')"
+
+# SPEC 8 names the shells the unit suite runs under. On ubuntu-24.04 /bin/sh is
+# dash, so an `sh` leg beside a `dash` leg is the same interpreter twice; bash is
+# the /bin/sh of the EL family this branch supports and was never covered.
+for _dcshell in 'command: sh' 'command: dash' 'command: bash' 'command: busybox sh'; do
+    assert_contains "the unit matrix runs $_dcshell" "$_dcshell" "$ci_text"
+done
+# Only SPEC 8 documents the matrix; the READMEs describe what CI covers, not which
+# interpreters it uses.
+assert_contains "SPEC 8 names bash among the unit shells" \
+    'bash' "$(cat "$ROOT/SPEC.md")"
 
 t_summary

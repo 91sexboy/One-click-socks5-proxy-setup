@@ -34,6 +34,7 @@ S5_LOCK_TOKEN=''
 S5_VERIFY_TEMP=''
 S5_CARD_ADDR=''
 S5_CARD_KIND=''
+S5_CONFIG_REPLACED=0
 S5_CREATED_USER=0
 S5_CREATED_GROUP=0
 S5_CREATED_USER_NAMED=0
@@ -152,7 +153,8 @@ s5_msg() {
     root.required) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '安装和管理需要 root 权限。' ;; en) printf 'installation and management require root privileges.' ;; esac ;;
     detect.unsupported) [ "$#" -eq 3 ] || return 1; case "$S5_LANG" in zh) printf '不支持的系统：ID=%s VERSION_ID=%s ARCH=%s。' "$1" "$2" "$3" ;; en) printf 'unsupported system: ID=%s VERSION_ID=%s ARCH=%s.' "$1" "$2" "$3" ;; esac ;;
     detect.commands) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '缺少必要命令：%s。' "$1" ;; en) printf 'required command(s) are missing: %s.' "$1" ;; esac ;;
-    detect.init) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '需要可用的 systemd。' ;; en) printf 'a working systemd is required.' ;; esac ;;
+    detect.init) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '未找到受支持的服务管理器：需要 systemd 或 OpenRC。' ;; en) printf 'no supported service manager was found: systemd or OpenRC is required.' ;; esac ;;
+    packages.failed) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法用 %s 安装运行时软件包。' "$1" ;; en) printf 'could not install the runtime packages with %s.' "$1" ;; esac ;;
     detect.probe) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法确认端口 %s 是否空闲。' "$1" ;; en) printf 'could not determine whether port %s is free.' "$1" ;; esac ;;
     input.port) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '端口 [回车 = 随机 20000-60000]：' ;; en) printf 'Port [Enter = random 20000-60000]: ' ;; esac ;;
     input.port.invalid) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '端口必须是 1024-65535 的十进制数字。' ;; en) printf 'port must be a decimal number from 1024 to 65535.' ;; esac ;;
@@ -412,7 +414,11 @@ s5_random_string() {
 }
 
 s5_random_port() {
-    _srp=$(od -An -N2 -tu2 /dev/urandom 2>/dev/null | tr -d '[:space:]') || return 1
+    # tr -cd '0-9', not tr -cd '0-9': BusyBox tr reads '[:space:]' as the
+    # literal set {[ : s p a c e ]} rather than the whitespace class, so od's
+    # leading space would survive and the value below would fail its digit check.
+    # A blank port answer on Alpine then aborts the install instead of generating.
+    _srp=$(od -An -N2 -tu2 /dev/urandom 2>/dev/null | tr -cd '0-9') || return 1
     case "$_srp" in '' | *[!0-9]*) return 1 ;; esac
     printf '%s' "$((20000 + (_srp % 40001)))"
 }
@@ -756,20 +762,24 @@ s5_download_engine() {
         cp "$S5_TEST_ASSET_PATH" "$_sdezip" || return 1
     else
         s5_msg_print asset.download "$S5_ASSET_NAME" >&2
-        # curl enforces the hard upper bound while streaming; the exact byte
-        # count below remains the independent acceptance check.
+        # --proto/--proto-redir pin HTTPS, --max-time caps the transfer, and
+        # --max-filesize aborts mid-stream only when the response advertises a
+        # Content-Length over the limit -- a chunked reply with no length escapes it.
+        # The exact-size and SHA-256 checks below are therefore the authoritative
+        # acceptance: they reject anything that is not the pinned artifact byte for
+        # byte, and the size check also bounds what a length-less reply left on disk.
         curl -fsSL --proto '=https' --proto-redir '=https' \
             --max-time 120 --max-filesize "$((S5_ASSET_SIZE + 1))" \
             -o "$_sdezip" "$S5_XRAY_BASE/$S5_ASSET_NAME" || {
             s5_msg_err asset.invalid download
             return 1
         }
-        [ "$(wc -c <"$_sdezip" | tr -d '[:space:]')" -le "$((S5_ASSET_SIZE + 1))" ] || {
+        [ "$(wc -c <"$_sdezip" | tr -cd '0-9')" -le "$((S5_ASSET_SIZE + 1))" ] || {
             s5_msg_err asset.invalid size
             return 1
         }
     fi
-    [ "$(wc -c <"$_sdezip" | tr -d '[:space:]')" = "$S5_ASSET_SIZE" ] || { s5_msg_err asset.invalid size; return 1; }
+    [ "$(wc -c <"$_sdezip" | tr -cd '0-9')" = "$S5_ASSET_SIZE" ] || { s5_msg_err asset.invalid size; return 1; }
     [ "$(sha256sum "$_sdezip" | awk '{print $1}')" = "$S5_ASSET_SHA256" ] || { s5_msg_err asset.invalid sha256; return 1; }
     _sdem=$S5_WORKDIR/members
     unzip -Z1 "$_sdezip" >"$_sdem" 2>/dev/null || { s5_msg_err asset.invalid members; return 1; }
@@ -777,7 +787,7 @@ s5_download_engine() {
     for _sden in geoip.dat geosite.dat LICENSE README.md; do
         [ "$(grep -cxF "$_sden" "$_sdem" || true)" = 1 ] || { s5_msg_err asset.invalid members; return 1; }
     done
-    [ "$(wc -l <"$_sdem" | tr -d '[:space:]')" = 5 ] || { s5_msg_err asset.invalid members; return 1; }
+    [ "$(wc -l <"$_sdem" | tr -cd '0-9')" = 5 ] || { s5_msg_err asset.invalid members; return 1; }
     while IFS= read -r _sden; do
         case "$_sden" in '' | */* | *..* | *\\*) s5_msg_err asset.invalid members; return 1 ;; esac
     done <"$_sdem"
@@ -789,7 +799,7 @@ s5_download_engine() {
     fi
     _sdev=$S5_WORKDIR/xray
     unzip -p "$_sdezip" xray >"$_sdev" 2>/dev/null || return 1
-    [ "$(wc -c <"$_sdev" | tr -d '[:space:]')" = "$S5_ASSET_BINARY_SIZE" ] || { s5_msg_err asset.invalid binary-size; return 1; }
+    [ "$(wc -c <"$_sdev" | tr -cd '0-9')" = "$S5_ASSET_BINARY_SIZE" ] || { s5_msg_err asset.invalid binary-size; return 1; }
     [ "$(sha256sum "$_sdev" | awk '{print $1}')" = "$S5_ASSET_BINARY_SHA256" ] || { s5_msg_err asset.invalid binary-sha256; return 1; }
     chmod 0755 "$_sdev" || return 1
     _sdef=$(file -b "$_sdev" 2>/dev/null) || return 1
@@ -874,12 +884,12 @@ s5_account_identity() {
     _saiu=$(id -u "$S5_SERVICE_USER" 2>/dev/null) || return 1
     _saig=$(id -g "$S5_SERVICE_USER" 2>/dev/null) || return 1
     [ "$_saiu" = "$S5_ACCOUNT_UID" ] && [ "$_saig" = "$S5_ACCOUNT_GID" ] || return 1
-    if [ "$S5_OS_FAMILY" = alpine ]; then
-        _saig_named=$(getent group "$S5_SERVICE_GROUP" 2>/dev/null | awk -F: 'NR == 1 { print $3 }') || return 1
-        [ "$_saig_named" = "$S5_ACCOUNT_GID" ]
-    else
-        return 0
-    fi
+    # The group is removed by name at uninstall, so on every backend -- not only
+    # Alpine -- the name must still resolve to the recorded GID. A group that drifted
+    # to a new GID, or a same-named group created by something else, must not be
+    # deleted: SPEC 7 removes only the resources this installation recorded.
+    _saig_named=$(getent group "$S5_SERVICE_GROUP" 2>/dev/null | awk -F: 'NR == 1 { print $3 }') || return 1
+    [ "$_saig_named" = "$S5_ACCOUNT_GID" ]
 }
 
 s5_account_remove() {
@@ -1153,6 +1163,7 @@ s5_state_load() {
     s5_valid_port "$S5_PORT" && s5_valid_username "$S5_USERNAME" && s5_ipv4_is_canonical "$S5_LISTEN" || return 1
     [ -f "$S5_UNIT" ] && [ ! -L "$S5_UNIT" ] || return 1
     [ "$(sha256sum "$S5_UNIT" 2>/dev/null | awk '{print $1}')" = "$S5_UNIT_SHA256" ] || return 1
+    [ -f "$S5_CFG" ] && [ ! -L "$S5_CFG" ] || return 1
     [ "$(sha256sum "$S5_CFG" 2>/dev/null | awk '{print $1}')" = "$S5_CONFIG_SHA256" ] || return 2
     [ -f "$S5_BIN" ] && [ ! -L "$S5_BIN" ] && [ -x "$S5_BIN" ] || return 1
     [ "$(sha256sum "$S5_BIN" 2>/dev/null | awk '{print $1}')" = "$S5_BINARY_SHA256" ] || return 1
@@ -1308,7 +1319,14 @@ try:
     socks_bad_auth_refused()
     http_auth_discriminates()
 except Exception as exc:
-    raise SystemExit("data-plane verification failed: %s" % type(exc).__name__)
+    # Keep the reason, not just the type: eleven distinct RuntimeError messages and
+    # BoundaryBypassed("loopback reached") otherwise collapse to one word, so the
+    # operator cannot tell an auth failure from a boundary bypass. Every raise site
+    # uses a fixed literal that never carries the credential, so naming the reason
+    # costs no secrecy.
+    reason = str(exc) or type(exc).__name__
+    raise SystemExit("data-plane verification failed: %s: %s"
+                     % (type(exc).__name__, reason))
 finally:
     stop.set()
 PY
@@ -1526,10 +1544,19 @@ s5_cleanup() {
         # forever: the installation could be neither repaired nor removed through
         # the CLI. If the restore itself fails, keep the evidence for the next run
         # rather than destroying it.
-        if [ -f "$S5_TXNDIR/old.config.json" ] && [ -f "$S5_TXNDIR/old.state" ]; then
+        #
+        # Restoring is gated on this run having actually published a new config.
+        # Every other resource carries an S5_CREATED_* flag and the transaction
+        # carried none, so an update that aborted before publication -- a rejected
+        # candidate, or a binary that failed its digest -- came through here and
+        # replaced the live config file with a byte-identical copy and restarted a
+        # healthy service for a candidate that never reached it.
+        if [ "$S5_CONFIG_REPLACED" = 1 ] &&
+            [ -f "$S5_TXNDIR/old.config.json" ] && [ -f "$S5_TXNDIR/old.state" ]; then
             if s5_restore_transaction "$S5_TXNDIR/old.config.json" "$S5_TXNDIR/old.state"; then
                 s5_service_restart || true
                 s5_cleanup_transaction || true
+                S5_CONFIG_REPLACED=0
             fi
         else
             s5_cleanup_transaction || true
@@ -1611,7 +1638,7 @@ s5_install_runtime_dependencies() {
     _s5apk=$?
     set +f
     [ "$_s5apk" -eq 0 ] || {
-        s5_msg_err detect.commands "Alpine runtime packages"
+        s5_msg_err packages.failed apk
         return 1
     }
     return 0
@@ -1652,7 +1679,7 @@ s5_precheck() {
         s5_require_commands addgroup adduser delgroup deluser rc-service rc-update rc-status logger unzip curl file od chown python3 ss || return 1
         ;;
     systemd:install|systemd:update)
-        s5_require_commands groupadd groupdel useradd userdel unzip curl file od chown python3 || return 1
+        s5_require_commands groupadd groupdel useradd userdel systemctl unzip curl file od chown python3 || return 1
         command -v ss >/dev/null 2>&1 || { s5_msg_err detect.commands ss; return 1; }
         ;;
     openrc:status)
@@ -1837,15 +1864,24 @@ s5_install_update() {
     s5_service_stop || { s5_msg_err service.stop; rm -f "$_siinc"; return 1; }
     s5_wait_stopped
     case $? in 0) ;; *) s5_msg_err service.stop; rm -f "$_siinc"; return 1 ;; esac
+    # Mark the publish before performing it, not after. A signal delivered between
+    # the mv and the flag would take s5_cleanup down its "nothing published" path,
+    # deleting the transaction backup and leaving this run's unverified config live
+    # against the old state hash -- unrecoverable. Setting the flag first means a
+    # signal anywhere around the rename still finds a restorable transaction. In the
+    # remaining gap (flag set, rename not yet done) the old config is still on disk,
+    # so the cleanup restore rewrites it with an identical copy and restarts the
+    # service this path had already stopped: the correct recovery, not a regression.
+    S5_CONFIG_REPLACED=1
     if ! mv -f "$_siinc" "$S5_CFG"; then
+        S5_CONFIG_REPLACED=0
         rm -f "$_siinc"
         s5_restore_transaction "$_sioldcfg" "$_sioldstate" || true
         s5_service_start || true
         return 1
     fi
     if ! s5_service_start; then
-        s5_restore_transaction "$_sioldcfg" "$_sioldstate" || true
-        s5_service_start || true
+        s5_update_rollback "$_sioldcfg" "$_sioldstate"
         rm -f "$_siinc"
         return 1
     fi
@@ -1868,6 +1904,9 @@ s5_install_update() {
     fi
     rm -f "$_sioldcfg" "$_sioldstate"
     rmdir "$S5_TXNDIR" 2>/dev/null || true
+    # The flag's lifetime is the transaction's: once there is nothing to roll back
+    # to, nothing may try.
+    S5_CONFIG_REPLACED=0
     S5_INSTALL_COMPLETE=1
     return 0
 }
@@ -1952,7 +1991,7 @@ s5_read_public_ipv4() {
             return 1
         fi
     fi
-    _lpsz=$(wc -c <"$_lpf" 2>/dev/null | tr -d '[:space:]')
+    _lpsz=$(wc -c <"$_lpf" 2>/dev/null | tr -cd '0-9')
     case "$_lpsz" in '' | *[!0-9]*) _lpsz=18 ;; esac
     # The longest address is 15 bytes and one terminator is allowed two, so a
     # larger body cannot be a single address. Checked before the read so an
@@ -2099,7 +2138,17 @@ s5_cmd_uninstall() {
         # The state file can be absent while an interrupted uninstall left the
         # namespace behind. Reporting success then hides real residue, including a
         # transaction copy of the previous config with its password in cleartext.
-        if [ -e "$S5_SYSCONFDIR" ] || [ -e "$S5_STATEDIR" ] || [ -e "$S5_PREFIX" ]; then
+        # The three directories are not the whole namespace: the service unit lives
+        # outside them and so does the account, so a partial cleanup that spared
+        # either would otherwise read as "nothing installed".
+        case "$S5_INIT" in
+        openrc) _suunit=$S5_INITSCRIPT ;;
+        *) _suunit=$S5_UNITDIR/$S5_PROJECT.service ;;
+        esac
+        s5_getent_state passwd "$S5_SERVICE_USER"
+        _suacct=$?
+        if [ -e "$S5_SYSCONFDIR" ] || [ -e "$S5_STATEDIR" ] || [ -e "$S5_PREFIX" ] ||
+            [ -e "$_suunit" ] || [ -L "$_suunit" ] || [ "$_suacct" = 0 ]; then
             s5_msg_err state.invalid "$S5_STATE"
             return 1
         fi

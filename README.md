@@ -84,11 +84,13 @@ script
   → replace the configuration atomically
   → run Xray as a non-root account
   → wait for the service and the exact port to become ready
-  → verify SOCKS5, HTTP and sustained bidirectional transport locally
+  → verify SOCKS5 and HTTP authentication, and that the destination boundary
+    refuses a live local destination
 ```
 
-The configuration contains no Xray API, stats, metrics, routing, GeoIP,
-GeoSite, TLS, REALITY, WebSocket, gRPC, XHTTP or second public listener.
+The configuration contains no Xray API, stats, metrics, GeoIP, GeoSite, TLS,
+REALITY, WebSocket, gRPC, XHTTP or second public listener, and no routing rule
+beyond the destination boundary described under Security boundaries.
 
 The script does not modify host firewalls, cloud security groups, NAT or port
 forwarding. Opening the chosen TCP port is left to the administrator.

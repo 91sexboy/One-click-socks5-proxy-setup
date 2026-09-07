@@ -87,13 +87,31 @@ done
 # drops it silently and the run still reports green -- so "the tests pass" would
 # survive removing the test that fails. Only meaningful for a full run; a FILTER
 # is expected to select a subset. Bumping this number must be a deliberate act.
-EXPECTED_UNIT_FILES=14
+EXPECTED_UNIT_FILES=16
 if [ -z "$FILTER" ] && [ "$files" -ne "$EXPECTED_UNIT_FILES" ]; then
     bad_files=$((bad_files + 1))
     printf 'FAIL unit file count is %d, expected %d\n' \
         "$files" "$EXPECTED_UNIT_FILES"
     printf '     A test file was added or removed. Update EXPECTED_UNIT_FILES\n'
     printf '     in tests/run.sh deliberately, in the same change.\n'
+fi
+
+# Skips are the other half of that falsifiability. The file count cannot notice a
+# file that ran and skipped its cases, and t_skip prints nothing any CI step reads,
+# so a guard turning itself off silently removed SPEC 7's eight archive refusals
+# while the suite still reported ok. BusyBox sh resolves its own unzip applet,
+# which has no -Z, so those cases genuinely cannot run there; every other
+# interpreter must run all of them.
+case "$SHELL_UNDER_TEST" in
+*busybox*) EXPECTED_SKIPS=1 ;;
+*) EXPECTED_SKIPS=0 ;;
+esac
+if [ -z "$FILTER" ] && [ "$total_skip" -ne "$EXPECTED_SKIPS" ]; then
+    bad_files=$((bad_files + 1))
+    printf 'FAIL skip count is %d, expected %d under %s\n' \
+        "$total_skip" "$EXPECTED_SKIPS" "$SHELL_UNDER_TEST"
+    printf '     A skipped case is coverage that did not run. Update\n'
+    printf '     EXPECTED_SKIPS in tests/run.sh deliberately, in the same change.\n'
 fi
 
 printf -- '----\n'

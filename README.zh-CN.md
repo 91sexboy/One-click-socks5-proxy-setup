@@ -74,10 +74,10 @@ UDP：关闭
   → 原子替换配置
   → 以非 root 账户运行 Xray
   → 等待服务和精确端口就绪
-  → 验证 SOCKS5、HTTP 和持续双向传输
+  → 验证 SOCKS5 与 HTTP 认证，并验证目标边界会拒绝一个活着的本地目标
 ```
 
-配置不包含 Xray API、stats、metrics、routing、GeoIP、GeoSite、TLS、REALITY、WebSocket、gRPC、XHTTP 或第二个公开监听器。
+配置不包含 Xray API、stats、metrics、GeoIP、GeoSite、TLS、REALITY、WebSocket、gRPC、XHTTP 或第二个公开监听器；除「安全边界」一节描述的目标边界之外没有任何路由规则。
 
 脚本不会修改主机防火墙、云安全组、NAT 或端口转发。请由管理员自行放行选定的 TCP 端口。
 

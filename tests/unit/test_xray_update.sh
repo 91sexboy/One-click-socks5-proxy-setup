@@ -182,6 +182,125 @@ assert_eq "the old state is restored" \
     "$_upstate" "$(sha256sum "$S5_STATE" | awk '{print $1}')"
 assert_file_absent "the transaction evidence is removed" "$S5_TXNDIR"
 
+# SPEC 5 puts the candidate config-test ahead of stopping a healthy service and
+# leaves the old config untouched. s5_install_update copies the config and state
+# into the transaction directory before it renders and tests the candidate, so a
+# rejection reaches s5_cleanup with a full transaction and nothing published. The
+# guard there is only "both files exist", so it restored a byte-identical config
+# over the live one and restarted a healthy service for a candidate that never
+# reached publication.
+#
+# The seam is s5_cmd_install rather than s5_install_update: the cleanup only runs
+# from there, which is why the cases above could not see this. The restart is
+# counted separately from the stop for the same reason -- s5_service_restart issues
+# `systemctl restart`, so an oracle counting only `systemctl stop` stays green.
+_upinode=$(stat -c '%i' "$S5_CFG")
+_upcfg=$(sha256sum "$S5_CFG" | awk '{print $1}')
+_upstate=$(sha256sum "$S5_STATE" | awk '{print $1}')
+_uprestarts=$(grep -c 'systemctl restart' "$S5_TEST_ROOT/transcript" || true)
+s5_precheck() { return 0; }
+printf 1 >"$S5_TEST_ROOT/cfgtest"
+s5_prompt_port() { S5_PORT=24999; return 0; }
+# This file is one long-lived shell, but production runs each command in a fresh
+# process, so the flags s5_cleanup reads have to be put back to their start-up
+# values. The earlier successful update left S5_INSTALL_COMPLETE=1, which skips
+# the whole cleanup body and would hide exactly what this case is about.
+S5_INSTALL_COMPLETE=0
+S5_IN_CLEANUP=0
+S5_SERVICE_STARTED=0
+S5_UNIT_ENABLED=0
+S5_CONFIG_REPLACED=0
+S5_CREATED_UNIT=0
+S5_CREATED_CFG=0
+S5_CREATED_BIN=0
+S5_CREATED_USER=0
+S5_CREATED_GROUP=0
+S5_CREATED_CONFDIR=0
+S5_CREATED_STATEDIR=0
+S5_CREATED_PREFIX=0
+# A subshell so the command's EXIT trap fires there instead of displacing the
+# harness's own cleanup. That is also how the real command behaves: the trap runs
+# as the process exits.
+( s5_cmd_install ) >"$S5_TEST_ROOT/cmdinstall.log" 2>&1
+_upstatus=$?
+rm -f "$S5_TEST_ROOT/cfgtest"
+assert_ne "a rejected candidate fails the install command" 0 "$_upstatus"
+assert_eq "the live config file is not replaced" \
+    "$_upinode" "$(stat -c '%i' "$S5_CFG")"
+assert_eq "the live config content is unchanged" \
+    "$_upcfg" "$(sha256sum "$S5_CFG" | awk '{print $1}')"
+assert_eq "the live state is unchanged" \
+    "$_upstate" "$(sha256sum "$S5_STATE" | awk '{print $1}')"
+assert_eq "a healthy service is not restarted" "$_uprestarts" \
+    "$(grep -c 'systemctl restart' "$S5_TEST_ROOT/transcript" || true)"
+assert_file_absent "the transaction is not left behind" "$S5_TXNDIR"
+assert_eq "the service still listens on its own port" 23999 \
+    "$(cat "$S5_TEST_ROOT/svc_active")"
+
+# SPEC 5, the window the S5_CONFIG_REPLACED flag exists to close. The flag is set
+# after the mv that publishes the candidate, so a signal delivered between the two
+# -- the rename has completed, the flag is still 0 -- takes s5_cleanup down the
+# "nothing was published" branch: it deletes the transaction backup and leaves this
+# run's unverified config live against the old recorded state hash, the exact
+# unrecoverable state the flag is meant to prevent. Shadowing mv fires the real
+# signal handler the instant the publish rename returns, which is where the window
+# is; the one-shot guard keeps the restore's own mv inside cleanup from re-firing.
+_winold=$(sha256sum "$S5_CFG" | awk '{print $1}')
+s5_precheck() { return 0; }
+s5_wait_listening() { return 0; }
+s5_wait_stopped() { return 0; }
+rm -f "$S5_TEST_ROOT/cfgtest"
+s5_prompt_port() { S5_PORT=24333; return 0; }
+S5_INSTALL_COMPLETE=0
+S5_IN_CLEANUP=0
+S5_SERVICE_STARTED=0
+S5_UNIT_ENABLED=0
+S5_CONFIG_REPLACED=0
+S5_CREATED_UNIT=0
+S5_CREATED_CFG=0
+S5_CREATED_BIN=0
+S5_CREATED_USER=0
+S5_CREATED_GROUP=0
+S5_CREATED_CONFDIR=0
+S5_CREATED_STATEDIR=0
+S5_CREATED_PREFIX=0
+S5T_MV_FIRED=0
+mv() {
+    command mv "$@" || return $?
+    _mvdest=''
+    for _mvdest in "$@"; do :; done
+    if [ "$_mvdest" = "$S5_CFG" ] && [ "$S5T_MV_FIRED" = 0 ]; then
+        S5T_MV_FIRED=1
+        s5_on_signal 143
+    fi
+}
+( s5_cmd_install ) >"$S5_TEST_ROOT/winsignal.log" 2>&1
+_winstatus=$?
+unset -f mv
+s5_prompt_port() { return 0; }
+assert_ne "a signal in the publish window fails the command" 0 "$_winstatus"
+assert_eq "a signal in the publish window leaves the recoverable old config live" \
+    "$_winold" "$(sha256sum "$S5_CFG" | awk '{print $1}')"
+t_run s5_state_load
+assert_eq "the installation is still loadable after an interrupted publish" \
+    0 "$T_STATUS"
+assert_eq "the restored service listens on the port it owned" 23999 \
+    "$(cat "$S5_TEST_ROOT/svc_active" 2>/dev/null || printf missing)"
+
+# A symlinked config is refused before its recorded hash is trusted -- the same
+# guard the state, unit and binary already carry. The link points at byte-identical
+# content, so only the [ ! -L ] check can reject it; the hash comparison alone would
+# follow the link and load. The state above loads cleanly, so this isolates the guard.
+cp "$S5_CFG" "$S5_TEST_ROOT/realcfg"
+rm -f "$S5_CFG"
+ln -s "$S5_TEST_ROOT/realcfg" "$S5_CFG"
+t_run s5_state_load
+assert_ne "a symlinked config is refused even with matching content" 0 "$T_STATUS"
+rm -f "$S5_CFG"
+mv "$S5_TEST_ROOT/realcfg" "$S5_CFG"
+t_run s5_state_load
+assert_eq "the regular config still loads after the symlink check" 0 "$T_STATUS"
+
 # Uninstall had no unit coverage at all, and it removed the unit, config, binary,
 # account and state before checking that the directories were empty. A leftover
 # from an interrupted update therefore aborted it after the destructive half, and
@@ -215,5 +334,19 @@ rm -rf "$S5_STATEDIR"
 T_OUT=$(s5_cmd_uninstall <"$S5_TEST_ROOT/answers.uninstall" 2>&1) &&
     T_STATUS=0 || T_STATUS=$?
 assert_eq "a clean namespace reports nothing installed" 0 "$T_STATUS"
+
+# Residue outside the three namespace directories must fail closed too. A unit file
+# that survived a partial cleanup lives under S5_UNITDIR (systemd here), not in the
+# config/state/prefix dirs, so the earlier scan could not see it and reported
+# "nothing installed" while the unit lingered.
+_sa3unit=$S5_UNITDIR/$S5_PROJECT.service
+: >"$_sa3unit"
+T_OUT=$(s5_cmd_uninstall <"$S5_TEST_ROOT/answers.uninstall" 2>&1) &&
+    T_STATUS=0 || T_STATUS=$?
+assert_ne "a surviving unit file is residue, not nothing-installed" 0 "$T_STATUS"
+rm -f "$_sa3unit"
+T_OUT=$(s5_cmd_uninstall <"$S5_TEST_ROOT/answers.uninstall" 2>&1) &&
+    T_STATUS=0 || T_STATUS=$?
+assert_eq "the namespace with the unit gone reports nothing installed" 0 "$T_STATUS"
 
 t_summary

@@ -39,8 +39,24 @@ S5_PASSWORD=''
 s5env_answers_placeholder=''
 printf '\n\n\n' >"$S5_TEST_ROOT/values"
 S5_LANG=en
-t_run sh -c '. "$1"; S5_LANG=en; S5_PORT_PROBE="$2"; export S5_PORT_PROBE; s5_prompt_port; s5_prompt_username; s5_prompt_password' sh "$ROOT/socks5.sh" "$S5_PORT_PROBE" <"$S5_TEST_ROOT/values"
+# A blank answer to each prompt has to reach generation and produce a value the
+# validators accept. Asserting only the exit status let a prompt return 0 having
+# generated nothing. The subshell reports whether the three values validate, never
+# the values themselves, so a failure here cannot publish the password.
+t_run sh -c '. "$1"; S5_LANG=en; S5_PORT_PROBE="$2"; export S5_PORT_PROBE; s5_prompt_port; s5_prompt_username; s5_prompt_password; s5_valid_port "$S5_PORT" && s5_valid_username "$S5_USERNAME" && s5_valid_password "$S5_PASSWORD" && printf generated' sh "$ROOT/socks5.sh" "$S5_PORT_PROBE" <"$S5_TEST_ROOT/values"
 assert_eq "empty value stream reaches random generation" 0 "$T_STATUS"
+assert_contains "each generated value satisfies its own validator" \
+    generated "$T_OUT"
+
+# s5_random_port must also generate a valid port under BusyBox, where od emits a
+# leading space that the old 'tr -d [:space:]' idiom left in place (BusyBox reads
+# that as a literal character set, not the whitespace class). This call runs under
+# the shell the suite was invoked with, so the BusyBox leg exercises BusyBox od/tr
+# directly; a blank port answer on Alpine used to abort the install here.
+_rp=$(s5_random_port) && _rprc=0 || _rprc=$?
+assert_eq "random port generation succeeds" 0 "$_rprc"
+s5_valid_port "$_rp"; _rpv=$?
+assert_eq "the generated random port is valid" 0 "$_rpv"
 
 S5_PORT=23456
 S5_USERNAME=alice
@@ -179,6 +195,22 @@ S5_LANG=''
 t_run s5_msg lang.prompt
 assert_eq "the language prompt renders before a language is chosen" 0 "$T_STATUS"
 assert_contains "the language prompt is bilingual" 'Choose language' "$T_OUT"
+
+# detect.init is the catch-all for an init this script does not recognise, on a
+# branch that supports both systemd and OpenRC, so naming only systemd sends the
+# operator after the wrong thing. An apk failure is likewise not a missing command.
+S5_LANG=en
+t_run s5_msg detect.init
+assert_eq "the init diagnostic renders" 0 "$T_STATUS"
+assert_not_contains "the init diagnostic does not name systemd alone" \
+    'a working systemd is required' "$T_OUT"
+assert_contains "the init diagnostic names OpenRC too" 'OpenRC' "$T_OUT"
+t_run s5_msg packages.failed apk
+assert_eq "a package-install failure has its own key" 0 "$T_STATUS"
+assert_contains "it names the package manager" 'apk' "$T_OUT"
+S5_LANG=zh
+t_run s5_msg packages.failed apk
+assert_eq "the package-install failure renders in Chinese" 0 "$T_STATUS"
 S5_LANG=$_msglang
 
 # Each operation must require only what it runs. status reads service and
@@ -242,5 +274,20 @@ assert_eq "status never needs the member listing" 0 "$_pcss"
 printf 'infozip\n' >"$S5_TEST_ROOT/unzip-mode"
 _pcinstall=$(s5_precheck install 2>&1) && _pcis=0 || _pcis=$?
 assert_eq "install accepts an unzip that lists members" 0 "$_pcis"
+
+# SPEC 5 runs the service through the platform's native manager, so install and
+# update must require that manager up front like every other command does. The
+# systemd install/update case listed the account and archive tools but not
+# systemctl, so a systemd host missing it passed precheck and failed later with no
+# diagnostic naming the tool. The OpenRC case has always required rc-service.
+S5_OSRELEASE="$ROOT/tests/fixtures/os-release/debian-12"
+_pcreq=$(s5_precheck install 2>&1)
+assert_contains "systemd install requires systemctl" 'systemctl' "$_pcreq"
+_pcreq=$(s5_precheck update 2>&1)
+assert_contains "systemd update requires systemctl" 'systemctl' "$_pcreq"
+S5_OSRELEASE="$ROOT/tests/fixtures/os-release/alpine-3.20"
+_pcreq=$(s5_precheck install 2>&1)
+assert_contains "openrc install requires its service manager" 'rc-service' "$_pcreq"
+S5_OSRELEASE="$ROOT/tests/fixtures/os-release/debian-12"
 unset -f unzip
 t_summary

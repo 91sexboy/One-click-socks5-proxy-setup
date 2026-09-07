@@ -39,12 +39,13 @@ cat "$OUT/probe.log"
 grep -q '^mixed_target_ipv4=ok$' "$OUT/probe.log" || exit 1
 grep -q '^mixed_target_hostname=ok$' "$OUT/probe.log" || exit 1
 grep -qE '^mixed_target_ipv6=(ok|unavailable)$' "$OUT/probe.log" || exit 1
+grep -q '^mixed_denied_control=ok$' "$OUT/probe.log" || exit 1
 grep -q '^mixed_denied_destination=ok$' "$OUT/probe.log" || exit 1
 grep -q '^mixed_denied_hostname=ok$' "$OUT/probe.log" || exit 1
 
 # The target flushes its counters as each tunnel closes, so the two sides
 # converge shortly after the probe exits rather than only at shutdown.
-python3 - "$REPORT" "$OUT/stats" <<'PY'
+python3 - "$REPORT" "$OUT/stats" "$OUT/probe.log" <<'PY'
 import json
 import sys
 import time
@@ -59,17 +60,30 @@ deadline = time.monotonic() + 15
 while True:
     report = load(sys.argv[1])
     stats = load(sys.argv[2])
-    if (report["accepted"] == stats["tunnels"]
-            and report["frames"] == stats["client_frames"]):
+    # The boundary controls reach the target directly, so they land in its totals
+    # without being tunnels. Counted apart and added back here, rather than
+    # loosening the comparison, which is the only thing that makes frame loss
+    # visible.
+    tunnels = stats["tunnels"] + stats["control_tunnels"]
+    frames = stats["client_frames"] + stats["control_frames"]
+    if report["accepted"] == tunnels and report["frames"] == frames:
         break
     if time.monotonic() >= deadline:
         sys.exit(
             "duplex counters never reconciled: target accepted=%d frames=%d, "
             "probe tunnels=%d frames=%d"
-            % (report["accepted"], report["frames"],
-               stats["tunnels"], stats["client_frames"])
+            % (report["accepted"], report["frames"], tunnels, frames)
         )
     time.sleep(0.2)
+# The IPv6 target is conditional on the host providing the address, and the probe
+# decides that for itself, so `unavailable` on its own proves nothing. The target
+# reports which families it actually bound, which is an independent observation:
+# when it bound IPv6, the probe skipping the case is a regression rather than an
+# environment.
+with open(sys.argv[3], encoding="ascii") as handle:
+    probe_log = handle.read()
+if "ipv6" in report["families"] and "mixed_target_ipv6=ok" not in probe_log:
+    sys.exit("the target bound IPv6 but the probe did not run the IPv6 target case")
 print("target_families=%s" % ",".join(report["families"]))
 print("duplex_tunnels=%d" % report["accepted"])
 print("duplex_frames=%d" % report["frames"])

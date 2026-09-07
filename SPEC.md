@@ -63,6 +63,15 @@ The default release is the official stable Xray-core `v26.3.27`, tag commit
 | amd64 / x86_64 | `Xray-linux-64.zip` | 21136402 | `23cd9af937744d97776ee35ecad4972cf4b2109d1e0fe6be9930467608f7c8ae` |
 | arm64 / aarch64 | `Xray-linux-arm64-v8a.zip` | 19716427 | `4d30283ae614e3057f730f67cd088a42be6fdf91f8639d82cb69e48cde80413c` |
 
+The extracted `xray` member is pinned as well, and is what the installer records
+in state and re-checks on every later command, so a wrong value here refuses
+every install on that architecture:
+
+| Architecture | Binary size | Binary SHA-256 |
+|---|---:|---|
+| amd64 / x86_64 | 36577406 | `8255dd939c34cf966cc91517b6324dd3c8d0bcf49ffac8beca049a38c46845ed` |
+| arm64 / aarch64 | 34209918 | `c2d20a7045250497083afea0d79db0672f6c89a25aaaf37c92de034d6b764b04` |
+
 Official Linux assets are architecture-oriented static binaries. The target
 does not compile source code and does not receive Go, Git, GCC, Make, or headers.
 
@@ -112,11 +121,15 @@ blackhole outbound carrying the destination boundary:
 ```
 
 These twelve ranges are the destination boundary, and it is a release blocker for
-an authenticated client to reach any of them. They cover the proxy host's own
-loopback, the private and CGNAT ranges reachable behind it, and the link-local
-range that carries cloud instance metadata at `169.254.169.254`. The ranges are
-literal CIDRs rather than `geoip:private`, because the installer extracts only
-the `xray` executable and no GeoIP database is ever placed on disk.
+an authenticated client to reach any of them. Nine cover what sits on or behind
+the proxy host: its own loopback, the private and CGNAT ranges, and the
+link-local range that carries cloud instance metadata at `169.254.169.254`. The
+remaining three are denied because a tunnel is the wrong way to reach them at
+all: `0.0.0.0/8` is "this host" and has no meaning as a destination,
+`224.0.0.0/4` is multicast, which a TCP CONNECT cannot address, and
+`240.0.0.0/4` is reserved and unrouteable. The ranges are literal CIDRs rather
+than `geoip:private`, because the installer extracts only the `xray` executable
+and no GeoIP database is ever placed on disk.
 
 `domainStrategy` is `IPIfNonMatch`, so a hostname destination is resolved and
 matched against the same ranges; with the default `AsIs` an `ip` rule can match
@@ -156,8 +169,13 @@ publication, service start, exact-listener readiness, and local protocol verific
 | OpenRC | `/etc/init.d/xray-socks5` | `root:root 0755` |
 | Account | `xray-socks5` | system, no home, `nologin`, no password |
 
-The config is the only credential-bearing file. State contains no password. The
-service command line and environment contain no password.
+Three files carry the credential, all of them `root`-owned and unreadable by
+others. The config (`0640`, `root:xray-socks5`) is the only one that persists: an
+update keeps a `0600` copy of the previous config under the state directory for
+as long as the transaction lasts, and the install-time verification writes the
+account to a `0600` temporary that is removed as soon as it returns, including on
+a signal. State contains no password. The service command line and environment
+contain no password.
 
 The Xray namespace is independent of the former 3proxy namespace. The script
 never adopts, replaces, or removes old `socks5-manager` paths, units, or the
@@ -178,7 +196,16 @@ reported ready until the configured port is observed.
 
 Updates use a complete restart rather than Xray gRPC hot update. Existing
 connections may close during restart. A failed candidate config-test occurs
-before stopping a healthy service and leaves the old config untouched.
+before stopping a healthy service and leaves the old config untouched; nothing on
+that path replaces the published config or restarts the service, because the
+rollback copies taken at the start of an update only become the way back once a
+new config has actually been published.
+
+An update re-asks for the port, username and password so credentials can be
+rotated in place. The port the running service already owns is accepted even
+though the generic in-use probe reports it busy: ownership is verified through the
+listener check rather than assumed from the recorded value, so a foreign or
+unobservable listener on that port is still refused.
 
 The script never modifies host firewalls, cloud security groups, NAT, or port
 forwarding. Runtime packages are not removed during uninstall.
@@ -196,7 +223,8 @@ Required CI cases:
 - BIND rejected;
 - UDP ASSOCIATE rejected while `udp=false`;
 - IPv4 literal, hostname, and available IPv6 target paths recorded separately;
-- a destination inside the boundary refused even while a listener answers there;
+- a destination inside the boundary refused even while a listener answers there,
+  by literal address and by a hostname resolving into it;
 - one long-lived framed bidirectional tunnel;
 - idle then resume on the same socket;
 - one, 32, and 128 concurrent framed tunnels;
@@ -204,9 +232,17 @@ Required CI cases:
 
 Tests use a local target, monotonic deadlines, exact reads, unique connection IDs,
 nonces, and sequence numbers. A successful handshake is never treated as proof
-of a successful data plane. The local target sits on `192.0.2.1` and
-`2001:db8::1`, which the boundary of section 3 does not deny, so the boundary
-holds in full while the data-plane cases run.
+of a successful data plane. The local target sits on `192.0.2.1`, and on
+`2001:db8::1` wherever the host provides it; the boundary of section 3 denies
+neither, so the boundary holds in full while the data-plane cases run. The IPv6
+case is therefore conditional, and the gate requires it whenever the target bound
+an IPv6 listener, so a skipped case is an environment and never a regression.
+
+Each denied-destination case is preceded by a control that reaches the same
+endpoint without the proxy, by address and by name. Xray answers `0x00` to every
+CONNECT it accepts, so a refusal is read from the absence of data, and without
+the control a name it cannot resolve is indistinguishable from a destination the
+boundary refused.
 
 Install and restart run their own verification on the host. Every address it can
 reach without changing the host's networking is inside the boundary, so the
@@ -233,9 +269,10 @@ and answering.
 ## 8. Verification and resource evidence
 
 Complete verification runs in GitHub Actions. The workflow must have explicit
-job timeouts and no `continue-on-error`. It must run unit tests under `sh`,
-`dash`, and BusyBox `sh`, plus asset, config, protocol, lifecycle, secret, and
-memory checks.
+job timeouts and no `continue-on-error`. It must run unit tests under the
+runner's `/bin/sh`, `dash`, `bash`, and BusyBox `sh` — the last three are the
+`/bin/sh` of the Debian, EL and Alpine families this spec supports — plus asset,
+config, protocol, lifecycle, secret, and memory checks.
 
 The initial memory job records evidence without claiming a universal minimum or
 setting an unmeasured hard limit. It records Xray process `VmRSS`, service-cgroup
