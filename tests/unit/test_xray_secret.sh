@@ -123,4 +123,28 @@ t_run env -u S5_PASSWORD -u S5_SECRET -u S5_USERNAME \
 assert_eq "the prompts succeed with a clean environment" 0 "$T_STATUS"
 assert_eq "a clean caller leaves nothing in the environment" 0 "$T_OUT"
 
+# SPEC 7 names the journal and CI output as channels to keep the credential out of.
+# run-socks5.sh redacts its log on the failure path but printed the systemctl-status
+# and journalctl dumps verbatim, so a secret in either reached the console. The stub
+# socks5.sh fails without emitting the secret, so the only possible source of a leak
+# here is those two dumps.
+_rundir=$S5_TEST_ROOT/runner
+mkdir -p "$_rundir/bin"
+printf '#!/bin/sh\nexit 1\n' >"$_rundir/socks5.sh"
+chmod 0755 "$_rundir/socks5.sh"
+for _rb in systemctl journalctl; do
+    printf '#!/bin/sh\nprintf "%s\\n" "leaked %s"\n' '%s' "$SECRET" >"$_rundir/bin/$_rb"
+    chmod 0755 "$_rundir/bin/$_rb"
+done
+printf '#!/bin/sh\nexit 0\n' >"$_rundir/bin/ss"
+chmod 0755 "$_rundir/bin/ss"
+printf 'ciuser\n%s\n' "$SECRET" >"$_rundir/pass"
+chmod 0600 "$_rundir/pass"
+: >"$_rundir/answers"
+_runout=$(cd "$_rundir" && PATH="$_rundir/bin:$PATH" ${S5_TEST_SHELL:-sh} \
+    "$ROOT/.github/scripts/run-socks5.sh" status "$_rundir/answers" \
+    "$_rundir/log" "$_rundir/pass" 2>&1) || true
+assert_not_contains "run-socks5.sh redacts the status and journal dumps on failure" \
+    "$SECRET" "$_runout"
+
 t_summary

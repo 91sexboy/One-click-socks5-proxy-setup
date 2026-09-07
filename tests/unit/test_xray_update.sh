@@ -316,10 +316,19 @@ printf 'engine\txray\n' >"$S5_TXNDIR/old.state"
 chmod 0600 "$S5_TXNDIR/old.config.json" "$S5_TXNDIR/old.state"
 : >"$S5_SYSCONFDIR/.s5new.leftover.json"
 printf 'y\n' >"$S5_TEST_ROOT/answers.uninstall"
-T_OUT=$(s5_cmd_uninstall <"$S5_TEST_ROOT/answers.uninstall" 2>&1) &&
+# The streams are split rather than merged with 2>&1: the confirmation prompt is
+# the only thing uninstall writes to stderr, so keeping it apart is what lets the
+# assertion below see whether it terminated its own line. Merging it with the
+# reports on stdout would hide that, which is how uninstall came to ask its
+# question through s5_msg_print while install and update did not.
+s5_cmd_uninstall <"$S5_TEST_ROOT/answers.uninstall" \
+    >"$S5_TEST_ROOT/uninst.out" 2>"$S5_TEST_ROOT/uninst.err" &&
     T_STATUS=0 || T_STATUS=$?
+T_OUT=$(cat "$S5_TEST_ROOT/uninst.out" "$S5_TEST_ROOT/uninst.err")
 assert_eq "uninstall completes despite an interrupted update's leftovers" \
     0 "$T_STATUS"
+assert_eq "the uninstall confirmation keeps the answer on its own line" 0 \
+    "$(wc -l <"$S5_TEST_ROOT/uninst.err" | tr -d '[:space:]')"
 assert_file_absent "uninstall removes the config directory" "$S5_SYSCONFDIR"
 assert_file_absent "uninstall removes the state directory" "$S5_STATEDIR"
 assert_file_absent "uninstall removes the install prefix" "$S5_PREFIX"
@@ -348,5 +357,36 @@ rm -f "$_sa3unit"
 T_OUT=$(s5_cmd_uninstall <"$S5_TEST_ROOT/answers.uninstall" 2>&1) &&
     T_STATUS=0 || T_STATUS=$?
 assert_eq "the namespace with the unit gone reports nothing installed" 0 "$T_STATUS"
+
+# The verifier records its cleartext credential temp in S5_VERIFY_TEMP so a signal
+# handler can remove it. On the update path there is no S5_WORKDIR, so a signal
+# during data-plane verification runs s5_on_signal -> s5_cleanup, which must release
+# that temp. Only s5_on_signal_lock (the read-only commands) did; s5_cleanup left the
+# password stranded in /var/tmp, surviving even uninstall. Anchored on the file, not
+# on which function clears it, so it stays honest if the release site moves.
+_v1dir=$S5_TEST_ROOT/vtmp
+mkdir -p "$_v1dir"
+_v1cred=$_v1dir/.s5pass.leaked
+printf '%s\n%s\n' "$S5_USERNAME" "$S5_PASSWORD" >"$_v1cred"
+chmod 0600 "$_v1cred"
+S5_VERIFY_TEMP=$_v1cred
+S5_WORKDIR=''
+S5_INSTALL_COMPLETE=0
+S5_IN_CLEANUP=0
+S5_LOCK_HELD=0
+S5_SERVICE_STARTED=0
+S5_UNIT_ENABLED=0
+S5_CONFIG_REPLACED=0
+S5_CREATED_UNIT=0
+S5_CREATED_CFG=0
+S5_CREATED_BIN=0
+S5_CREATED_USER=0
+S5_CREATED_GROUP=0
+S5_CREATED_CONFDIR=0
+S5_CREATED_STATEDIR=0
+S5_CREATED_PREFIX=0
+s5_cleanup
+assert_file_absent "s5_cleanup releases the recorded verifier credential temp" "$_v1cred"
+assert_eq "s5_cleanup clears S5_VERIFY_TEMP after releasing it" '' "$S5_VERIFY_TEMP"
 
 t_summary

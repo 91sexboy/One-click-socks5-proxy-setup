@@ -150,4 +150,51 @@ assert_not_contains "a refused show prints no URI" 'socks5://' "$T_OUT"
 assert_not_contains "the refusal leaks no password" "$S5_PASSWORD" "$T_OUT"
 assert_file_absent "a refused show takes no lock" "$S5_LOCKDIR"
 
+# SPEC 8 diagnostics: restart reported one failure twice. s5_verify_dataplane
+# reports its own reason and returns non-zero, and the case below it turned that
+# into a second, less specific service.unverified -- a failed verification and a
+# probe that could not observe the listener arrived as the same status, so the
+# case could not tell "already reported" from "nothing reported yet". Counting
+# occurrences is the whole point: assert_contains passes on one and on two alike.
+S5_TEST_MODE=1
+S5_PROTOCOL_VERIFY=$S5_TEST_ROOT/verifyfail
+printf '#!/bin/sh\nexit 1\n' >"$S5_PROTOCOL_VERIFY"
+chmod 0755 "$S5_PROTOCOL_VERIFY"
+s5_trap_lock_only() { return 0; }
+s5_precheck() { return 0; }
+s5_lock_acquire() { return 0; }
+s5_lock_release() { return 0; }
+s5_state_load() { return 0; }
+s5_report_state_load() { return 0; }
+s5_config_extract() { return 0; }
+s5_config_test() { return 0; }
+s5_service_restart() { return 0; }
+s5_wait_listening() { return 0; }
+t_run s5_cmd_restart
+assert_ne "restart fails when the data plane cannot be verified" 0 "$T_STATUS"
+assert_eq "a failed verification is reported exactly once" 1 \
+    "$(printf '%s\n' "$T_OUT" | grep -c 'could not be verified')"
+
+# The complementary half, so the fix cannot be "delete the case branch": when the
+# probe itself cannot observe the listener the verifier never runs, and that
+# failure has nobody else to report it.
+s5_wait_listening() { return 2; }
+t_run s5_cmd_restart
+assert_ne "restart fails when the listener cannot be observed" 0 "$T_STATUS"
+assert_eq "an unobservable listener is still reported once" 1 \
+    "$(printf '%s\n' "$T_OUT" | grep -c 'could not be verified')"
+s5_wait_listening() { return 0; }
+
+# status diagnosed a config it could not extract; show and restart returned 1 in
+# silence, so one command named the failure and the other two just exited. There
+# is nobody else to report it -- s5_config_extract prints nothing of its own.
+# restart is the only one of the three reachable from a test: show refuses a
+# non-TTY stdout long before it gets here. Anchored on the config path reaching
+# the output rather than on which message key renders it.
+s5_config_extract() { return 1; }
+t_run s5_cmd_restart
+assert_ne "restart fails when the config cannot be extracted" 0 "$T_STATUS"
+assert_contains "restart names the config it could not read" "$S5_CFG" "$T_OUT"
+s5_config_extract() { return 0; }
+
 t_summary

@@ -27,7 +27,7 @@ jobs:
         run: |
           SC_URL='https://github.com/koalaman/shellcheck/releases/download/v0.10.0/shellcheck-v0.10.0.linux.x86_64.tar.xz'
           SC_SHA='6c881ab0698e4e6ea235245f22832860544f17ba386442fe7e9d629f8cbedf87'
-          cd "$(mktemp -d)"
+          cd "$(mktemp -d)" || exit 1
           curl -fsSLO "$SC_URL"
           echo "$SC_SHA  shellcheck-v0.10.0.linux.x86_64.tar.xz" | sha256sum -c -
           tar -xJf shellcheck-v0.10.0.linux.x86_64.tar.xz
@@ -60,6 +60,13 @@ jobs:
             tests/run.sh tests/lib/*.sh tests/unit/*.sh
           shellcheck -s sh -e SC2317,SC2034,SC2016 \
             tests/protocol/*.sh .github/scripts/*.sh
+      - name: Workflow inline shell
+        # The two steps above only read files, so the workflow's own inline
+        # run: blocks were checked by neither -- the lifecycle gates were moved
+        # into .github/scripts precisely to escape that blind spot. This puts
+        # every remaining block through the same sh -n and shellcheck, so a
+        # block added later is covered without being moved into a file first.
+        run: sh .github/scripts/lint-workflow-shell.sh
       - name: Active production path is Xray-only
         run: |
           # set -e does not apply to a command a ! inverts, so `! grep ...` did not
@@ -174,6 +181,9 @@ jobs:
           test "$(sha256sum "$XRAY_ASSET" | awk '{print $1}')" = "$XRAY_SHA"
           test "$(unzip -Z1 "$XRAY_ASSET" | grep -cxF xray)" = 1
           test "$(unzip -Z1 "$XRAY_ASSET" | wc -l | tr -d '[:space:]')" = 5
+          # The first `xray` is the archive member to extract, not a file being
+          # read, so this is not the read-and-write-the-same-file case.
+          # shellcheck disable=SC2094
           unzip -p "$XRAY_ASSET" xray > xray
           chmod 0755 xray
           # socks5.sh enforces the extracted binary's own size and digest and the
@@ -335,6 +345,15 @@ jobs:
             # job records would describe the harness.
             procs=$(sudo cat "$cgdir/cgroup.procs")
             printf 'conn%s_cgroup_procs=%s\n' "$stage" "$(printf '%s' "$procs" | tr '\n' ' ')"
+            # xray itself must be inside this cgroup. MemoryPeak/MemoryCurrent
+            # below describe whatever it contains, and the exclusion checks that
+            # follow pass trivially when the set is empty, so a Delegate change
+            # that moved xray's own pid out would leave the recorded peak
+            # measuring nothing while this gate stayed green.
+            if ! printf '%s\n' "$procs" | grep -qx "$pid"; then
+              printf 'xray pid %s is not in its own cgroup\n' "$pid" >&2
+              exit 1
+            fi
             for outside in "$target_pid" "$holder_pid"; do
               if printf '%s\n' "$procs" | grep -qx "$outside"; then
                 printf 'pid %s is inside the Xray cgroup\n' "$outside" >&2

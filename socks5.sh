@@ -171,6 +171,7 @@ s5_msg() {
     asset.invalid) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf 'Xray 资产校验失败：%s。' "$1" ;; en) printf 'Xray asset verification failed: %s.' "$1" ;; esac ;;
     config.invalid) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf 'Xray 配置测试失败；旧配置未改变。' ;; en) printf 'Xray configuration test failed; the old configuration was unchanged.' ;; esac ;;
     config.external) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '配置文件已被外部修改；拒绝继续。' ;; en) printf 'the configuration was changed externally; refusing to continue.' ;; esac ;;
+    config.unreadable) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法读取或校验配置文件：%s。' "$1" ;; en) printf 'the configuration file could not be read or validated: %s.' "$1" ;; esac ;;
     service.start) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf 'Xray 服务启动失败。' ;; en) printf 'the Xray service failed to start.' ;; esac ;;
     service.stop) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '无法确认 Xray 服务已停止。' ;; en) printf 'could not verify that the Xray service stopped.' ;; esac ;;
     service.inactive) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '无法确认 Xray 服务正在运行。' ;; en) printf 'could not verify that the Xray service is running.' ;; esac ;;
@@ -213,6 +214,13 @@ s5_msg_fallback() {
 s5_msg_print() { _smp=$(s5_msg "$@") || { s5_msg_fallback "$1"; return 1; }; s5_say "$_smp"; _smp=''; }
 s5_msg_err() { _sme=$(s5_msg "$@") || { s5_msg_fallback "$1"; return 1; }; s5_err "$_sme"; _sme=''; }
 s5_msg_warn() { _smw=$(s5_msg "$@") || { s5_msg_fallback "$1"; return 1; }; s5_warn "$_smw"; _smw=''; }
+# Prompts, unlike reports, must not terminate their line: every question in the
+# catalog ends in a trailing space so the answer is typed beside it. Command
+# substitution strips trailing newlines but keeps that space. Callers used a bare
+# `s5_msg ... >&2`, which threw away the non-zero status an unrenderable key
+# returns and so asked nothing while still reading an answer; going through the
+# same capture-and-fallback shape as the three above is what fixes that.
+s5_msg_ask() { _sma=$(s5_msg "$@") || { s5_msg_fallback "$1"; return 1; }; printf '%s' "$_sma" >&2; _sma=''; }
 
 s5_is_root() {
     if [ "${S5_TEST_MODE:-0}" = 1 ] && [ -n "${S5_ASSUME_ROOT:-}" ]; then
@@ -457,7 +465,7 @@ s5_port_owned_by_service() {
 
 s5_prompt_port() {
     while :; do
-        s5_msg input.port >&2
+        s5_msg_ask input.port || return 1
         _spp=''
         IFS= read -r _spp || return 1
         [ -n "$_spp" ] || _spp=$(s5_random_port) || return 1
@@ -483,7 +491,7 @@ s5_prompt_port() {
 
 s5_prompt_username() {
     while :; do
-        s5_msg input.username >&2
+        s5_msg_ask input.username || return 1
         _spu=''
         IFS= read -r _spu || return 1
         [ -n "$_spu" ] || _spu=$(s5_random_string 12 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-') || return 1
@@ -497,7 +505,7 @@ s5_prompt_username() {
 
 s5_prompt_password() {
     while :; do
-        s5_msg input.password >&2
+        s5_msg_ask input.password || return 1
         _sppw=''
         IFS= read -r _sppw || return 1
         [ -n "$_sppw" ] || _sppw=$(s5_random_string 32 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._~-') || return 1
@@ -1179,21 +1187,24 @@ s5_verify_dataplane() {
     # What runs here is what only this host can answer: that its listener speaks
     # both protocols, that both discriminate on the credential, and that its
     # boundary actually refuses a destination that is listening and answering.
+    # Both modes converge on the single report at the end of this function.
+    # Returning the stub's status from inside the test branch skipped that report,
+    # which is why no test could observe restart printing the same failure twice.
+    _svd=0
     if [ "${S5_TEST_MODE:-0}" = 1 ]; then
         if [ -n "${S5_PROTOCOL_VERIFY:-}" ]; then
             "$S5_PROTOCOL_VERIFY" "$S5_PORT"
-            return $?
+            _svd=$?
         fi
-        return 0
-    fi
-    _svpf=$(mktemp "${S5_WORKDIR:-${S5_ROOTDIR:-/var/tmp}}/.s5pass.XXXXXX") || return 1
-    # Recorded so a signal handler can remove it: on the restart path there is no
-    # workdir, so this lands in /var/tmp and the normal `rm -f` below is skipped
-    # when the process is killed mid-verification, leaving the credential on disk.
-    S5_VERIFY_TEMP=$_svpf
-    chmod 0600 "$_svpf" || { rm -f "$_svpf"; S5_VERIFY_TEMP=''; return 1; }
-    printf '%s\n%s\n' "$S5_USERNAME" "$S5_PASSWORD" >"$_svpf" || { rm -f "$_svpf"; S5_VERIFY_TEMP=''; return 1; }
-    python3 - "$S5_PORT" "$_svpf" <<'PY'
+    else
+        _svpf=$(mktemp "${S5_WORKDIR:-${S5_ROOTDIR:-/var/tmp}}/.s5pass.XXXXXX") || return 1
+        # Recorded so a signal handler can remove it: on the restart path there is no
+        # workdir, so this lands in /var/tmp and the normal `rm -f` below is skipped
+        # when the process is killed mid-verification, leaving the credential on disk.
+        S5_VERIFY_TEMP=$_svpf
+        chmod 0600 "$_svpf" || { rm -f "$_svpf"; S5_VERIFY_TEMP=''; return 1; }
+        printf '%s\n%s\n' "$S5_USERNAME" "$S5_PASSWORD" >"$_svpf" || { rm -f "$_svpf"; S5_VERIFY_TEMP=''; return 1; }
+        python3 - "$S5_PORT" "$_svpf" <<'PY'
 import base64
 import socket
 import sys
@@ -1330,9 +1341,10 @@ except Exception as exc:
 finally:
     stop.set()
 PY
-    _svd=$?
-    rm -f "$_svpf"
-    S5_VERIFY_TEMP=''
+        _svd=$?
+        rm -f "$_svpf"
+        S5_VERIFY_TEMP=''
+    fi
     [ "$_svd" -eq 0 ] || { s5_msg_err service.unverified "$S5_PORT"; return 1; }
     return 0
 }
@@ -1566,6 +1578,11 @@ s5_cleanup() {
         if [ "$S5_CREATED_STATEDIR" = 1 ]; then rmdir "$S5_STATEDIR" 2>/dev/null || true; fi
         if [ "$S5_CREATED_PREFIX" = 1 ]; then rmdir "$S5_PREFIX" 2>/dev/null || true; fi
     fi
+    # The verifier's credential temp is recorded in S5_VERIFY_TEMP. On the update
+    # path it lands in /var/tmp with no S5_WORKDIR to sweep it, so release it here
+    # too: s5_on_signal_lock is not the only handler that reaches a live temp, and a
+    # successful run has already cleared it, so this is a no-op there.
+    s5_release_verify_temp
     if [ -n "$S5_WORKDIR" ]; then
         rm -rf "$S5_WORKDIR" 2>/dev/null || true
     fi
@@ -1721,14 +1738,14 @@ s5_precheck() {
 }
 
 s5_confirm_install() {
-    s5_msg install.confirm >&2
+    s5_msg_ask install.confirm || return 1
     _sci=''
     IFS= read -r _sci || return 1
     case "$_sci" in '' | y | Y | yes | YES | Yes) return 0 ;; *) s5_msg_print install.cancelled; return 1 ;; esac
 }
 
 s5_confirm_update() {
-    s5_msg update.confirm >&2
+    s5_msg_ask update.confirm || return 1
     _scu=''
     IFS= read -r _scu || return 1
     case "$_scu" in y | Y) return 0 ;; *) s5_msg_print install.cancelled; return 1 ;; esac
@@ -1847,7 +1864,7 @@ s5_install_update() {
     s5_state_load
     s5_report_state_load $? || return 1
     s5_backend_supported || { s5_msg_err state.invalid "$S5_STATE"; return 1; }
-    s5_config_extract || return 1
+    s5_config_extract || { s5_msg_err config.unreadable "$S5_CFG"; return 1; }
     s5_confirm_update || return 1
     s5_prompt_port || return 1
     s5_prompt_username || return 1
@@ -1946,7 +1963,7 @@ s5_cmd_status() {
     s5_state_load
     _ssr=$?
     s5_report_state_load "$_ssr" || { s5_lock_release || true; return 1; }
-    s5_config_extract || { s5_lock_release || true; s5_msg_err state.invalid "$S5_STATE"; return 1; }
+    s5_config_extract || { s5_lock_release || true; s5_msg_err config.unreadable "$S5_CFG"; return 1; }
     s5_service_active
     _ssa=$?
     case "$_ssa" in 0) _ssv=running ;; 1) _ssv=stopped ;; *) _ssv=unverified ;; esac
@@ -2080,7 +2097,7 @@ s5_cmd_show() {
     s5_trap_lock_only
     s5_state_load
     s5_report_state_load $? || { s5_lock_release || true; return 1; }
-    s5_config_extract || { s5_lock_release || true; return 1; }
+    s5_config_extract || { s5_lock_release || true; s5_msg_err config.unreadable "$S5_CFG"; return 1; }
     s5_render_card || { s5_lock_release || true; return 1; }
     s5_lock_release || return 1
     return 0
@@ -2092,16 +2109,23 @@ s5_cmd_restart() {
     s5_trap_lock_only
     s5_state_load
     s5_report_state_load $? || { s5_lock_release || true; return 1; }
-    s5_config_extract || { s5_lock_release || true; return 1; }
+    s5_config_extract || { s5_lock_release || true; s5_msg_err config.unreadable "$S5_CFG"; return 1; }
     s5_config_test "$S5_CFG" || { s5_lock_release || true; s5_msg_err config.invalid; return 1; }
     s5_service_restart || { s5_lock_release || true; s5_msg_err service.start; return 1; }
     s5_wait_listening "$S5_PORT"
     _srr=$?
     if [ "$_srr" -eq 0 ]; then
-        s5_verify_dataplane || _srr=2
+        # 3 rather than 2: s5_verify_dataplane has already named its own reason,
+        # and the case below must not restate it as the vaguer service.unverified.
+        s5_verify_dataplane || _srr=3
     fi
     s5_lock_release || return 1
-    case "$_srr" in 0) return 0 ;; 1) s5_msg_err service.listen "$S5_PORT" ;; *) s5_msg_err service.unverified "$S5_PORT" ;; esac
+    case "$_srr" in
+    0) return 0 ;;
+    1) s5_msg_err service.listen "$S5_PORT" ;;
+    3) ;;
+    *) s5_msg_err service.unverified "$S5_PORT" ;;
+    esac
     return 1
 }
 
@@ -2158,8 +2182,8 @@ s5_cmd_uninstall() {
     # The state file exists here, so the shared diagnosis reports an invalid state
     # rather than a missing one.
     s5_report_state_load "$_sur" || { s5_lock_release || true; return 1; }
-    s5_config_extract || { s5_lock_release || true; return 1; }
-    s5_msg_print uninstall.confirm >&2
+    s5_config_extract || { s5_lock_release || true; s5_msg_err config.unreadable "$S5_CFG"; return 1; }
+    s5_msg_ask uninstall.confirm || { s5_lock_release || true; return 1; }
     _suc=''
     IFS= read -r _suc || { s5_lock_release || true; return 1; }
     case "$_suc" in y | Y) ;; *) s5_lock_release || true; s5_msg_print install.cancelled; return 1 ;; esac

@@ -179,6 +179,22 @@ for _root in tests/run.sh 'tests/lib/*.sh' 'tests/unit/*.sh' \
     assert_contains "shellcheck covers $_root" "$_root" "$ci_text"
 done
 
+# Those globs only reach files, so the workflow's own inline run: blocks were read
+# by neither lint step -- which is why the two lifecycle gates had to become files
+# before anything could check them. Moving three more blocks out would have shrunk
+# that hole; extracting every block closes it. The step has to be pinned itself,
+# or deleting it silently restores a pile of unchecked shell.
+assert_contains "the lint job checks the workflow's own inline shell" \
+    'lint-workflow-shell.sh' "$ci_text"
+_wfltext=$(cat "$ROOT/.github/scripts/lint-workflow-shell.sh" 2>/dev/null || printf '')
+assert_contains "the inline-shell linter runs the syntax check" \
+    'sh -n "$f"' "$_wfltext"
+assert_contains "the inline-shell linter runs shellcheck" \
+    'shellcheck -s sh' "$_wfltext"
+# Its own anti-vacuity guard: extracting zero blocks must fail rather than pass.
+assert_contains "the inline-shell linter fails when it extracts nothing" \
+    'no inline run blocks were extracted' "$_wfltext"
+
 # Every shell file must live in a directory the lint globs actually reach. The
 # file list comes from git so that .gitignore decides what CI actually sees;
 # tracked-but-deleted paths are filtered by existence.
@@ -200,12 +216,14 @@ else
     t_skip "shell files all live in linted directories" "git is unavailable"
 fi
 
-# A check that cannot fail is not a check.
-_defused=$(grep -n 'grep -q' "$CI" | grep '|| true' | grep -v '&& exit' || true)
+# A check that cannot fail is not a check. The lifecycle guards were extracted from
+# ci.yml into the two *-lifecycle.sh gates, so this oracle scans all three: a bare
+# `grep -q` defused by `|| true` in any of them would otherwise pass unnoticed.
+_defused=$(grep -n 'grep -q' "$CI" "$SYSTEMD_GATE" "$ALPINE_GATE" | grep '|| true' | grep -v '&& exit' || true)
 if [ -z "$_defused" ]; then
     t_ok
 else
-    t_bad "workflow has a grep check defused by || true: $_defused"
+    t_bad "a CI gate has a grep check defused by || true: $_defused"
 fi
 
 # SPEC 8 memory evidence: the sampler's cgroup branch has to actually run, OOM
@@ -241,6 +259,12 @@ assert_contains "the memory job proves the driver is outside the Xray cgroup" \
     'cgroup.procs' "$ci_text"
 assert_contains "it names the pids that must stay outside" \
     'is inside the Xray cgroup' "$ci_text"
+# The exclusion checks above pass vacuously over an empty set: they hold whether
+# or not xray is present. This pins the complementary membership assertion, so a
+# Delegate change that emptied cgroup.procs could not stay green with the peak
+# measuring nothing.
+assert_contains "the memory job proves xray itself is inside the cgroup" \
+    'not in its own cgroup' "$ci_text"
 assert_contains "each connection stage carries its own label" \
     'memory-sample.sh "$pid" "conn$stage" "$cgdir"' "$ci_text"
 assert_contains "the memory job asserts the cgroup OOM counters" \
@@ -424,6 +448,31 @@ assert_eq "the memory job drives the permitted target" 1 \
 # because nothing was listening at the denied one.
 assert_eq "the duplex target answers at the denied address too" 4 \
     "$(printf '%s\n' "$gates_text" | grep -c 'duplex_target.py --host 0.0.0.0 --host6 ::')"
+# The control above covers the literal address. The hostname case had none, and
+# socks5_denied_destination reads a non-zero reply, a closed peer, an OSError and
+# post-grant silence all as "refused" -- so "Xray cannot resolve this name" and
+# "the boundary refused it" were the same observation, and the case would pass for
+# the wrong reason. The probe now reaches the denied endpoint directly, by address
+# and by name, before asserting either refusal. Both the probe's control and the
+# gate's requirement that it ran are pinned: either can be dropped alone.
+_a2probe=$(cat "$ROOT/tests/protocol/xray_mixed.py")
+assert_contains "the probe reaches the denied address without the proxy" \
+    'direct_control(denied)' "$_a2probe"
+assert_contains "the probe reaches the denied hostname without the proxy" \
+    'direct_control(denied_by_name)' "$_a2probe"
+assert_eq "the mixed gate requires the boundary control to have run" 1 \
+    "$(grep -c 'mixed_denied_control=ok' "$ROOT/tests/protocol/run_xray_mixed.sh")"
+# Presence is not order: a control that runs after the refusal it is meant to
+# qualify proves nothing about that refusal.
+_a2ctl=$(grep -n 'direct_control(denied_by_name)' \
+    "$ROOT/tests/protocol/xray_mixed.py" | head -n 1 | cut -d: -f1)
+_a2den=$(grep -n 'atyp="hostname"' \
+    "$ROOT/tests/protocol/xray_mixed.py" | head -n 1 | cut -d: -f1)
+if [ -n "$_a2ctl" ] && [ -n "$_a2den" ] && [ "$_a2ctl" -lt "$_a2den" ]; then
+    t_ok
+else
+    t_bad "the hostname control must run before the hostname refusal is asserted (control at ${_a2ctl:-none}, refusal at ${_a2den:-none})"
+fi
 
 # SPEC 8 names the shells the unit suite runs under. On ubuntu-24.04 /bin/sh is
 # dash, so an `sh` leg beside a `dash` leg is the same interpreter twice; bash is
