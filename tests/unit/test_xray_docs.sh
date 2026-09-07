@@ -282,7 +282,7 @@ assert_contains "Alpine gate proves no packages are installed outside install" \
 assert_contains "Alpine gate restores the config in place" \
     'cat "$work/good.json" >/etc/xray-socks5/config.json' "$alpine_text"
 assert_contains "systemd gate restores the config in place" \
-    'sudo tee /etc/xray-socks5/config.json <"$work/good.json"' "$systemd_text"
+    'cat "$1" >"$2"' "$systemd_text"
 assert_not_contains "no gate restores the config with cp" \
     'cp "$work/good.json" /etc/xray-socks5/config.json' "$gates_text"
 assert_eq "the config owner and mode are asserted after install, update and restore" 5 \

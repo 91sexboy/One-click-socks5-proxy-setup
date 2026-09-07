@@ -99,13 +99,13 @@ fi
 # Skips are the other half of that falsifiability. The file count cannot notice a
 # file that ran and skipped its cases, and t_skip prints nothing any CI step reads,
 # so a guard turning itself off silently removed SPEC 7's eight archive refusals
-# while the suite still reported ok. BusyBox sh resolves its own unzip applet,
-# which has no -Z, so those cases genuinely cannot run there; every other
-# interpreter must run all of them.
-case "$SHELL_UNDER_TEST" in
-*busybox*) EXPECTED_SKIPS=1 ;;
-*) EXPECTED_SKIPS=0 ;;
-esac
+# while the suite still reported ok. The archive cases need `unzip -Z`, which
+# Info-ZIP provides. The CI shells -- including the apt BusyBox, whose minimal
+# build has no unzip applet, so `unzip` resolves to Info-ZIP on PATH -- all run
+# them, so every interpreter is expected to skip nothing. (A full local BusyBox
+# whose own applet shadows Info-ZIP will skip that one case; that is a coverage
+# gap in that environment, which this guard is meant to surface rather than hide.)
+EXPECTED_SKIPS=0
 if [ -z "$FILTER" ] && [ "$total_skip" -ne "$EXPECTED_SKIPS" ]; then
     bad_files=$((bad_files + 1))
     printf 'FAIL skip count is %d, expected %d under %s\n' \

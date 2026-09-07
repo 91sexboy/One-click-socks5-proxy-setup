@@ -97,7 +97,7 @@ test "$(systemctl show xray-socks5.service -p ExecMainStatus --value)" = 23
 loop_restarts=$(systemctl show xray-socks5.service -p NRestarts --value)
 sleep 12
 test "$(systemctl show xray-socks5.service -p NRestarts --value)" = "$loop_restarts"
-sudo tee /etc/xray-socks5/config.json <"$work/good.json" >/dev/null
+sudo sh -c 'cat "$1" >"$2"' restore "$work/good.json" /etc/xray-socks5/config.json
 test "$(sudo stat -c '%U:%G %a' /etc/xray-socks5/config.json)" = "root:xray-socks5 640"
 sudo systemctl restart xray-socks5.service
 sudo systemctl is-active --quiet xray-socks5.service
