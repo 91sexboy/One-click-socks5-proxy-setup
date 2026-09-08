@@ -789,14 +789,12 @@ s5_tmp_base() {
 # stripped (the same digit-only sanitiser used elsewhere for wc output).
 s5_bytecount() { wc -c <"$1" | tr -cd '0-9'; }
 
-s5_download_engine() {
-    s5_asset_select || return 1
-    if [ ! -d "$S5_PREFIX" ]; then S5_CREATED_PREFIX=1; fi
-    s5_mkdir_private "$S5_PREFIX" || return 1
-    [ -n "$S5_WORKDIR" ] || S5_WORKDIR=$(mktemp -d "$(s5_tmp_base)/xray-socks5-download.XXXXXX") || return 1
-    _sdezip=$S5_WORKDIR/$S5_ASSET_NAME
+s5_fetch_archive() {
+    # $1: destination path for the release archive. Acquire it (a local fixture in
+    # test mode, else the pinned HTTPS download) and accept it only as the pinned
+    # artifact byte for byte -- exact size and SHA-256.
     if [ -n "${S5_TEST_ASSET_PATH:-}" ]; then
-        cp "$S5_TEST_ASSET_PATH" "$_sdezip" || return 1
+        cp "$S5_TEST_ASSET_PATH" "$1" || return 1
     else
         s5_msg_print asset.download "$S5_ASSET_NAME" >&2
         # --proto/--proto-redir pin HTTPS, --max-time caps the transfer, and
@@ -807,39 +805,50 @@ s5_download_engine() {
         # byte, and the size check also bounds what a length-less reply left on disk.
         curl -fsSL --proto '=https' --proto-redir '=https' \
             --max-time 120 --max-filesize "$((S5_ASSET_SIZE + 1))" \
-            -o "$_sdezip" "$S5_XRAY_BASE/$S5_ASSET_NAME" || {
+            -o "$1" "$S5_XRAY_BASE/$S5_ASSET_NAME" || {
             s5_msg_err asset.invalid download
             return 1
         }
-        [ "$(s5_bytecount "$_sdezip")" -le "$((S5_ASSET_SIZE + 1))" ] || {
+        [ "$(s5_bytecount "$1")" -le "$((S5_ASSET_SIZE + 1))" ] || {
             s5_msg_err asset.invalid size
             return 1
         }
     fi
-    [ "$(s5_bytecount "$_sdezip")" = "$S5_ASSET_SIZE" ] || { s5_msg_err asset.invalid size; return 1; }
-    [ "$(sha256sum "$_sdezip" | awk '{print $1}')" = "$S5_ASSET_SHA256" ] || { s5_msg_err asset.invalid sha256; return 1; }
-    _sdem=$S5_WORKDIR/members
-    unzip -Z1 "$_sdezip" >"$_sdem" 2>/dev/null || { s5_msg_err asset.invalid members; return 1; }
-    [ "$(grep -cxF xray "$_sdem" || true)" = 1 ] || { s5_msg_err asset.invalid members; return 1; }
+    [ "$(s5_bytecount "$1")" = "$S5_ASSET_SIZE" ] || { s5_msg_err asset.invalid size; return 1; }
+    [ "$(sha256sum "$1" | awk '{print $1}')" = "$S5_ASSET_SHA256" ] || { s5_msg_err asset.invalid sha256; return 1; }
+}
+
+s5_verify_archive_members() {
+    # $1: the accepted archive. $2: scratch path for its member listing. Refuse any
+    # archive that is not exactly {xray, geoip.dat, geosite.dat, LICENSE, README.md},
+    # carries a path-bearing or traversing member name, or holds a member whose Unix
+    # mode is not a regular 10xx file.
+    unzip -Z1 "$1" >"$2" 2>/dev/null || { s5_msg_err asset.invalid members; return 1; }
+    [ "$(grep -cxF xray "$2" || true)" = 1 ] || { s5_msg_err asset.invalid members; return 1; }
     for _sden in geoip.dat geosite.dat LICENSE README.md; do
-        [ "$(grep -cxF "$_sden" "$_sdem" || true)" = 1 ] || { s5_msg_err asset.invalid members; return 1; }
+        [ "$(grep -cxF "$_sden" "$2" || true)" = 1 ] || { s5_msg_err asset.invalid members; return 1; }
     done
-    [ "$(wc -l <"$_sdem" | tr -cd '0-9')" = 5 ] || { s5_msg_err asset.invalid members; return 1; }
+    [ "$(wc -l <"$2" | tr -cd '0-9')" = 5 ] || { s5_msg_err asset.invalid members; return 1; }
     while IFS= read -r _sden; do
         case "$_sden" in '' | */* | *..* | *\\*) s5_msg_err asset.invalid members; return 1 ;; esac
-    done <"$_sdem"
-    if ! unzip -Z -v "$_sdezip" 2>/dev/null |
+    done <"$2"
+    if ! unzip -Z -v "$1" 2>/dev/null |
         awk '/Unix file attributes/ { seen++; if ($4 !~ /^\(10[0-7]/) bad=1 }
              END { exit (seen == 5 && !bad) ? 0 : 1 }'; then
         s5_msg_err asset.invalid members
         return 1
     fi
-    _sdev=$S5_WORKDIR/xray
-    unzip -p "$_sdezip" xray >"$_sdev" 2>/dev/null || return 1
-    [ "$(s5_bytecount "$_sdev")" = "$S5_ASSET_BINARY_SIZE" ] || { s5_msg_err asset.invalid binary-size; return 1; }
-    [ "$(sha256sum "$_sdev" | awk '{print $1}')" = "$S5_ASSET_BINARY_SHA256" ] || { s5_msg_err asset.invalid binary-sha256; return 1; }
-    chmod 0755 "$_sdev" || return 1
-    _sdef=$(file -b "$_sdev" 2>/dev/null) || return 1
+}
+
+s5_extract_binary() {
+    # $1: the verified archive. $2: scratch path for the extracted xray. Accept the
+    # binary only at the pinned size and SHA-256 and an arch-matching ELF type, then
+    # install it atomically at $S5_BIN and record its digest.
+    unzip -p "$1" xray >"$2" 2>/dev/null || return 1
+    [ "$(s5_bytecount "$2")" = "$S5_ASSET_BINARY_SIZE" ] || { s5_msg_err asset.invalid binary-size; return 1; }
+    [ "$(sha256sum "$2" | awk '{print $1}')" = "$S5_ASSET_BINARY_SHA256" ] || { s5_msg_err asset.invalid binary-sha256; return 1; }
+    chmod 0755 "$2" || return 1
+    _sdef=$(file -b "$2" 2>/dev/null) || return 1
     case "$S5_ARCHNAME:$_sdef" in
     amd64:*'ELF 64-bit LSB executable, x86-64'*) ;;
     arm64:*'ELF 64-bit LSB executable, ARM aarch64'*) ;;
@@ -847,11 +856,22 @@ s5_download_engine() {
     esac
     _sdet=$(mktemp "$S5_PREFIX/.xray.XXXXXX") || return 1
     chmod 0755 "$_sdet" || { rm -f "$_sdet"; return 1; }
-    cat "$_sdev" >"$_sdet" || { rm -f "$_sdet"; return 1; }
+    cat "$2" >"$_sdet" || { rm -f "$_sdet"; return 1; }
     mv -f "$_sdet" "$S5_BIN" || { rm -f "$_sdet"; return 1; }
     S5_CREATED_BIN=1
     S5_BINARY_SHA256=$(sha256sum "$S5_BIN" | awk '{print $1}')
     [ "$S5_BINARY_SHA256" = "$S5_ASSET_BINARY_SHA256" ]
+}
+
+s5_download_engine() {
+    s5_asset_select || return 1
+    if [ ! -d "$S5_PREFIX" ]; then S5_CREATED_PREFIX=1; fi
+    s5_mkdir_private "$S5_PREFIX" || return 1
+    [ -n "$S5_WORKDIR" ] || S5_WORKDIR=$(mktemp -d "$(s5_tmp_base)/xray-socks5-download.XXXXXX") || return 1
+    _sdezip=$S5_WORKDIR/$S5_ASSET_NAME
+    s5_fetch_archive "$_sdezip" || return 1
+    s5_verify_archive_members "$_sdezip" "$S5_WORKDIR/members" || return 1
+    s5_extract_binary "$_sdezip" "$S5_WORKDIR/xray" || return 1
 }
 
 s5_binary_ready() {
