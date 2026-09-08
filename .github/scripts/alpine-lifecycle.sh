@@ -7,6 +7,8 @@
 # hold it. As a file it is ordinary shell, read by sh -n, dash -n, busybox sh -n
 # and the linter like any other script in this directory.
 set -eu
+# shellcheck source=.github/scripts/lifecycle-common.sh
+. "$(dirname "$0")/lifecycle-common.sh"
 apk add --no-cache openrc >/dev/null
 mkdir -p /run/openrc
 touch /run/openrc/softlevel
@@ -14,9 +16,7 @@ rc-status -a >/dev/null 2>&1 || true
 umask 077
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT HUP INT TERM
-printf "2\ny\n23456\nciuser\nCISecret_123~x\n" >"$work/answers"
-printf "ciuser\nCISecret_123~x\n" >"$work/pass"
-chmod 0600 "$work/answers" "$work/pass"
+lifecycle_write_fixtures "$work"
 if ! sh socks5.sh install <"$work/answers" >"$work/install.log" 2>&1; then
   cat "$work/install.log"
   exit 1
@@ -27,9 +27,6 @@ test "$(stat -c "%U:%G %a" /var/lib/xray-socks5/state)" = "root:root 600"
 # SPEC 5: re-running install over an existing installation is an
 # in-place update. Rotate the credentials, keep the port, and require
 # the new identity in both the config and the state.
-printf "2\ny\n23456\nciuser2\nCISecret_456~y\n" >"$work/answers.update"
-printf "ciuser2\nCISecret_456~y\n" >"$work/pass.update"
-chmod 0600 "$work/answers.update" "$work/pass.update"
 if ! sh socks5.sh install <"$work/answers.update" >"$work/update.log" 2>&1; then
   cat "$work/update.log"
   exit 1

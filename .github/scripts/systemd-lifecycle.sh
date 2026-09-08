@@ -7,6 +7,8 @@
 # is how the Alpine extraction surfaced an early-expanding trap and two
 # credential checks that could not fail.
 set -eu
+# shellcheck source=.github/scripts/lifecycle-common.sh
+. "$(dirname "$0")/lifecycle-common.sh"
 printf 'lifecycle: start\n'
 work=$(mktemp -d)
 printf 'lifecycle: workdir-ready\n'
@@ -17,12 +19,9 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 chmod 0700 "$work"
-printf '2\ny\n23456\nciuser\nCISecret_123~x\n' >"$work/answers"
-chmod 0600 "$work/answers"
+lifecycle_write_fixtures "$work"
 printf '2\n' >"$work/answers.lang"
 printf '2\ny\n' >"$work/answers.uninstall"
-printf 'ciuser\nCISecret_123~x\n' >"$work/pass"
-chmod 0600 "$work/pass"
 sudo sh .github/scripts/run-socks5.sh install \
   "$work/answers" "$work/install.log" "$work/pass"
 printf 'lifecycle: install-ok\n'
@@ -113,9 +112,6 @@ printf 'lifecycle: audit-ok\n'
 # SPEC 5: re-running install over an existing installation is an
 # in-place update. Rotate the credentials, keep the port, and require
 # the new identity in both the config and the state.
-printf '2\ny\n23456\nciuser2\nCISecret_456~y\n' >"$work/answers.update"
-printf 'ciuser2\nCISecret_456~y\n' >"$work/pass.update"
-chmod 0600 "$work/answers.update" "$work/pass.update"
 sudo sh .github/scripts/run-socks5.sh install \
   "$work/answers.update" "$work/update.log" "$work/pass.update"
 printf 'lifecycle: update-ok\n'

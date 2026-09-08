@@ -326,10 +326,15 @@ assert_contains "the lifecycle script is what installs OpenRC" \
     'apk add --no-cache openrc' "$alpine_text"
 
 # SPEC 5 calls re-running install an in-place update, and that path had no gate
-# on either backend. Both lifecycle jobs now run one and check the new identity
-# landed in the config and the state with no transaction evidence left over.
-assert_eq "both lifecycle gates run an in-place update" 2 \
-    "$(printf '%s\n' "$gates_text" | grep -c 'chmod 0600 "\$work/answers.update"')"
+# on either backend. The answer/credential fixtures are shared via
+# lifecycle-common.sh (defined once, set up by both gates); each gate still
+# drives the update itself and asserts the new identity landed in the config and
+# the state with no transaction evidence left over.
+common_text=$(cat "$ROOT/.github/scripts/lifecycle-common.sh")
+assert_eq "the shared lifecycle fixtures are defined once" 1 \
+    "$(printf '%s\n' "$common_text" | grep -c 'lifecycle_write_fixtures()')"
+assert_eq "both lifecycle gates set up the shared fixtures" 2 \
+    "$(printf '%s\n' "$gates_text" | grep -c 'lifecycle_write_fixtures "\$work"')"
 assert_eq "both gates require the updated identity in the state" 2 \
     "$(printf '%s\n' "$gates_text" | grep -c 'username\[\[:space:\]\]+ciuser2')"
 assert_eq "both gates require no transaction evidence after an update" 2 \
