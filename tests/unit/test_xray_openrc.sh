@@ -191,4 +191,34 @@ t_run s5_write_unit
 assert_ne "a failed systemd unit write is a failure" 0 "$T_STATUS"
 S5_INIT=openrc
 
+# Each service verb dispatches to exactly one backend command. Record what
+# rc-service and rc-update receive so a verb cannot be mapped to the wrong action
+# or dropped. rc-service actions succeed here; enable/disable go through rc-update.
+cat >"$S5_TEST_ROOT/bin/rc-service" <<'RC'
+#!/bin/sh
+if [ "$2" = status ]; then exit 3; fi
+printf 'rc-service %s %s\n' "$1" "$2" >>"$S5_TEST_ROOT/svc-transcript"
+exit 0
+RC
+chmod 755 "$S5_TEST_ROOT/bin/rc-service"
+cat >"$S5_TEST_ROOT/bin/rc-update" <<'RC'
+#!/bin/sh
+printf 'rc-update %s %s %s\n' "$1" "$2" "$3" >>"$S5_TEST_ROOT/svc-transcript"
+exit 0
+RC
+chmod 755 "$S5_TEST_ROOT/bin/rc-update"
+: >"$S5_TEST_ROOT/svc-transcript"
+s5_service_stop
+assert_eq "OpenRC stop calls rc-service stop" 1 \
+    "$(grep -c "^rc-service $S5_PROJECT stop\$" "$S5_TEST_ROOT/svc-transcript")"
+s5_service_restart
+assert_eq "OpenRC restart calls rc-service restart" 1 \
+    "$(grep -c "^rc-service $S5_PROJECT restart\$" "$S5_TEST_ROOT/svc-transcript")"
+s5_service_enable
+assert_eq "OpenRC enable adds the service to the default runlevel" 1 \
+    "$(grep -c "^rc-update add $S5_PROJECT default\$" "$S5_TEST_ROOT/svc-transcript")"
+s5_service_disable
+assert_eq "OpenRC disable removes the service from the default runlevel" 1 \
+    "$(grep -c "^rc-update del $S5_PROJECT default\$" "$S5_TEST_ROOT/svc-transcript")"
+
 t_summary
