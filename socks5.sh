@@ -760,6 +760,10 @@ s5_tmp_base() {
     fi
 }
 
+# Byte size of $1 as bare digits, with wc's leading padding and trailing newline
+# stripped (the same digit-only sanitiser used elsewhere for wc output).
+s5_bytecount() { wc -c <"$1" | tr -cd '0-9'; }
+
 s5_download_engine() {
     s5_asset_select || return 1
     if [ ! -d "$S5_PREFIX" ]; then S5_CREATED_PREFIX=1; fi
@@ -782,12 +786,12 @@ s5_download_engine() {
             s5_msg_err asset.invalid download
             return 1
         }
-        [ "$(wc -c <"$_sdezip" | tr -cd '0-9')" -le "$((S5_ASSET_SIZE + 1))" ] || {
+        [ "$(s5_bytecount "$_sdezip")" -le "$((S5_ASSET_SIZE + 1))" ] || {
             s5_msg_err asset.invalid size
             return 1
         }
     fi
-    [ "$(wc -c <"$_sdezip" | tr -cd '0-9')" = "$S5_ASSET_SIZE" ] || { s5_msg_err asset.invalid size; return 1; }
+    [ "$(s5_bytecount "$_sdezip")" = "$S5_ASSET_SIZE" ] || { s5_msg_err asset.invalid size; return 1; }
     [ "$(sha256sum "$_sdezip" | awk '{print $1}')" = "$S5_ASSET_SHA256" ] || { s5_msg_err asset.invalid sha256; return 1; }
     _sdem=$S5_WORKDIR/members
     unzip -Z1 "$_sdezip" >"$_sdem" 2>/dev/null || { s5_msg_err asset.invalid members; return 1; }
@@ -807,7 +811,7 @@ s5_download_engine() {
     fi
     _sdev=$S5_WORKDIR/xray
     unzip -p "$_sdezip" xray >"$_sdev" 2>/dev/null || return 1
-    [ "$(wc -c <"$_sdev" | tr -cd '0-9')" = "$S5_ASSET_BINARY_SIZE" ] || { s5_msg_err asset.invalid binary-size; return 1; }
+    [ "$(s5_bytecount "$_sdev")" = "$S5_ASSET_BINARY_SIZE" ] || { s5_msg_err asset.invalid binary-size; return 1; }
     [ "$(sha256sum "$_sdev" | awk '{print $1}')" = "$S5_ASSET_BINARY_SHA256" ] || { s5_msg_err asset.invalid binary-sha256; return 1; }
     chmod 0755 "$_sdev" || return 1
     _sdef=$(file -b "$_sdev" 2>/dev/null) || return 1
