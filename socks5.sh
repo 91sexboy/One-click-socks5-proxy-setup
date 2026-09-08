@@ -375,6 +375,14 @@ s5_ipv4_is_public() {
     # Conservative: every IANA special-purpose range is refused, so a private,
     # CGNAT, loopback or documentation address is never advertised as an
     # Internet-reachable host.
+    #
+    # This is the advertise-safety check for the card's own detected address. It is
+    # deliberately separate from the tunnel destination boundary in s5_config_render
+    # and shares no encoding with it: the two answer different questions (is this
+    # host safe to advertise as reachable, vs. may the tunnel egress to this
+    # destination) over overlapping-but-different sets, so neither derives from the
+    # other. This one adds the documentation/benchmarking ranges the boundary omits
+    # and is IPv4-only.
     s5_ipv4_is_canonical "${1:-}" || return 1
     _ipo1=${1%%.*}
     _ipore=${1#*.}
@@ -708,6 +716,12 @@ s5_config_render() {
     # IPIfNonMatch is what makes a hostname target subject to these rules. With
     # the default AsIs an "ip" rule can only ever match a literal address, so
     # any name resolving into a denied range would be routed direct.
+    #
+    # This destination boundary is reconciled elsewhere: SPEC 3 and
+    # tests/protocol/start_engine.sh carry the same set, and test_xray_docs.sh
+    # fails if the three drift apart. It is a separate concern from
+    # s5_ipv4_is_public (the advertise-safety check for the card's own address),
+    # which encodes a different set for a different purpose.
     printf '%s\n' '  "routing": {'
     printf '%s\n' '    "domainStrategy": "IPIfNonMatch",'
     printf '%s\n' '    "rules": [{'
