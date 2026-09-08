@@ -1441,20 +1441,30 @@ s5_openrc_start() {
     return "$_sosrc"
 }
 
-s5_service_start() {
-    if [ "$S5_INIT" = openrc ]; then s5_openrc_start start; else systemctl start "$S5_PROJECT.service" >/dev/null 2>&1; fi
-}
-s5_service_stop() {
-    if [ "$S5_INIT" = openrc ]; then rc-service "$S5_PROJECT" stop; else systemctl stop "$S5_PROJECT.service" >/dev/null 2>&1; fi
-}
-s5_service_restart() {
-    if [ "$S5_INIT" = openrc ]; then rc-service "$S5_PROJECT" restart; else systemctl restart "$S5_PROJECT.service" >/dev/null 2>&1; fi
-}
-s5_service_enable() {
-    if [ "$S5_INIT" = openrc ]; then rc-update add "$S5_PROJECT" default >/dev/null 2>&1; else systemctl enable "$S5_PROJECT.service" >/dev/null 2>&1; fi
-}
-s5_service_disable() {
-    if [ "$S5_INIT" = openrc ]; then rc-update del "$S5_PROJECT" default >/dev/null 2>&1; else systemctl disable "$S5_PROJECT.service" >/dev/null 2>&1; fi
+s5_svc() {
+    # The single place that branches on the init backend for the lifecycle verbs.
+    # Each of start/stop/restart/enable/disable maps to one backend command, so the
+    # backend decision is made once here rather than repeated per verb. start keeps
+    # OpenRC's idempotent fallback (s5_openrc_start); s5_service_active and
+    # s5_listener_state stay separate, since each carries a backend-specific
+    # exit-code contract rather than this shared verb switch.
+    if [ "$S5_INIT" = openrc ]; then
+        case "$1" in
+        start) s5_openrc_start start ;;
+        stop) rc-service "$S5_PROJECT" stop ;;
+        restart) rc-service "$S5_PROJECT" restart ;;
+        enable) rc-update add "$S5_PROJECT" default >/dev/null 2>&1 ;;
+        disable) rc-update del "$S5_PROJECT" default >/dev/null 2>&1 ;;
+        esac
+    else
+        case "$1" in
+        start) systemctl start "$S5_PROJECT.service" >/dev/null 2>&1 ;;
+        stop) systemctl stop "$S5_PROJECT.service" >/dev/null 2>&1 ;;
+        restart) systemctl restart "$S5_PROJECT.service" >/dev/null 2>&1 ;;
+        enable) systemctl enable "$S5_PROJECT.service" >/dev/null 2>&1 ;;
+        disable) systemctl disable "$S5_PROJECT.service" >/dev/null 2>&1 ;;
+        esac
+    fi
 }
 
 s5_wait_stopped() {
@@ -1577,11 +1587,11 @@ s5_cleanup() {
             _sclruntime=1
         fi
         if [ "$S5_SERVICE_STARTED" = 1 ]; then
-            s5_service_stop || true
+            s5_svc stop || true
             S5_SERVICE_STARTED=0
         fi
         if [ "$S5_UNIT_ENABLED" = 1 ]; then
-            s5_service_disable || true
+            s5_svc disable || true
             if [ "$S5_INIT" = systemd ]; then
                 systemctl daemon-reload >/dev/null 2>&1 || true
             fi
@@ -1627,7 +1637,7 @@ s5_cleanup() {
         if [ "$S5_CONFIG_REPLACED" = 1 ] &&
             [ -f "$S5_TXNDIR/old.config.json" ] && [ -f "$S5_TXNDIR/old.state" ]; then
             if s5_restore_transaction "$S5_TXNDIR/old.config.json" "$S5_TXNDIR/old.state"; then
-                s5_service_restart || true
+                s5_svc restart || true
                 s5_cleanup_transaction || true
                 S5_CONFIG_REPLACED=0
             fi
@@ -1826,7 +1836,7 @@ s5_restore_transaction() {
 # halfway leaves the installation in a worse state than the failure it handles.
 s5_update_rollback() {
     s5_restore_transaction "$1" "$2" || true
-    s5_service_restart || true
+    s5_svc restart || true
     s5_cleanup_transaction || true
     S5_SERVICE_STARTED=0
 }
@@ -1873,13 +1883,13 @@ s5_install_new() {
     fi
     S5_UNIT_SHA256=$(sha256sum "$S5_SERVICE_ARTIFACT" | awk '{print $1}')
     if [ "$S5_INIT" = openrc ]; then
-        s5_service_enable || return 1
+        s5_svc enable || return 1
     else
         systemctl daemon-reload >/dev/null 2>&1 || return 1
-        s5_service_enable || return 1
+        s5_svc enable || return 1
     fi
     S5_UNIT_ENABLED=1
-    s5_service_start || { s5_msg_err service.start; return 1; }
+    s5_svc start || { s5_msg_err service.start; return 1; }
     S5_SERVICE_STARTED=1
     s5_service_active; _sina=$?
     case "$_sina" in 0) ;; 1) s5_msg_err service.start; return 1 ;; *) s5_msg_err service.inactive; return 1 ;; esac
@@ -1939,7 +1949,7 @@ s5_install_update() {
     chmod 0600 "$_sioldcfg" "$_sioldstate" || return 1
     s5_binary_ready || { s5_msg_err asset.invalid binary; return 1; }
     _siinc=$(s5_write_config_candidate) || return 1
-    s5_service_stop || { s5_msg_err service.stop; rm -f "$_siinc"; return 1; }
+    s5_svc stop || { s5_msg_err service.stop; rm -f "$_siinc"; return 1; }
     s5_wait_stopped
     case $? in 0) ;; *) s5_msg_err service.stop; rm -f "$_siinc"; return 1 ;; esac
     # Mark the publish before performing it, not after. A signal delivered between
@@ -1955,10 +1965,10 @@ s5_install_update() {
         S5_CONFIG_REPLACED=0
         rm -f "$_siinc"
         s5_restore_transaction "$_sioldcfg" "$_sioldstate" || true
-        s5_service_start || true
+        s5_svc start || true
         return 1
     fi
-    if ! s5_service_start; then
+    if ! s5_svc start; then
         s5_update_rollback "$_sioldcfg" "$_sioldstate"
         rm -f "$_siinc"
         return 1
@@ -2172,7 +2182,7 @@ s5_cmd_restart() {
     s5_report_state_load $? || { s5_fail_locked; return 1; }
     s5_config_extract || { s5_fail_locked config.unreadable "$S5_CFG"; return 1; }
     s5_config_test "$S5_CFG" || { s5_fail_locked config.invalid; return 1; }
-    s5_service_restart || { s5_fail_locked service.start; return 1; }
+    s5_svc restart || { s5_fail_locked service.start; return 1; }
     s5_wait_listening "$S5_PORT"
     _srr=$?
     if [ "$_srr" -eq 0 ]; then
@@ -2248,7 +2258,7 @@ s5_cmd_uninstall() {
     _suc=''
     IFS= read -r _suc || { s5_fail_locked; return 1; }
     case "$_suc" in y | Y) ;; *) s5_lock_release || true; s5_msg_print install.cancelled; return 1 ;; esac
-    s5_service_stop || { s5_fail_locked service.stop; return 1; }
+    s5_svc stop || { s5_fail_locked service.stop; return 1; }
     s5_wait_stopped
     case $? in 0) ;; *) s5_fail_locked service.stop; return 1 ;; esac
     s5_account_identity || { s5_fail_locked account.identity; return 1; }
@@ -2261,7 +2271,7 @@ s5_cmd_uninstall() {
     s5_cleanup_own_temps "$S5_STATEDIR" || { s5_fail_locked; return 1; }
     s5_cleanup_own_temps "$S5_PREFIX" || { s5_fail_locked; return 1; }
     s5_cleanup_transaction || { s5_fail_locked; return 1; }
-    s5_service_disable || { s5_fail_locked; return 1; }
+    s5_svc disable || { s5_fail_locked; return 1; }
     s5_remove_owned_file "$S5_UNIT" || { s5_fail_locked; return 1; }
     s5_remove_owned_file "$S5_CFG" || { s5_fail_locked; return 1; }
     s5_remove_owned_file "$S5_BIN" || { s5_fail_locked; return 1; }

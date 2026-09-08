@@ -192,7 +192,7 @@ assert_file_absent "the transaction evidence is removed" "$S5_TXNDIR"
 #
 # The seam is s5_cmd_install rather than s5_install_update: the cleanup only runs
 # from there, which is why the cases above could not see this. The restart is
-# counted separately from the stop for the same reason -- s5_service_restart issues
+# counted separately from the stop for the same reason -- s5_svc restart issues
 # `systemctl restart`, so an oracle counting only `systemctl stop` stays green.
 _upinode=$(stat -c '%i' "$S5_CFG")
 _upcfg=$(sha256sum "$S5_CFG" | awk '{print $1}')
@@ -308,7 +308,6 @@ assert_eq "the regular config still loads after the symlink check" 0 "$T_STATUS"
 # namespace, including a transaction copy of the old config, survived.
 s5_precheck() { return 0; }
 s5_wait_stopped() { return 0; }
-s5_service_disable() { return 0; }
 s5_account_remove() { S5_CREATED_USER=0; S5_CREATED_GROUP=0; return 0; }
 mkdir -p "$S5_TXNDIR"
 printf '{}\n' >"$S5_TXNDIR/old.config.json"

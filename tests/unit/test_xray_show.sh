@@ -168,7 +168,7 @@ s5_state_load() { return 0; }
 s5_report_state_load() { return 0; }
 s5_config_extract() { return 0; }
 s5_config_test() { return 0; }
-s5_service_restart() { return 0; }
+s5_svc() { return 0; }
 s5_wait_listening() { return 0; }
 t_run s5_cmd_restart
 assert_ne "restart fails when the data plane cannot be verified" 0 "$T_STATUS"

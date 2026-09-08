@@ -98,11 +98,11 @@ RC
 chmod 755 "$S5_TEST_ROOT/bin/rc-service"
 PATH="$S5_TEST_ROOT/bin:$PATH"
 export PATH
-s5_service_start
+s5_svc start
 assert_eq "OpenRC starting state reclassifies start" 0 "$?"
 rm -f "$S5_TEST_ROOT/active"
 : >"$S5_TEST_ROOT/fail-start"
-s5_service_start
+s5_svc start
 assert_ne "OpenRC inactive start remains failure" 0 "$?"
 
 # s5_service_active must fail closed like the systemd arm, where only exit 3
@@ -140,9 +140,9 @@ unset -f sleep
 # restart whose stop phase failed used to report success.
 printf '0\n' >"$S5_TEST_ROOT/statuscode"
 printf '7\n' >"$S5_TEST_ROOT/actioncode"
-t_run s5_service_restart
+t_run s5_svc restart
 assert_ne "a failed restart is a failure even while active" 0 "$T_STATUS"
-t_run s5_service_start
+t_run s5_svc start
 assert_eq "a start against an active service still succeeds" 0 "$T_STATUS"
 printf '0\n' >"$S5_TEST_ROOT/actioncode"
 
@@ -208,16 +208,16 @@ exit 0
 RC
 chmod 755 "$S5_TEST_ROOT/bin/rc-update"
 : >"$S5_TEST_ROOT/svc-transcript"
-s5_service_stop
+s5_svc stop
 assert_eq "OpenRC stop calls rc-service stop" 1 \
     "$(grep -c "^rc-service $S5_PROJECT stop\$" "$S5_TEST_ROOT/svc-transcript")"
-s5_service_restart
+s5_svc restart
 assert_eq "OpenRC restart calls rc-service restart" 1 \
     "$(grep -c "^rc-service $S5_PROJECT restart\$" "$S5_TEST_ROOT/svc-transcript")"
-s5_service_enable
+s5_svc enable
 assert_eq "OpenRC enable adds the service to the default runlevel" 1 \
     "$(grep -c "^rc-update add $S5_PROJECT default\$" "$S5_TEST_ROOT/svc-transcript")"
-s5_service_disable
+s5_svc disable
 assert_eq "OpenRC disable removes the service from the default runlevel" 1 \
     "$(grep -c "^rc-update del $S5_PROJECT default\$" "$S5_TEST_ROOT/svc-transcript")"
 
