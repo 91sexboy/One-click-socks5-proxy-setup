@@ -42,6 +42,7 @@ grep -qE '^mixed_target_ipv6=(ok|unavailable)$' "$OUT/probe.log" || exit 1
 grep -q '^mixed_denied_control=ok$' "$OUT/probe.log" || exit 1
 grep -q '^mixed_denied_destination=ok$' "$OUT/probe.log" || exit 1
 grep -q '^mixed_denied_hostname=ok$' "$OUT/probe.log" || exit 1
+grep -q '^mixed_longlived=ok$' "$OUT/probe.log" || exit 1
 
 # The target flushes its counters as each tunnel closes, so the two sides
 # converge shortly after the probe exits rather than only at shutdown.

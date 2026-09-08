@@ -474,6 +474,20 @@ else
     t_bad "the hostname control must run before the hostname refusal is asserted (control at ${_a2ctl:-none}, refusal at ${_a2den:-none})"
 fi
 
+# SPEC 6:228 lists "one long-lived framed bidirectional tunnel" as a case apart
+# from 6:229's "idle then resume". Both used to ride the same tunnel_once path
+# (count=4, idle=True), whose only long element was a 4s sleep, so the long-lived
+# case was never exercised on its own. It now runs as a distinct case that holds
+# one socket open across many frames spaced over time, and prints its own marker.
+# Probe emission and gate requirement are pinned separately, matching the A2 pair
+# above: either can be dropped alone, and a silent deletion of the gate line is
+# exactly how A2 was lost. The marker is a behaviour (the case ran and printed),
+# not a function name, so it survives the case being refactored.
+assert_contains "the long-lived case prints its own marker" \
+    'mixed_longlived=ok' "$_a2probe"
+assert_eq "the mixed gate requires the long-lived tunnel to have run" 1 \
+    "$(grep -c 'mixed_longlived=ok' "$ROOT/tests/protocol/run_xray_mixed.sh")"
+
 # SPEC 8 names the shells the unit suite runs under. On ubuntu-24.04 /bin/sh is
 # dash, so an `sh` leg beside a `dash` leg is the same interpreter twice; bash is
 # the /bin/sh of the EL family this branch supports and was never covered.

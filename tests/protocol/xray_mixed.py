@@ -294,10 +294,12 @@ def read_frame(sock, deadline):
     return body[0], struct.unpack("!II", body[1:9]), body[9:17], body[17:]
 
 
-def exchange(sock, cid, nonce, count=4, idle=False):
+def exchange(sock, cid, nonce, count=4, idle=False, spacing=0.0):
     seen_echo = set()
     seen_server = set()
     for seq in range(count):
+        if seq and spacing:
+            time.sleep(spacing)
         payload = ("client-%d-%d" % (cid, seq)).encode("ascii")
         sock.sendall(make_frame(ord("C"), cid, seq, nonce, payload))
         with STATS_LOCK:
@@ -347,6 +349,31 @@ def tunnel_once(protocol, proxy, target, creds, cid, atyp="ipv4"):
     try:
         sock.sendall(make_frame(ord("H"), cid, 0, nonce, b"hello"))
         exchange(sock, cid, nonce, count=4, idle=True)
+    finally:
+        sock.close()
+    with STATS_LOCK:
+        STATS["tunnels"] += 1
+
+
+def longlived_tunnel(proxy, target, creds, cid, frames=24, spacing=0.5):
+    """SPEC 6:228: one long-lived framed bidirectional tunnel.
+
+    Distinct from tunnel_once's idle-then-resume (6:229): rather than a single
+    gap, this holds one socket open across many frames spaced over time -- ~12s
+    at the defaults -- so a proxy that only survives a brief pause but drops a
+    genuinely sustained connection is caught here and not there. The exchange
+    itself is the shared one: every echo is matched on its own sequence, nonce and
+    payload, and the target's unsolicited server frames must keep arriving, which
+    the `spacing` between frames stretches across the tunnel's whole lifetime.
+
+    Counted into STATS exactly as tunnel_once counts a tunnel, so the target's
+    totals still reconcile in run_xray_mixed.sh.
+    """
+    sock = socks5_connect(proxy, target, creds, "ipv4")
+    nonce = struct.pack("!Q", cid * 104729 + 17)
+    try:
+        sock.sendall(make_frame(ord("H"), cid, 0, nonce, b"hello"))
+        exchange(sock, cid, nonce, count=frames, spacing=spacing)
     finally:
         sock.close()
     with STATS_LOCK:
@@ -494,6 +521,17 @@ def main():
     creds = Credentials(user, password)
     bad_creds = Credentials(user, wrong_password(password))
 
+    # SPEC 6:228: one long-lived framed bidirectional tunnel. Started here and
+    # joined at the end so its ~12s hold overlaps the target, boundary, auth and
+    # concurrency cases rather than adding its wall-clock on top of theirs -- a
+    # cost otherwise paid in full in every driving CI job. STATS is lock-guarded
+    # and cid 500 is clear of every other case (1-4, 176, 1000+), so the overlap
+    # changes only timing, not what is counted; and a connection that survives the
+    # 128-way burst alongside it is a stronger sustained-tunnel proof, not a weaker
+    # one. Its marker is not printed until result() has re-raised any failure.
+    longlived_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    longlived = longlived_pool.submit(longlived_tunnel, proxy, target, creds, 500)
+
     # SPEC 6 records the IPv4-literal, hostname and IPv6 target paths
     # separately. IPv6 is conditional on the host having the target address, so an
     # environment without it reports unavailable rather than silently passing.
@@ -543,6 +581,11 @@ def main():
     for count in (1, 32, 128):
         concurrency("socks5", proxy, target, creds, count)
         print("mixed_concurrency_%d=ok" % count)
+    # Join the long-lived tunnel started at the top; result() re-raises anything
+    # it hit, so the marker follows only a genuinely completed sustained tunnel.
+    longlived.result(timeout=60)
+    longlived_pool.shutdown()
+    print("mixed_longlived=ok")
     print("mixed_protocol=ok")
     if args.stats_file:
         with open(args.stats_file, "w", encoding="ascii") as handle:
