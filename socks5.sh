@@ -1150,6 +1150,21 @@ status	complete
 STATE
 }
 
+s5_verify_installed_artifacts() {
+    # Every recorded artifact must still be present, a non-symlink regular file, and
+    # hash-identical to what the state file pinned. A config-hash mismatch returns 2
+    # -- the state is intact and the config is the file that changed, which
+    # s5_report_state_load renders differently from an invalid state -- while every
+    # other failure returns 1.
+    [ -f "$S5_UNIT" ] && [ ! -L "$S5_UNIT" ] || return 1
+    [ "$(sha256sum "$S5_UNIT" 2>/dev/null | awk '{print $1}')" = "$S5_UNIT_SHA256" ] || return 1
+    [ -f "$S5_CFG" ] && [ ! -L "$S5_CFG" ] || return 1
+    [ "$(sha256sum "$S5_CFG" 2>/dev/null | awk '{print $1}')" = "$S5_CONFIG_SHA256" ] || return 2
+    [ -f "$S5_BIN" ] && [ ! -L "$S5_BIN" ] && [ -x "$S5_BIN" ] || return 1
+    [ "$(sha256sum "$S5_BIN" 2>/dev/null | awk '{print $1}')" = "$S5_BINARY_SHA256" ] || return 1
+    return 0
+}
+
 s5_state_load() {
     _slcurrent_family=$S5_OS_FAMILY
     _slcurrent_init=$S5_INIT
@@ -1218,12 +1233,9 @@ s5_state_load() {
     [ -n "$S5_ASSET_BINARY_SIZE" ] && [ -n "$S5_BINARY_SHA256" ] || return 1
     [ -n "$S5_UNIT_SHA256" ] || return 1
     s5_valid_port "$S5_PORT" && s5_valid_username "$S5_USERNAME" && s5_ipv4_is_canonical "$S5_LISTEN" || return 1
-    [ -f "$S5_UNIT" ] && [ ! -L "$S5_UNIT" ] || return 1
-    [ "$(sha256sum "$S5_UNIT" 2>/dev/null | awk '{print $1}')" = "$S5_UNIT_SHA256" ] || return 1
-    [ -f "$S5_CFG" ] && [ ! -L "$S5_CFG" ] || return 1
-    [ "$(sha256sum "$S5_CFG" 2>/dev/null | awk '{print $1}')" = "$S5_CONFIG_SHA256" ] || return 2
-    [ -f "$S5_BIN" ] && [ ! -L "$S5_BIN" ] && [ -x "$S5_BIN" ] || return 1
-    [ "$(sha256sum "$S5_BIN" 2>/dev/null | awk '{print $1}')" = "$S5_BINARY_SHA256" ] || return 1
+    s5_verify_installed_artifacts
+    _slr=$?
+    [ "$_slr" -eq 0 ] || return "$_slr"
     s5_account_identity || return 1
     return 0
 }
