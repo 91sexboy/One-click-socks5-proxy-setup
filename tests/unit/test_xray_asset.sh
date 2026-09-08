@@ -228,6 +228,15 @@ S5T_SIZE_OVERRIDE=''
 S5T_SHA_OVERRIDE=not-the-pinned-archive-digest
 s5t_asset_reject good "an archive with an unexpected digest" sha256
 S5T_SHA_OVERRIDE=''
+# The extracted binary's exact-size gate (distinct from its SHA-256, and checked
+# just before it) had no failing input of its own -- only a wrong binary digest was
+# injected. Inject a wrong expected size and require the binary-size reason, so the
+# gate cannot be dropped with only the archive-size case (a different variable) left
+# to notice.
+S5T_BIN_SIZE=999999
+s5t_asset_reject good "an archive whose xray member has an unexpected size" \
+    binary-size
+S5T_BIN_SIZE=${S5T_META%% *}
 S5T_BIN_SHA256=not-the-pinned-binary-digest
 s5t_asset_reject good "an archive whose xray member has an unexpected digest" \
     binary-sha256
