@@ -641,6 +641,17 @@ s5_lock_release() {
     return 0
 }
 
+s5_fail_locked() {
+    # The error-path tail shared by the locked commands: release the lock without
+    # letting a release failure mask the original error, then report the given
+    # message (a msg key + args, or nothing) and fail. The caller still issues its
+    # own `return`, since a return cannot cross a function boundary -- this only
+    # collapses the repeated release-then-report shape into one place.
+    s5_lock_release || true
+    [ "$#" -eq 0 ] || s5_msg_err "$@"
+    return 1
+}
+
 s5_atomic_write() {
     _sawp=$1
     _sawo=$2
@@ -1966,8 +1977,8 @@ s5_cmd_status() {
     s5_trap_lock_only
     s5_state_load
     _ssr=$?
-    s5_report_state_load "$_ssr" || { s5_lock_release || true; return 1; }
-    s5_config_extract || { s5_lock_release || true; s5_msg_err config.unreadable "$S5_CFG"; return 1; }
+    s5_report_state_load "$_ssr" || { s5_fail_locked; return 1; }
+    s5_config_extract || { s5_fail_locked config.unreadable "$S5_CFG"; return 1; }
     s5_service_active
     _ssa=$?
     case "$_ssa" in 0) _ssv=running ;; 1) _ssv=stopped ;; *) _ssv=unverified ;; esac
@@ -2100,9 +2111,9 @@ s5_cmd_show() {
     s5_lock_acquire || return 1
     s5_trap_lock_only
     s5_state_load
-    s5_report_state_load $? || { s5_lock_release || true; return 1; }
-    s5_config_extract || { s5_lock_release || true; s5_msg_err config.unreadable "$S5_CFG"; return 1; }
-    s5_render_card || { s5_lock_release || true; return 1; }
+    s5_report_state_load $? || { s5_fail_locked; return 1; }
+    s5_config_extract || { s5_fail_locked config.unreadable "$S5_CFG"; return 1; }
+    s5_render_card || { s5_fail_locked; return 1; }
     s5_lock_release || return 1
     return 0
 }
@@ -2112,10 +2123,10 @@ s5_cmd_restart() {
     s5_lock_acquire || return 1
     s5_trap_lock_only
     s5_state_load
-    s5_report_state_load $? || { s5_lock_release || true; return 1; }
-    s5_config_extract || { s5_lock_release || true; s5_msg_err config.unreadable "$S5_CFG"; return 1; }
-    s5_config_test "$S5_CFG" || { s5_lock_release || true; s5_msg_err config.invalid; return 1; }
-    s5_service_restart || { s5_lock_release || true; s5_msg_err service.start; return 1; }
+    s5_report_state_load $? || { s5_fail_locked; return 1; }
+    s5_config_extract || { s5_fail_locked config.unreadable "$S5_CFG"; return 1; }
+    s5_config_test "$S5_CFG" || { s5_fail_locked config.invalid; return 1; }
+    s5_service_restart || { s5_fail_locked service.start; return 1; }
     s5_wait_listening "$S5_PORT"
     _srr=$?
     if [ "$_srr" -eq 0 ]; then
@@ -2185,37 +2196,37 @@ s5_cmd_uninstall() {
     fi
     # The state file exists here, so the shared diagnosis reports an invalid state
     # rather than a missing one.
-    s5_report_state_load "$_sur" || { s5_lock_release || true; return 1; }
-    s5_config_extract || { s5_lock_release || true; s5_msg_err config.unreadable "$S5_CFG"; return 1; }
-    s5_msg_ask uninstall.confirm || { s5_lock_release || true; return 1; }
+    s5_report_state_load "$_sur" || { s5_fail_locked; return 1; }
+    s5_config_extract || { s5_fail_locked config.unreadable "$S5_CFG"; return 1; }
+    s5_msg_ask uninstall.confirm || { s5_fail_locked; return 1; }
     _suc=''
-    IFS= read -r _suc || { s5_lock_release || true; return 1; }
+    IFS= read -r _suc || { s5_fail_locked; return 1; }
     case "$_suc" in y | Y) ;; *) s5_lock_release || true; s5_msg_print install.cancelled; return 1 ;; esac
-    s5_service_stop || { s5_lock_release || true; s5_msg_err service.stop; return 1; }
+    s5_service_stop || { s5_fail_locked service.stop; return 1; }
     s5_wait_stopped
-    case $? in 0) ;; *) s5_lock_release || true; s5_msg_err service.stop; return 1 ;; esac
-    s5_account_identity || { s5_lock_release || true; s5_msg_err account.identity; return 1; }
+    case $? in 0) ;; *) s5_fail_locked service.stop; return 1 ;; esac
+    s5_account_identity || { s5_fail_locked account.identity; return 1; }
     # Clear this installation's own leftovers before anything destructive runs. An
     # interrupted update leaves a transaction directory, and s5_remove_owned_dir
     # refuses a non-empty directory -- which used to abort uninstall only after the
     # unit, config, binary, account and state were already gone. Junk that is not
     # ours still stops us here, now before the first deletion rather than after.
-    s5_cleanup_own_temps "$S5_SYSCONFDIR" || { s5_lock_release || true; return 1; }
-    s5_cleanup_own_temps "$S5_STATEDIR" || { s5_lock_release || true; return 1; }
-    s5_cleanup_own_temps "$S5_PREFIX" || { s5_lock_release || true; return 1; }
-    s5_cleanup_transaction || { s5_lock_release || true; return 1; }
-    s5_service_disable || { s5_lock_release || true; return 1; }
-    s5_remove_owned_file "$S5_UNIT" || { s5_lock_release || true; return 1; }
-    s5_remove_owned_file "$S5_CFG" || { s5_lock_release || true; return 1; }
-    s5_remove_owned_file "$S5_BIN" || { s5_lock_release || true; return 1; }
+    s5_cleanup_own_temps "$S5_SYSCONFDIR" || { s5_fail_locked; return 1; }
+    s5_cleanup_own_temps "$S5_STATEDIR" || { s5_fail_locked; return 1; }
+    s5_cleanup_own_temps "$S5_PREFIX" || { s5_fail_locked; return 1; }
+    s5_cleanup_transaction || { s5_fail_locked; return 1; }
+    s5_service_disable || { s5_fail_locked; return 1; }
+    s5_remove_owned_file "$S5_UNIT" || { s5_fail_locked; return 1; }
+    s5_remove_owned_file "$S5_CFG" || { s5_fail_locked; return 1; }
+    s5_remove_owned_file "$S5_BIN" || { s5_fail_locked; return 1; }
     if [ "$S5_INIT" = systemd ]; then
-        systemctl daemon-reload >/dev/null 2>&1 || { s5_lock_release || true; return 1; }
+        systemctl daemon-reload >/dev/null 2>&1 || { s5_fail_locked; return 1; }
     fi
-    s5_account_remove || { s5_lock_release || true; return 1; }
-    s5_remove_owned_file "$S5_STATE" || { s5_lock_release || true; return 1; }
-    s5_remove_owned_dir "$S5_SYSCONFDIR" || { s5_lock_release || true; return 1; }
-    s5_remove_owned_dir "$S5_STATEDIR" || { s5_lock_release || true; return 1; }
-    s5_remove_owned_dir "$S5_PREFIX" || { s5_lock_release || true; return 1; }
+    s5_account_remove || { s5_fail_locked; return 1; }
+    s5_remove_owned_file "$S5_STATE" || { s5_fail_locked; return 1; }
+    s5_remove_owned_dir "$S5_SYSCONFDIR" || { s5_fail_locked; return 1; }
+    s5_remove_owned_dir "$S5_STATEDIR" || { s5_fail_locked; return 1; }
+    s5_remove_owned_dir "$S5_PREFIX" || { s5_fail_locked; return 1; }
     s5_lock_release || return 1
     s5_msg_print uninstall.done
     return 0
