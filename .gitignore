@@ -14,3 +14,7 @@ __pycache__/
 .claude/
 tasks/
 .scratch/
+
+/CLAUDE.md
+/CONTEXT.md
+/SPEC.md
