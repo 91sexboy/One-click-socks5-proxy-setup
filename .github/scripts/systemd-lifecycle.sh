@@ -22,8 +22,8 @@ chmod 0700 "$work"
 lifecycle_write_fixtures "$work"
 : >"$work/answers.empty"
 printf 'y\n' >"$work/answers.uninstall"
-sudo python3 tests/protocol/terminal_install.py \
-  "$work/answers" "$work/pass" 23456 1 >"$work/install.log"
+sudo sh -c 'python3 tests/protocol/terminal_install.py "$1" "$2" 23456 1 >"$3"' \
+  sh "$work/answers" "$work/pass" "$work/install.log"
 printf 'lifecycle: install-ok\n'
 sudo find /etc/xray-socks5 /var/lib/xray-socks5 /usr/local/libexec/xray-socks5 \
   -maxdepth 2 -printf '%M %u:%g %p\n' 2>&1 || true
@@ -133,8 +133,8 @@ sudo sh .github/scripts/run-socks5.sh uninstall \
 test ! -e /etc/xray-socks5
 test ! -e /var/lib/xray-socks5
 test ! -e /usr/local/libexec/xray-socks5
-sudo sh socks5.sh help </dev/null >"$work/help-after-uninstall.log"
-grep -q 'Usage: sh socks5.sh' "$work/help-after-uninstall.log"
+sudo sh -c 'sh socks5.sh help </dev/null >"$1"' sh "$work/help-after-uninstall.log"
+sudo grep -q 'Usage: sh socks5.sh' "$work/help-after-uninstall.log"
 no_credential_in() {
   # A status other than 1 is a broken check rather than a clean log, and the
   # inline form exited 1 with no output, so a leak and an unreadable file looked
