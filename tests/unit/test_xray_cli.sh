@@ -148,7 +148,11 @@ cli '1
 assert_eq "an unsafe preference does not prevent help" 0 "$T_STATUS"
 assert_contains "an unsafe preference is not silently saved" '无法保存语言设置' "$T_OUT"
 assert_eq "a language symlink target is untouched" en "$(cat "$S5_TEST_ROOT/foreign-language")"
-[ -L "$CLI_ROOT/etc/xray-socks5.lang" ] && t_ok || t_bad "the language symlink was replaced"
+if [ -L "$CLI_ROOT/etc/xray-socks5.lang" ]; then
+    t_ok
+else
+    t_bad "the language symlink was replaced"
+fi
 rm "$CLI_ROOT/etc/xray-socks5.lang"
 printf 'en\n' >"$CLI_ROOT/etc/xray-socks5.lang"
 chmod 0666 "$CLI_ROOT/etc/xray-socks5.lang"
