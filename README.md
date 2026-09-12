@@ -19,7 +19,7 @@ curl -fsSL https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-set
 sh socks5.sh
 ```
 
-The script asks for a language first:
+The first run asks for a language and remembers the choice for later commands:
 
 ```text
 1) 中文
@@ -34,15 +34,24 @@ those prompts generates a value:
 - username: generated, or 3–32 letters, digits, underscores or hyphens;
 - password: 32 generated characters, or 12–128 safe characters entered by hand.
 
-After installation:
+After installation and verification succeed, the terminal immediately displays
+the SOCKS5 and HTTP connection links. There is no need to run another command to
+see them. Redirected output hides credentials and tells you how to view them later.
+
+Management commands reuse the saved language:
 
 ```sh
 sh socks5.sh install      # install or update
 sh socks5.sh status       # state, without the password
-sh socks5.sh show         # credentials, root on a real TTY only
+sh socks5.sh show         # view credentials again, root on a real TTY only
 sh socks5.sh restart      # restart and re-verify the port
 sh socks5.sh uninstall    # declines by default
+sh socks5.sh language     # choose and save a different language
 ```
+
+The language preference is stored separately in `/etc/xray-socks5.lang` and
+survives uninstall. Changing it requires root; if saving fails, the script warns
+that the selection only applies to the current invocation.
 
 ## What `mixed` means
 
@@ -127,6 +136,7 @@ Make or source compilation.
 | Xray binary | `/usr/local/libexec/xray-socks5/xray` | `root:root 0755` |
 | Configuration directory | `/etc/xray-socks5/` | root-owned, private |
 | Xray configuration | `/etc/xray-socks5/config.json` | `root:xray-socks5 0640` |
+| Language preference | `/etc/xray-socks5.lang` | `root:root 0644`, retained on uninstall |
 | State | `/var/lib/xray-socks5/state` | `root:root 0600` |
 | systemd unit | `/etc/systemd/system/xray-socks5.service` | `root:root 0644` |
 | Operation lock | `/run/xray-socks5.lock` | root-owned |
@@ -160,9 +170,10 @@ account used by the former 3proxy project.
 - the password is cleartext on disk inside the Xray configuration, readable only
   by root and the proxy service account;
 - the script configures no firewall and no cloud network policy;
-- `show` prints the password only on a real TTY; redirection and pipes are
-  refused;
-- `show` resolves the server's own public IPv4 with one bounded HTTPS request to
+- automatic connection cards and `show` print the password only on a real TTY;
+  redirected install/update output hides credentials, while redirected `show`
+  refuses to display them;
+- each connection card resolves the server's own public IPv4 with one bounded HTTPS request to
   `icanhazip.com` so the card carries a usable URI. Only a strictly validated
   public address is accepted, so a private, CGNAT or loopback answer is refused;
   set `S5_SERVER_IPV4` to name the address yourself and skip the request. When

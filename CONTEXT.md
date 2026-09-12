@@ -29,9 +29,14 @@ address is safe to print on the credential card. A *separate* concern from the
 destination boundary — different set, different purpose — reconciled with
 neither, and cross-referenced in code so the two are not mistaken for one.
 
-**credential card** — the block `show` prints (root, real TTY only) naming the
-server, port, and account. Names the server by its own public IPv4 or the literal
+**credential card** — the terminal-only connection details shown after a successful
+install or update, and available again through `show` (root only). Names the
+server, port, and account, using the server's own public IPv4 or the literal
 `SERVER_IPV4` placeholder. (SPEC §2.)
+
+**language preference** — the operator's saved Chinese or English choice, reused
+across commands until explicitly changed. Independent of the proxy installation;
+uninstalling the proxy does not discard the preference. (SPEC §2.)
 
 **pinned release / pinned binary** — the exact Xray version and tag commit, plus
 the per-architecture archive and extracted-`xray` sizes and SHA-256s, that every

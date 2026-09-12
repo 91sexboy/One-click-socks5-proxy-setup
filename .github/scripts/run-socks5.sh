@@ -8,7 +8,12 @@
 set -u
 umask 077
 
-CMD=${1:?usage: run-socks5.sh SUBCOMMAND ANSWERS LOG PASSFILE}
+MODE=run
+if [ "${1:-}" = --diagnose ]; then
+    MODE=diagnose
+    shift
+fi
+CMD=${1:?usage: run-socks5.sh [--diagnose] SUBCOMMAND ANSWERS LOG PASSFILE}
 ANSWERS=${2:?usage: run-socks5.sh SUBCOMMAND ANSWERS LOG PASSFILE}
 LOG=${3:?usage: run-socks5.sh SUBCOMMAND ANSWERS LOG PASSFILE}
 PASSFILE=${4:?usage: run-socks5.sh SUBCOMMAND ANSWERS LOG PASSFILE}
@@ -20,16 +25,19 @@ PASSFILE=${4:?usage: run-socks5.sh SUBCOMMAND ANSWERS LOG PASSFILE}
     exit 2
 }
 
-status=0
-printf 'runner: invoking socks5.sh %s\n' "$CMD" >&2
-sh socks5.sh "$CMD" <"$ANSWERS" >"$LOG" 2>&1 || status=$?
-printf 'runner: socks5.sh %s returned %s\n' "$CMD" "$status" >&2
-if [ "$status" -eq 0 ]; then
-    cat "$LOG"
-    exit 0
+if [ "$MODE" = run ]; then
+    status=0
+    printf 'runner: invoking socks5.sh %s\n' "$CMD" >&2
+    sh socks5.sh "$CMD" <"$ANSWERS" >"$LOG" 2>&1 || status=$?
+    printf 'runner: socks5.sh %s returned %s\n' "$CMD" "$status" >&2
+    if [ "$status" -eq 0 ]; then
+        cat "$LOG"
+        exit 0
+    fi
+    printf 'socks5.sh %s failed with status %s; redacted evidence follows\n' "$CMD" "$status" >&2
+else
+    printf 'socks5.sh %s terminal verification failed; redacted evidence follows\n' "$CMD" >&2
 fi
-
-printf 'socks5.sh %s failed with status %s; redacted evidence follows\n' "$CMD" "$status" >&2
 # Keep the password out of grep's argv (and so out of this script's
 # /proc/<pid>/cmdline) by reading the pattern from a file -- -f is the only form
 # that does. mktemp creates it 0600 and the trap removes it even under a signal.
@@ -40,10 +48,15 @@ trap 'rm -f "$_pat"' EXIT HUP INT TERM
 sed -n '2p' "$PASSFILE" >"$_pat"
 redact() { grep -vFf "$_pat" || true; }
 redact <"$LOG" >&2
-printf -- '--- systemctl status ---\n' >&2
-systemctl status xray-socks5.service --no-pager -l 2>&1 | redact >&2
-printf -- '--- journal ---\n' >&2
-journalctl -u xray-socks5.service --no-pager -n 120 2>&1 | redact >&2
+if command -v systemctl >/dev/null 2>&1; then
+    printf -- '--- systemctl status ---\n' >&2
+    systemctl status xray-socks5.service --no-pager -l 2>&1 | redact >&2
+    printf -- '--- journal ---\n' >&2
+    journalctl -u xray-socks5.service --no-pager -n 120 2>&1 | redact >&2
+elif command -v rc-service >/dev/null 2>&1; then
+    printf -- '--- OpenRC status ---\n' >&2
+    rc-service xray-socks5 status 2>&1 | redact >&2
+fi
 printf -- '--- listener ---\n' >&2
 ss -ltnp 2>&1 | redact >&2
 exit 1

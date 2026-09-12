@@ -104,6 +104,7 @@ else
 fi
 S5_PREFIX=$S5_ROOTDIR/usr/local/libexec/$S5_PROJECT
 S5_SYSCONFDIR=$S5_ROOTDIR/etc/$S5_PROJECT
+S5_LANG_FILE=$S5_ROOTDIR/etc/$S5_PROJECT.lang
 S5_STATEDIR=$S5_ROOTDIR/var/lib/$S5_PROJECT
 S5_UNITDIR=$S5_ROOTDIR/etc/systemd/system
 S5_BIN=$S5_PREFIX/xray
@@ -150,6 +151,8 @@ s5_msg() {
     case "$_smk" in
     lang.prompt) printf '%s\n' '请选择语言 / Choose language:' '  1) 中文' '  2) English' ;;
     lang.invalid) [ "$#" -eq 0 ] || return 1; printf '语言无效，请输入 1 或 2 / invalid language; enter 1 or 2.' ;;
+    lang.unsaved) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '无法保存语言设置；本次选择仅对当前运行有效。' ;; en) printf 'could not save the language preference; this choice applies only to the current invocation.' ;; esac ;;
+    lang.saved) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '语言设置已保存。' ;; en) printf 'language preference saved.' ;; esac ;;
     root.required) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '安装和管理需要 root 权限。' ;; en) printf 'installation and management require root privileges.' ;; esac ;;
     detect.unsupported) [ "$#" -eq 3 ] || return 1; case "$S5_LANG" in zh) printf '不支持的系统：ID=%s VERSION_ID=%s ARCH=%s。' "$1" "$2" "$3" ;; en) printf 'unsupported system: ID=%s VERSION_ID=%s ARCH=%s.' "$1" "$2" "$3" ;; esac ;;
     detect.commands) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '缺少必要命令：%s。' "$1" ;; en) printf 'required command(s) are missing: %s.' "$1" ;; esac ;;
@@ -166,6 +169,7 @@ s5_msg() {
     install.start) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '正在安装并验证 Xray mixed 代理……' ;; en) printf 'installing and verifying the Xray mixed proxy...' ;; esac ;;
     install.done) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf 'Xray mixed 代理安装完成。' ;; en) printf 'Xray mixed proxy installation completed.' ;; esac ;;
     install.updated) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '配置已更新，Xray 已重新启动并验证。' ;; en) printf 'configuration updated; Xray restarted and verified.' ;; esac ;;
+    install.card.hidden) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '连接信息未显示；请在终端运行 sh socks5.sh show 查看。' ;; en) printf 'connection details were not displayed; run sh socks5.sh show in a terminal to view them.' ;; esac ;;
     install.cancelled) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '操作已取消。' ;; en) printf 'operation cancelled.' ;; esac ;;
     asset.download) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '正在下载并校验 Xray 资产：%s。' "$1" ;; en) printf 'downloading and verifying Xray asset: %s.' "$1" ;; esac ;;
     asset.invalid) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf 'Xray 资产校验失败：%s。' "$1" ;; en) printf 'Xray asset verification failed: %s.' "$1" ;; esac ;;
@@ -197,7 +201,7 @@ s5_msg() {
     uninstall.done) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '卸载完成；系统软件包和防火墙规则未修改。' ;; en) printf 'uninstall completed; system packages and firewall rules were not modified.' ;; esac ;;
     install.confirm) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '确认安装 Xray mixed 代理？[Y/n] ' ;; en) printf 'Install the Xray mixed proxy? [Y/n] ' ;; esac ;;
     update.confirm) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '更新现有 Xray 配置？[y/N] ' ;; en) printf 'Update the existing Xray configuration? [y/N] ' ;; esac ;;
-    usage) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '用法：sh socks5.sh [install|status|show|restart|uninstall|help]' ;; en) printf 'Usage: sh socks5.sh [install|status|show|restart|uninstall|help]' ;; esac ;;
+    usage) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '用法：sh socks5.sh [install|status|show|restart|uninstall|language|help]' ;; en) printf 'Usage: sh socks5.sh [install|status|show|restart|uninstall|language|help]' ;; esac ;;
     extra) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '命令不接受额外参数：%s。' "$1" ;; en) printf 'the command does not accept extra arguments: %s.' "$1" ;; esac ;;
     *) return 1 ;;
     esac
@@ -246,6 +250,42 @@ s5_select_language() {
         return 0
     done
     return 1
+}
+
+s5_language_file_safe() {
+    [ -d "${S5_LANG_FILE%/*}" ] && [ ! -L "${S5_LANG_FILE%/*}" ] || return 1
+    [ -f "$S5_LANG_FILE" ] && [ ! -L "$S5_LANG_FILE" ] || return 1
+    if [ "${S5_SKIP_OWNERSHIP:-0}" != 1 ]; then
+        [ "$(stat -c '%u' "$S5_LANG_FILE" 2>/dev/null)" = 0 ] || return 1
+    fi
+    case "$(stat -c '%a' "$S5_LANG_FILE" 2>/dev/null)" in 600 | 644) ;; *) return 1 ;; esac
+}
+
+s5_language_load() {
+    s5_language_file_safe || return 1
+    [ "$(s5_bytecount "$S5_LANG_FILE")" = 3 ] || return 1
+    IFS= read -r S5_LANG <"$S5_LANG_FILE" || return 1
+    case "$S5_LANG" in zh | en) export S5_LANG ;; *) S5_LANG=''; return 1 ;; esac
+}
+
+s5_language_save() {
+    s5_is_root || return 1
+    if [ -e "$S5_LANG_FILE" ] || [ -L "$S5_LANG_FILE" ]; then
+        s5_language_file_safe || return 1
+    fi
+    s5_mkdir_parents "${S5_LANG_FILE%/*}" || return 1
+    printf '%s\n' "$S5_LANG" | s5_atomic_write "$S5_LANG_FILE" root:root 0644
+}
+
+s5_init_language() {
+    if [ "$#" -ne 1 ] || [ "$1" != language ]; then
+        s5_language_load && return 0
+    fi
+    s5_select_language || return 1
+    if ! s5_language_save; then
+        s5_msg_warn lang.unsaved
+        [ "${1:-}" != language ]
+    fi
 }
 
 s5_osrel_get() {
@@ -2024,6 +2064,11 @@ s5_cmd_install() {
     s5_lock_release || return 1
     trap - EXIT HUP INT TERM
     if [ "$_siupdate" = 1 ]; then s5_msg_print install.updated; else s5_msg_print install.done; fi
+    if [ -t 1 ]; then
+        s5_render_card || s5_msg_warn install.card.hidden
+    else
+        s5_msg_print install.card.hidden
+    fi
     return 0
 }
 
@@ -2142,8 +2187,7 @@ s5_resolve_card_address() {
     return 0
 }
 
-# The card body, callable directly by tests. The terminal-only guard stays in
-# s5_cmd_show, because a test that satisfied it would not be testing the guard.
+# Callers must verify root privileges and a terminal stdout before showing credentials.
 s5_render_card() {
     s5_resolve_card_address
     _sss="socks5://$S5_USERNAME:$S5_PASSWORD@$S5_CARD_ADDR:$S5_PORT"
@@ -2289,7 +2333,7 @@ s5_cmd_uninstall() {
 }
 
 s5_main() {
-    s5_select_language || return 1
+    s5_init_language "$@" || return 1
     _smcmd=${1:-}
     # shift is a POSIX special built-in, so shifting past the end terminates a
     # non-interactive shell outright -- neither the redirect nor the `|| true`
@@ -2308,6 +2352,7 @@ s5_main() {
     show) s5_cmd_show ;;
     restart) s5_cmd_restart ;;
     uninstall) s5_cmd_uninstall ;;
+    language) s5_msg_print lang.saved ;;
     help | -h | --help) s5_msg_print usage ;;
     *) s5_msg_err extra "$_smcmd"; s5_msg_print usage >&2; return 64 ;;
     esac

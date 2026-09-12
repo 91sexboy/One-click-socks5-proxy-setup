@@ -24,7 +24,7 @@ are rejected or fail closed.
 
 ## 2. Supported interaction
 
-Every real invocation asks for language before command dispatch:
+The first invocation without a saved language preference asks before command dispatch:
 
 ```text
 1) 中文
@@ -32,7 +32,17 @@ Every real invocation asks for language before command dispatch:
 ```
 
 Blank or `1` selects Chinese; `2` selects English; invalid input is retried with
-a bounded count and EOF fails. Locale is process-only and never persisted.
+a bounded count and EOF fails. Root saves the choice atomically in
+`/etc/xray-socks5.lang`, independently of installation state. Later commands reuse
+it without consuming stdin. `language` explicitly asks again and saves the new
+choice; EOF leaves the old choice intact. Uninstall retains the preference.
+
+The preference contains only `zh` or `en` followed by a newline, never shell
+code or credentials. Only a regular, non-symlink, root-owned file with mode
+`0600` or `0644` is read or replaced. An absent, malformed or unsafe preference
+prompts again. If persistence fails, ordinary commands warn and use the selected
+language for that invocation; an explicit `language` change returns failure.
+Unprivileged commands can read the saved choice but cannot change it.
 
 A fresh install then asks for:
 
@@ -43,8 +53,12 @@ A fresh install then asks for:
 3. password — blank generates 32 characters; manual values are `12–128`
    characters from `A-Za-z0-9._~-` and are read once.
 
-The password is visible while typed. `show` displays credentials only to root on
-a real TTY. Redirected output never receives the credential card.
+The password is visible while typed. After a successful install or update has
+passed service, listener and local protocol verification, the root operator sees
+the credential card immediately on a real TTY. `show` displays it again later,
+also only to root on a real TTY. Redirected install/update output never receives
+the credential card; it prints a hint to run `sh socks5.sh show` in a terminal.
+Failure to display a card does not roll back or fail an already verified install.
 
 The card names the server by its own public IPv4, resolved with one bounded
 HTTPS request to `icanhazip.com` whose body must be a single strictly validated
@@ -162,6 +176,7 @@ publication, service start, exact-listener readiness, and local protocol verific
 | Binary | `/usr/local/libexec/xray-socks5/xray` | `root:root 0755` |
 | Config directory | `/etc/xray-socks5/` | root-owned, private |
 | Config | `/etc/xray-socks5/config.json` | `root:xray-socks5 0640` |
+| Language preference | `/etc/xray-socks5.lang` | `root:root 0644`, retained on uninstall |
 | State | `/var/lib/xray-socks5/state` | `root:root 0600` |
 | Transaction | `/var/lib/xray-socks5/transaction/` | root-owned, private |
 | Lock | `/run/xray-socks5.lock` | root-owned |

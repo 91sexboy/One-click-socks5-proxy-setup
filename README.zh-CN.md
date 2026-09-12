@@ -16,7 +16,7 @@ curl -fsSL https://raw.githubusercontent.com/91sexboy/One-click-socks5-proxy-set
 sh socks5.sh
 ```
 
-脚本运行后首先选择语言：
+首次运行时选择语言，之后的安装和管理命令会记住这次选择：
 
 ```text
 1) 中文
@@ -29,15 +29,22 @@ sh socks5.sh
 - 账户名：随机生成或手动输入 `3–32` 个字母、数字、下划线或短横线；
 - 密码：随机生成 32 个字符或手动输入 `12–128` 个安全字符。
 
-安装后可以使用：
+安装并验证成功后，终端会立即显示 SOCKS5 和 HTTP 代理连接链接，无需再执行命令查看。
+如果输出被重定向到文件或管道，则隐藏凭据并提示如何稍后查看。
+
+后续管理命令会沿用已保存的语言：
 
 ```sh
 sh socks5.sh install      # 安装或更新
 sh socks5.sh status       # 查看状态，不显示密码
-sh socks5.sh show         # root + 真实 TTY 显示凭据
+sh socks5.sh show         # 稍后再次查看凭据，需要 root + 真实 TTY
 sh socks5.sh restart      # 重启并验证端口
 sh socks5.sh uninstall    # 默认不删除
+sh socks5.sh language     # 主动切换并保存语言
 ```
+
+语言偏好独立保存在 `/etc/xray-socks5.lang`，卸载代理后仍保留。修改语言需要 root；
+如果保存失败，脚本会明确提示本次选择只对当前运行有效。
 
 ## `mixed` 是什么意思
 
@@ -107,6 +114,7 @@ archive 中预期包含根目录下的 `xray`、`geoip.dat`、`geosite.dat`、`L
 | Xray 二进制 | `/usr/local/libexec/xray-socks5/xray` | `root:root 0755` |
 | 配置目录 | `/etc/xray-socks5/` | root-owned，私有 |
 | Xray 配置 | `/etc/xray-socks5/config.json` | `root:xray-socks5 0640` |
+| 语言偏好 | `/etc/xray-socks5.lang` | `root:root 0644`，卸载时保留 |
 | state | `/var/lib/xray-socks5/state` | `root:root 0600` |
 | systemd unit | `/etc/systemd/system/xray-socks5.service` | `root:root 0644` |
 | 操作锁 | `/run/xray-socks5.lock` | root-owned |
@@ -128,8 +136,9 @@ archive 中预期包含根目录下的 `xray`、`geoip.dat`、`geosite.dat`、`L
 - UDP 默认关闭，不应将本项目当作 UDP 或 VPN；
 - Xray 配置中的密码是磁盘明文，文件权限限制为 root 和代理服务账户可读；
 - 脚本不自动配置防火墙或云网络策略；
-- `show` 只有真实 TTY 才显示密码，重定向和 pipe 会拒绝显示；
-- `show` 会用一次受限的 HTTPS 请求向 `icanhazip.com` 查询本机公网 IPv4，让凭据卡
+- 安装或更新后的自动凭据卡与 `show` 都只有真实 TTY 才显示密码；安装输出被重定向时
+  隐藏凭据，`show` 的重定向和 pipe 则会拒绝显示；
+- 每次显示凭据卡会用一次受限的 HTTPS 请求向 `icanhazip.com` 查询本机公网 IPv4，让凭据卡
   给出可直接使用的 URI。只接受严格校验过的公网地址，私网、CGNAT 和回环地址一律
   拒绝；也可以设置 `S5_SERVER_IPV4` 自己指定地址并跳过该请求。两者都没有时，卡片
   会打印 `SERVER_IPV4` 并提示替换；

@@ -27,18 +27,16 @@ test "$(stat -c "%U:%G %a" /var/lib/xray-socks5/state)" = "root:root 600"
 # SPEC 5: re-running install over an existing installation is an
 # in-place update. Rotate the credentials, keep the port, and require
 # the new identity in both the config and the state.
-if ! sh socks5.sh install <"$work/answers.update" >"$work/update.log" 2>&1; then
-  cat "$work/update.log"
-  exit 1
-fi
+python3 tests/protocol/terminal_install.py \
+  "$work/answers.update" "$work/pass.update" 23456 0 >"$work/update.log"
 grep -q "ciuser2" /etc/xray-socks5/config.json
 grep -qE "^username[[:space:]]+ciuser2$" /var/lib/xray-socks5/state
 test ! -e /var/lib/xray-socks5/transaction
 test "$(stat -c "%U:%G %a" /etc/xray-socks5/config.json)" = "root:xray-socks5 640"
 rc-service xray-socks5 status
 pkgs_before=$(apk info | sort | sha256sum)
-printf "2\n" | sh socks5.sh status >"$work/status.log"
-printf "2\n" | sh socks5.sh restart
+sh socks5.sh status </dev/null >"$work/status.log"
+sh socks5.sh restart </dev/null
 rc-service xray-socks5 status
 grep -q "mixed" "$work/status.log"
 # SPEC 5: OpenRC recovers a crash with the listener returning, and a
@@ -137,13 +135,15 @@ test -s "$work/target.port"
 PASSFILE="$work/pass.update" PORT=23456 TARGET_PORT="$(cat "$work/target.port")" \
   REPORT="$work/report" OUT="$work/probe" \
   sh tests/protocol/run_xray_mixed.sh
-printf "2\ny\n" | sh socks5.sh uninstall
+printf "y\n" | sh socks5.sh uninstall
 test "$(apk info | sort | sha256sum)" = "$pkgs_before"
 test ! -e /etc/xray-socks5
 test ! -e /var/lib/xray-socks5
 test ! -e /usr/local/libexec/xray-socks5
 test ! -e /etc/init.d/xray-socks5
 test ! -e /run/xray-socks5.pid
+sh socks5.sh help </dev/null >"$work/help-after-uninstall.log"
+grep -q 'Usage: sh socks5.sh' "$work/help-after-uninstall.log"
 # set -e does not apply to a command a ! inverts, so `! grep -q secret log` did
 # not fail the gate when it found one. Only the last such line ever mattered, as
 # the script's exit status; a credential leaked into install.log went unreported.

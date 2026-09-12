@@ -12,7 +12,7 @@ lifecycle_write_fixtures() {
     _lcw=$1
     printf '2\ny\n23456\nciuser\nCISecret_123~x\n' >"$_lcw/answers"
     printf 'ciuser\nCISecret_123~x\n' >"$_lcw/pass"
-    printf '2\ny\n23456\nciuser2\nCISecret_456~y\n' >"$_lcw/answers.update"
+    printf 'y\n23456\nciuser2\nCISecret_456~y\n' >"$_lcw/answers.update"
     printf 'ciuser2\nCISecret_456~y\n' >"$_lcw/pass.update"
     chmod 0600 "$_lcw/answers" "$_lcw/pass" "$_lcw/answers.update" "$_lcw/pass.update"
 }

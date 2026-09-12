@@ -20,10 +20,10 @@ cleanup() {
 trap cleanup EXIT HUP INT TERM
 chmod 0700 "$work"
 lifecycle_write_fixtures "$work"
-printf '2\n' >"$work/answers.lang"
-printf '2\ny\n' >"$work/answers.uninstall"
-sudo sh .github/scripts/run-socks5.sh install \
-  "$work/answers" "$work/install.log" "$work/pass"
+: >"$work/answers.empty"
+printf 'y\n' >"$work/answers.uninstall"
+sudo python3 tests/protocol/terminal_install.py \
+  "$work/answers" "$work/pass" 23456 1 >"$work/install.log"
 printf 'lifecycle: install-ok\n'
 sudo find /etc/xray-socks5 /var/lib/xray-socks5 /usr/local/libexec/xray-socks5 \
   -maxdepth 2 -printf '%M %u:%g %p\n' 2>&1 || true
@@ -47,7 +47,7 @@ s = socket.create_connection(('127.0.0.1', 23456), 5)
 s.close()
 PY
 sudo sh .github/scripts/run-socks5.sh status \
-  "$work/answers.lang" "$work/status.log" "$work/pass"
+  "$work/answers.empty" "$work/status.log" "$work/pass"
 printf 'lifecycle: status-ok\n'
 printf 'lifecycle: status-log='
 sudo cat "$work/status.log" | tr '\n' ' '
@@ -55,7 +55,7 @@ printf '\n'
 sudo grep -q 'mixed' "$work/status.log"
 printf 'lifecycle: status-content-ok\n'
 sudo sh .github/scripts/run-socks5.sh restart \
-  "$work/answers.lang" "$work/restart.log" "$work/pass"
+  "$work/answers.empty" "$work/restart.log" "$work/pass"
 printf 'lifecycle: restart-command-ok\n'
 sudo systemctl is-active --quiet xray-socks5.service
 printf 'lifecycle: restart-active-ok\n'
@@ -133,6 +133,8 @@ sudo sh .github/scripts/run-socks5.sh uninstall \
 test ! -e /etc/xray-socks5
 test ! -e /var/lib/xray-socks5
 test ! -e /usr/local/libexec/xray-socks5
+sudo sh socks5.sh help </dev/null >"$work/help-after-uninstall.log"
+grep -q 'Usage: sh socks5.sh' "$work/help-after-uninstall.log"
 no_credential_in() {
   # A status other than 1 is a broken check rather than a clean log, and the
   # inline form exited 1 with no output, so a leak and an unreadable file looked

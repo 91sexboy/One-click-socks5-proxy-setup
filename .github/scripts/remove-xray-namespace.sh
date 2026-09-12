@@ -9,6 +9,7 @@ set -u
 sudo systemctl stop xray-socks5.service 2>/dev/null || true
 sudo rm -rf /etc/xray-socks5 /var/lib/xray-socks5 \
     /usr/local/libexec/xray-socks5 /etc/systemd/system/xray-socks5.service
+sudo rm -f /etc/xray-socks5.lang
 sudo userdel xray-socks5 2>/dev/null || true
 sudo groupdel xray-socks5 2>/dev/null || true
 sudo systemctl daemon-reload 2>/dev/null || true

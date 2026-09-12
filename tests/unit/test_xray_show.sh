@@ -197,4 +197,8 @@ assert_ne "restart fails when the config cannot be extracted" 0 "$T_STATUS"
 assert_contains "restart names the config it could not read" "$S5_CFG" "$T_OUT"
 s5_config_extract() { return 0; }
 
+t_run python3 "$ROOT/tests/protocol/test_terminal_install.py"
+assert_eq "the terminal probe preserves diagnostics without leaking credentials" 0 "$T_STATUS"
+if [ "$T_STATUS" -ne 0 ]; then printf '%s\n' "$T_OUT" >&2; fi
+
 t_summary
