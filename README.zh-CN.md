@@ -2,7 +2,7 @@
 
 [English](README.md) | **简体中文**
 
-[![CI — xray-only](https://github.com/91sexboy/One-click-socks5-proxy-setup/actions/workflows/ci.yml/badge.svg?branch=xray-only)](https://github.com/91sexboy/One-click-socks5-proxy-setup/actions/workflows/ci.yml)
+[![CI — xray-only](https://github.com/91sexboy/One-click-socks5-proxy-setup/actions/workflows/ci.yml/badge.svg?branch=xray-only)](https://github.com/91sexboy/One-click-socks5-proxy-setup)
 
 一个单文件 POSIX shell 安装器，用于在你拥有或获授权管理的 Linux 服务器上部署需要身份认证的 **SOCKS5 + HTTP 代理**。
 
@@ -10,7 +10,7 @@
 
 > **身份认证不等于加密。** 客户端与代理之间的连接没有传输层加密，认证信息会在这条连接上传输。请使用可信网络或另外配置的加密隧道；本安装器不会替你建立加密隧道。
 
-[安装](#快速安装) · [管理命令](#管理命令) · [支持系统](#支持范围) · [安全边界](#安全边界) · [常见问题](#常见问题)
+[安装](#快速安装) · [管理命令](#管理命令) · [支持系统](#支持范围) · [常见问题](#常见问题)
 
 ## `mixed` 是什么
 
@@ -120,92 +120,6 @@ S5_SERVER_IPV4=203.0.113.10 sh socks5.sh show
 ```
 
 请将示例地址替换为自己的地址。这**只改变链接中显示的地址**，不会修改监听地址或防火墙。无效的覆盖值会回退到自动查询。查询到公网地址，也不代表该端口一定能从互联网访问。
-
-## 安全边界
-
-- **客户端到代理的连接需要另行保护。** SOCKS5 密码认证和 HTTP Basic 认证都不加密这条连接。通过代理访问 HTTPS 网站，也不会加密之前的代理认证过程。
-- 请将访问范围限制在预期客户端。知道凭据且能连接该端口的人都可以使用代理，出口流量来自你的服务器。
-- 配置阻断[十二个明确的目标网段](tests/fixtures/denied-destinations.txt)，包括回环、列表中的私网／CGNAT 网段、链路本地地址（例如云元数据地址 `169.254.169.254`）以及其他列出的特殊网段。`IPIfNonMatch` 也会对域名解析后的目标地址应用边界；这不等于阻断所有非公网地址。
-- 自动查询所得地址的校验，与代理目标网段阻断是两种不同策略。它们都不能替代主机防火墙或云网络策略。
-- 密码以明文保存在受保护的配置和恢复副本中。不要公开凭据卡、配置文件或备份内容。状态文件记录账户名和完整性元数据，不保存密码。
-- 生成的配置没有面板、API、订阅服务、GeoIP／GeoSite 数据库、TLS、REALITY、WebSocket、gRPC 或 XHTTP 传输。本项目不是 VPN，也不是 UDP 中继。
-
-## 生命周期
-
-候选配置必须先通过以下检查，才能发布：
-
-```sh
-xray run -test -c /path/to/candidate.json
-```
-
-该命令只验证配置，不绑定端口。之后安装器才原子发布配置、启动 Xray、确认监听器归属、检查两种协议的认证行为，并使用一个活跃的本地对照目标检查访问拒绝。成功的代理数据传输由 CI 验证，不由服务器上的安装器验证。
-
-- **更新会重启服务。** 已有连接会断开。未通过配置测试的候选不会替换正式配置，也不会停止健康服务。
-- **恢复失败时保留证据。** 发布后失败会尝试恢复旧配置和状态，再重启服务。如果恢复失败，副本保留在 `/var/lib/xray-socks5/transaction/`。后续更新会拒绝覆盖这个待恢复目录，失败重试也不会删除上次的备份。
-- **管理操作检查归属和完整性。** 文件摘要和账户身份必须与记录一致。手动修改受管配置可能导致正常管理命令拒绝继续，请使用支持的配置更新流程。
-- **卸载采用保守策略。** 在停止服务、删除受管文件和账户前，先拒绝未知或不安全的目录条目。运行依赖包、防火墙设置及语言偏好会保留。
-- **使用系统原生服务管理器。** systemd 使用 `Restart=on-failure` 和 `RestartPreventExitStatus=23`；OpenRC 使用限制重启次数的 `supervise-daemon`，不是 systemd 按退出码控制重启的机制。
-
-管理操作使用操作锁。这些保护不承诺可以恢复所有存储故障或任意外部文件系统修改。
-
-## 文件和权限
-
-| 资源 | 路径 | 所有者和权限 |
-| --- | --- | --- |
-| Xray 可执行文件 | `/usr/local/libexec/xray-socks5/xray` | `root:root 0755` |
-| 配置目录 | `/etc/xray-socks5/` | `root:xray-socks5 0750` |
-| 配置文件 | `/etc/xray-socks5/config.json` | `root:xray-socks5 0640` |
-| 状态文件 | `/var/lib/xray-socks5/state` | `root:root 0600` |
-| systemd 服务 | `/etc/systemd/system/xray-socks5.service` | `root:root 0644` |
-| OpenRC 服务 | `/etc/init.d/xray-socks5` | `root:root 0755` |
-| 语言偏好 | `/etc/xray-socks5.lang` | `root:root 0644` |
-| 恢复目录 | `/var/lib/xray-socks5/transaction/` | `root:root 0700`；备份文件为 `0600` |
-
-只安装当前后端对应的服务定义文件。临时操作锁位于 `/run/xray-socks5.lock`。Xray 使用专用的 `xray-socks5` 用户和组运行，不以 root 运行。
-
-本安装不会采用或删除旧 3proxy 路线中的 `socks5-manager` 路径或 `socks5proxy` 账户。
-
-## 固定 Xray 版本和发布包
-
-安装器使用官方 Xray-core [v26.3.27 发布版本](https://github.com/XTLS/Xray-core/releases/tag/v26.3.27)，不是 `latest`、开发构建，也不是从本仓库的 Releases 页面下载引擎。
-
-上游 tag 对应提交：`d2758a023cd7f4174a5a5fa4ff66e487d4342ba0`。
-
-| 架构 | 官方发布包 | 发布包字节数 | 提取后二进制字节数 |
-| --- | --- | ---: | ---: |
-| amd64 | `Xray-linux-64.zip` | 21136402 | 36577406 |
-| arm64 | `Xray-linux-arm64-v8a.zip` | 19716427 | 34209918 |
-
-<details>
-<summary>SHA-256 校验值</summary>
-
-```text
-amd64 发布包
-23cd9af937744d97776ee35ecad4972cf4b2109d1e0fe6be9930467608f7c8ae
-amd64 二进制
-8255dd939c34cf966cc91517b6324dd3c8d0bcf49ffac8beca049a38c46845ed
-
-arm64 发布包
-4d30283ae614e3057f730f67cd088a42be6fdf91f8639d82cb69e48cde80413c
-arm64 二进制
-c2d20a7045250497083afea0d79db0672f6c89a25aaaf37c92de034d6b764b04
-```
-
-</details>
-
-安装器校验发布包的大小、摘要、成员名称和类型，以及提取后二进制的大小、摘要和 ELF 架构。包内必须恰好包含 `xray`、`geoip.dat`、`geosite.dat`、`LICENSE` 和 `README.md`，但**只安装 `xray`**，不需要 Go 编译器或其他源码构建工具。
-
-## 测试和内存
-
-[GitHub Actions 工作流](.github/workflows/ci.yml) 运行完整测试。本地只进行语法检查和针对性测试，不运行完整慢速套件。
-
-- 单元测试覆盖 `sh`、`dash`、`bash` 和 BusyBox `sh`；文档还会在不含本地专用工作文档的公开检出副本中检查。
-- 发布包验证覆盖 amd64 和 arm64，生命周期测试覆盖[支持范围](#支持范围)中明确列出的测试环境。
-- 协议测试覆盖 SOCKS5／HTTP 认证、不支持请求的拒绝、目标边界、IPv4／域名／可用 IPv6 目标、长连接和空闲后恢复。验证 IPv6 目标，不代表提供 IPv6 服务端监听。
-- 1/32/128 并发门禁会同步连接，并使用独立目标在传输期间的观察结果，不仅仅统计提交的任务数。服务端主动帧会检查载荷、序号和持续进展。
-- systemd 内存 job 记录 RSS 快照、cgroup 用量和各阶段峰值、OOM 计数及重启次数。常驻的 `memory.peak` 文件描述符与先高后低负载实验，用于验证实际内核的重置语义。
-
-**不公布未经支持的内存预算或吞吐量保证。** 内存证据需要结合版本、平台、配置、连接数、持续时间和 CI run 解读。systemd 状态切换耗时不是监听就绪耗时，发布包大小也不是 RSS。
 
 ## 常见问题
 

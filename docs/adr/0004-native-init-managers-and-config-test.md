@@ -20,7 +20,8 @@ or OpenRC `supervise-daemon` with `command_user`. Validate every candidate with
 require that a configuration error (exit 23) does not enter an automatic restart
 loop on either backend. Serialize install/update/restart/uninstall with an
 operation lock, and report ready only once the configured port is observed
-listening. See the [public lifecycle description](../../README.md#lifecycle).
+listening. See the [systemd](../../.github/scripts/systemd-lifecycle.sh) and
+[OpenRC](../../.github/scripts/alpine-lifecycle.sh) lifecycle gates.
 
 ## Alternatives considered
 

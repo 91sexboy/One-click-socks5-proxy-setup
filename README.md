@@ -2,7 +2,7 @@
 
 **English** | [简体中文](README.zh-CN.md)
 
-[![CI — xray-only](https://github.com/91sexboy/One-click-socks5-proxy-setup/actions/workflows/ci.yml/badge.svg?branch=xray-only)](https://github.com/91sexboy/One-click-socks5-proxy-setup/actions/workflows/ci.yml)
+[![CI — xray-only](https://github.com/91sexboy/One-click-socks5-proxy-setup/actions/workflows/ci.yml/badge.svg?branch=xray-only)](https://github.com/91sexboy/One-click-socks5-proxy-setup)
 
 A single-file POSIX shell installer for an authenticated **SOCKS5 + HTTP proxy** on a Linux server you own or are authorised to administer.
 
@@ -10,7 +10,7 @@ A single-file POSIX shell installer for an authenticated **SOCKS5 + HTTP proxy**
 
 > **Authentication is not encryption.** The client–proxy connection carries credentials without transport encryption. Use a trusted network or a separately configured encrypted tunnel; this installer does not set one up.
 
-[Install](#quick-install) · [Commands](#commands) · [Supported systems](#supported-targets) · [Security](#security-boundaries) · [Troubleshooting](#troubleshooting)
+[Install](#quick-install) · [Commands](#commands) · [Supported systems](#supported-targets) · [Troubleshooting](#troubleshooting)
 
 ## What `mixed` means
 
@@ -120,92 +120,6 @@ S5_SERVER_IPV4=203.0.113.10 sh socks5.sh show
 ```
 
 Replace the example address with your own. This changes **only the displayed links**, not the listen address or firewall. An invalid override falls back to automatic lookup. Detecting a public address does not prove that the port is reachable from the Internet.
-
-## Security boundaries
-
-- **Protect the client–proxy connection separately.** SOCKS5 password authentication and HTTP Basic authentication do not encrypt it. HTTPS traffic through the proxy does not encrypt the preceding proxy-authentication exchange.
-- Keep access limited to intended clients. Anyone with the credentials and network access to the port can use the proxy; their traffic exits through your server.
-- The configuration blocks [twelve literal destination ranges](tests/fixtures/denied-destinations.txt), covering loopback, the listed private/CGNAT ranges, link-local addresses such as cloud metadata at `169.254.169.254`, and other listed special ranges. `IPIfNonMatch` applies this boundary to resolved hostname destinations too. It is not a blanket ban on every non-public address.
-- Automatic card-address validation and proxy destination blocking are different policies. Neither replaces a host firewall or cloud network policy.
-- Passwords are plaintext in the protected configuration and recovery copies. Do not publish connection cards, configuration files, or backup contents. The state file records the username and integrity metadata, not the password.
-- The generated setup contains no panel, API, subscription service, GeoIP/GeoSite database, TLS, REALITY, WebSocket, gRPC, or XHTTP transport. It is not a VPN or UDP relay.
-
-## Lifecycle
-
-Before publication, a candidate configuration must pass:
-
-```sh
-xray run -test -c /path/to/candidate.json
-```
-
-That command validates configuration without binding a port. The installer then publishes the configuration atomically, starts Xray, verifies listener ownership, checks both authentication protocols, and checks destination refusal against a live local control. Successful proxied payload transport is tested in CI, not by the on-server installer.
-
-- **Updates restart the service.** Existing connections close. A rejected candidate does not replace the live configuration or stop a healthy service.
-- **Recovery preserves evidence.** Failures after publication attempt to restore the previous config and state before restarting. If restoration fails, recovery copies remain under `/var/lib/xray-socks5/transaction/`. A later update refuses to overwrite that pending directory, and a failed retry does not remove the earlier backups.
-- **Management checks ownership and integrity.** Recorded file hashes and account identity must still match. Hand-editing the managed configuration can make normal management commands refuse it; use the supported update flow instead.
-- **Uninstall is conservative.** Unknown or unsafe directory entries are rejected before the service is stopped or managed files/accounts are removed. Runtime packages, firewall settings, and the language preference are retained.
-- **Supervision uses the native manager.** systemd uses `Restart=on-failure` and `RestartPreventExitStatus=23`. OpenRC uses `supervise-daemon` with bounded respawns; it does not use systemd's exit-code-specific mechanism.
-
-Management operations use an operation lock. These safeguards do not promise recovery from every storage failure or arbitrary external filesystem modification.
-
-## Files and permissions
-
-| Resource | Path | Owner and mode |
-| --- | --- | --- |
-| Xray executable | `/usr/local/libexec/xray-socks5/xray` | `root:root 0755` |
-| Configuration directory | `/etc/xray-socks5/` | `root:xray-socks5 0750` |
-| Configuration | `/etc/xray-socks5/config.json` | `root:xray-socks5 0640` |
-| State | `/var/lib/xray-socks5/state` | `root:root 0600` |
-| systemd service | `/etc/systemd/system/xray-socks5.service` | `root:root 0644` |
-| OpenRC service | `/etc/init.d/xray-socks5` | `root:root 0755` |
-| Language preference | `/etc/xray-socks5.lang` | `root:root 0644` |
-| Recovery directory | `/var/lib/xray-socks5/transaction/` | `root:root 0700`; backup files `0600` |
-
-Only the selected backend's service definition is installed. The transient lock is `/run/xray-socks5.lock`. Xray runs as the dedicated `xray-socks5` user/group, not root.
-
-This installation does not adopt or remove the old 3proxy route's `socks5-manager` paths or `socks5proxy` account.
-
-## Pinned Xray release and assets
-
-The installer uses the official Xray-core [v26.3.27 release](https://github.com/XTLS/Xray-core/releases/tag/v26.3.27), not `latest`, a development build, or this repository's Releases page.
-
-Upstream tag commit: `d2758a023cd7f4174a5a5fa4ff66e487d4342ba0`.
-
-| Architecture | Official archive | Archive bytes | Extracted binary bytes |
-| --- | --- | ---: | ---: |
-| amd64 | `Xray-linux-64.zip` | 21136402 | 36577406 |
-| arm64 | `Xray-linux-arm64-v8a.zip` | 19716427 | 34209918 |
-
-<details>
-<summary>SHA-256 checksums</summary>
-
-```text
-amd64 archive
-23cd9af937744d97776ee35ecad4972cf4b2109d1e0fe6be9930467608f7c8ae
-amd64 binary
-8255dd939c34cf966cc91517b6324dd3c8d0bcf49ffac8beca049a38c46845ed
-
-arm64 archive
-4d30283ae614e3057f730f67cd088a42be6fdf91f8639d82cb69e48cde80413c
-arm64 binary
-c2d20a7045250497083afea0d79db0672f6c89a25aaaf37c92de034d6b764b04
-```
-
-</details>
-
-The installer verifies archive size/hash, member names and types, and the extracted executable's size/hash/ELF architecture. The archive must contain exactly `xray`, `geoip.dat`, `geosite.dat`, `LICENSE`, and `README.md`. **Only `xray` is installed.** No Go compiler or other source-build toolchain is needed.
-
-## Testing and memory
-
-The [GitHub Actions workflow](.github/workflows/ci.yml) runs the complete suite. Local checks are limited to syntax checks and targeted tests, not the full slow suite.
-
-- Unit tests run under `sh`, `dash`, `bash`, and BusyBox `sh`; documentation is also checked in a public checkout without local-only working documents.
-- Asset jobs check amd64 and arm64 artifacts. Lifecycle jobs exercise the specific systems listed under [Supported targets](#supported-targets).
-- Protocol tests cover authenticated SOCKS5/HTTP, rejected unsupported requests, destination boundaries, IPv4/hostname/available IPv6 targets, long-lived traffic, and idle/resume. IPv6 destination coverage does not imply an IPv6 server listener.
-- The 1/32/128-concurrency gate synchronizes connections and uses the independent target's observations during traffic, not just submitted task counts. Unsolicited server frames are checked for payload, sequence, and ongoing progress.
-- The systemd memory job records RSS snapshots, cgroup usage and separate stage peaks, OOM counters, and restart count. A persistent `memory.peak` descriptor and a high-then-low workload validate the reset semantics on the actual kernel.
-
-**No memory budget or throughput guarantee is published.** Memory evidence must be read with its version, platform, configuration, connection count, duration, and CI run. systemd state-transition timing is not listener-readiness timing; archive size is not RSS.
 
 ## Troubleshooting
 

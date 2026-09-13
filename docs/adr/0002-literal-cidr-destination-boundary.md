@@ -17,7 +17,7 @@ Route a single `blocked` (blackhole) outbound for twelve reserved/special ranges
 (nine IPv4 plus IPv6 loopback, ULA, and link-local), written as **literal CIDRs**,
 with `domainStrategy: "IPIfNonMatch"` so a hostname destination is matched on the
 address it resolves to. This is the only routing rule. See the
-[public security boundaries](../../README.md#security-boundaries).
+[destination-boundary fixture](../../tests/fixtures/denied-destinations.txt).
 
 ## Alternatives considered
 
