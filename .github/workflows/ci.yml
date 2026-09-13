@@ -176,7 +176,7 @@ jobs:
           XRAY_ELF_ARCH: ${{ matrix.elf_arch }}
         run: |
           curl -fsSL --proto '=https' --proto-redir '=https' --max-filesize "$((XRAY_SIZE + 1))" \
-            -o "$XRAY_ASSET" "https://github.com/XTLS/Xray-core/releases/download/v26.3.27/$XRAY_ASSET"
+            -o "$XRAY_ASSET" "https://github.com/91sexboy/One-click-socks5-proxy-setup/releases/download/xray-v26.3.27/$XRAY_ASSET"
           test "$(wc -c <"$XRAY_ASSET" | tr -d '[:space:]')" = "$XRAY_SIZE"
           test "$(sha256sum "$XRAY_ASSET" | awk '{print $1}')" = "$XRAY_SHA"
           test "$(unzip -Z1 "$XRAY_ASSET" | grep -cxF xray)" = 1
@@ -324,8 +324,16 @@ jobs:
               python3 .github/scripts/lifecycle-assert-control.py openrc "$ASSERTION_MUTATION"'
 
   memory-report:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
       - name: Install memory tools
@@ -484,3 +492,16 @@ jobs:
           sudo systemctl is-active --quiet xray-socks5.service
           if sudo grep -q 'CISecret_123~x' "$root/install.log"; then exit 1; else rc=$?; test "$rc" = 1 || exit 1; fi
           if grep -q 'CISecret_123~x' "$root/held.log"; then exit 1; else rc=$?; test "$rc" = 1 || exit 1; fi
+          sudo env GITHUB_ACTIONS=true python3 .github/scripts/memory-compare.py \
+            --binary /usr/local/libexec/xray-socks5/xray \
+            --config /etc/xray-socks5/config.json \
+            --target-port "$target_port" --output "$root/memory-comparison.json"
+          sudo install -m 0644 "$root/memory-comparison.json" \
+            "$GITHUB_WORKSPACE/memory-comparison-${{ matrix.arch }}.json"
+      - name: Retain paired memory measurements
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: memory-comparison-${{ matrix.arch }}
+          path: memory-comparison-${{ matrix.arch }}.json
+          if-no-files-found: error
+          retention-days: 14

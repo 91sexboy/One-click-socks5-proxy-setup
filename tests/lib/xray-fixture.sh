@@ -46,13 +46,15 @@ t_xray_fixture() {
         S5_ASSET_SIZE=$S5_ASSET_BINARY_SIZE
         S5_ASSET_SHA256=$S5_ASSET_BINARY_SHA256
     }
-    s5_download_engine() {
-        mkdir -p "$S5_PREFIX" || return 1
-        cp "$S5_TEST_ROOT/asset-xray" "$S5_BIN" || return 1
-        chmod 0755 "$S5_BIN" || return 1
-        S5_CREATED_BIN=1
-        S5_BINARY_SHA256=$S5_ASSET_BINARY_SHA256
-    }
+    if [ "${2:-}" != real-download ]; then
+        s5_download_engine() {
+            mkdir -p "$S5_PREFIX" || return 1
+            cp "$S5_TEST_ROOT/asset-xray" "$S5_BIN" || return 1
+            chmod 0755 "$S5_BIN" || return 1
+            S5_CREATED_BIN=1
+            S5_BINARY_SHA256=$S5_ASSET_BINARY_SHA256
+        }
+    fi
     s5_config_test() {
         printf 'config-test %s\n' "$1" >>"$S5_TEST_ROOT/xray-calls"
         return "$(cat "$S5_TEST_ROOT/cfgtest" 2>/dev/null || printf 0)"

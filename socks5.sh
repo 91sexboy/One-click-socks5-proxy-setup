@@ -9,7 +9,7 @@ set -u
 S5_PROJECT=xray-socks5
 S5_XRAY_VERSION=v26.3.27
 S5_XRAY_COMMIT=d2758a023cd7f4174a5a5fa4ff66e487d4342ba0
-S5_XRAY_BASE=https://github.com/XTLS/Xray-core/releases/download/$S5_XRAY_VERSION
+S5_XRAY_BASE=https://github.com/91sexboy/One-click-socks5-proxy-setup/releases/download/xray-$S5_XRAY_VERSION
 S5_ADDR_ENDPOINT=https://icanhazip.com
 S5_SERVICE_USER=xray-socks5
 S5_SERVICE_GROUP=xray-socks5
@@ -174,6 +174,7 @@ s5_msg() {
     install.cancelled) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '操作已取消。' ;; en) printf 'operation cancelled.' ;; esac ;;
     asset.download) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '正在下载并校验 Xray 资产：%s。' "$1" ;; en) printf 'downloading and verifying Xray asset: %s.' "$1" ;; esac ;;
     asset.invalid) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf 'Xray 资产校验失败：%s。' "$1" ;; en) printf 'Xray asset verification failed: %s.' "$1" ;; esac ;;
+    cleanup.download) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法删除下载临时目录：%s。' "$1" ;; en) printf 'could not remove temporary download directory: %s.' "$1" ;; esac ;;
     config.invalid) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf 'Xray 配置测试失败；旧配置未改变。' ;; en) printf 'Xray configuration test failed; the old configuration was unchanged.' ;; esac ;;
     transaction.pending) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '存在待处理的恢复目录，拒绝覆盖：%s。' "$1" ;; en) printf 'pending recovery directory must be resolved before updating: %s.' "$1" ;; esac ;;
     transaction.restore) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法恢复旧配置和状态；恢复备份保留在 %s。' "$1" ;; en) printf 'could not restore the previous config and state; recovery copies retained at %s.' "$1" ;; esac ;;
@@ -222,13 +223,16 @@ s5_msg_fallback() {
 s5_msg_print() { _smp=$(s5_msg "$@") || { s5_msg_fallback "$1"; return 1; }; s5_say "$_smp"; _smp=''; }
 s5_msg_err() { _sme=$(s5_msg "$@") || { s5_msg_fallback "$1"; return 1; }; s5_err "$_sme"; _sme=''; }
 s5_msg_warn() { _smw=$(s5_msg "$@") || { s5_msg_fallback "$1"; return 1; }; s5_warn "$_smw"; _smw=''; }
-# Prompts, unlike reports, must not terminate their line: every question in the
-# catalog ends in a trailing space so the answer is typed beside it. Command
-# substitution strips trailing newlines but keeps that space. Callers used a bare
-# `s5_msg ... >&2`, which threw away the non-zero status an unrenderable key
-# returns and so asked nothing while still reading an answer; going through the
-# same capture-and-fallback shape as the three above is what fixes that.
-s5_msg_ask() { _sma=$(s5_msg "$@") || { s5_msg_fallback "$1"; return 1; }; printf '%s' "$_sma" >&2; _sma=''; }
+s5_msg_ask() {
+    _sma=$(s5_msg "$@") || { s5_msg_fallback "$1"; return 1; }
+    # Redirected input or prompts cannot rely on terminal echo for a line break.
+    if [ -t 0 ] && [ -t 2 ]; then
+        printf '%s' "$_sma" >&2
+    else
+        printf '%s\n' "$_sma" >&2
+    fi
+    _sma=''
+}
 
 s5_is_root() {
     if [ "${S5_TEST_MODE:-0}" = 1 ] && [ -n "${S5_ASSUME_ROOT:-}" ]; then
@@ -1637,6 +1641,15 @@ s5_cleanup_own_temps() {
     return 0
 }
 
+s5_cleanup_download() {
+    [ -n "$S5_WORKDIR" ] || return 0
+    if ! rm -rf "$S5_WORKDIR" 2>/dev/null; then
+        s5_msg_err cleanup.download "$S5_WORKDIR"
+        return 1
+    fi
+    S5_WORKDIR=''
+}
+
 s5_cleanup() {
     [ "$S5_IN_CLEANUP" = 1 ] && return 0
     S5_IN_CLEANUP=1
@@ -1700,13 +1713,10 @@ s5_cleanup() {
     # too: s5_on_signal_lock is not the only handler that reaches a live temp, and a
     # successful run has already cleared it, so this is a no-op there.
     s5_release_verify_temp
-    if [ -n "$S5_WORKDIR" ]; then
-        rm -rf "$S5_WORKDIR" 2>/dev/null || true
-    fi
+    s5_cleanup_download || true
     if [ "$S5_LOCK_HELD" = 1 ]; then
         s5_lock_release || true
     fi
-    S5_WORKDIR=''
     S5_IN_CLEANUP=0
     return 0
 }
@@ -2066,8 +2076,11 @@ s5_cmd_install() {
         trap - EXIT HUP INT TERM
         return 1
     fi
+    _siccleanup=0
+    s5_cleanup_download || _siccleanup=$?
     s5_lock_release || return 1
     trap - EXIT HUP INT TERM
+    [ "$_siccleanup" -eq 0 ] || return 1
     if [ "$_siupdate" = 1 ]; then s5_msg_print install.updated; else s5_msg_print install.done; fi
     if [ -t 1 ]; then
         s5_render_card || s5_msg_warn install.card.hidden

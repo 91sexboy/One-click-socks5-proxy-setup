@@ -6,9 +6,13 @@ written to sees a reset. Reopening always sees the lifetime high-water mark.
 No real cgroup or privileged operation is used here.
 """
 from pathlib import Path
+import importlib.util
 import subprocess
 import sys
 import tempfile
+from unittest import mock
+
+sys.dont_write_bytecode = True
 
 ROOT = Path(sys.argv[1])
 HELPER = ROOT / ".github/scripts/memory-sampler.py"
@@ -96,6 +100,41 @@ runpy.run_path(helper, run_name="__main__")
             proc.communicate(timeout=3)
 
 
+def check_snapshot():
+    spec = importlib.util.spec_from_file_location("memory_sampler", HELPER)
+    sampler = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sampler)
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        proc = root / "proc" / "123"
+        proc.mkdir(parents=True)
+        status = "VmRSS: 40 kB\nRssAnon: 12 kB\nRssFile: 24 kB\nRssShmem: 4 kB\n"
+        (proc / "status").write_text(status)
+        (proc / "smaps_rollup").write_text("Pss: 20 kB\n")
+        fields = ["S"] + ["0"] * 49
+        fields[11], fields[12] = "7", "3"
+        (proc / "stat").write_text("123 (worker (test)) " + " ".join(fields))
+        (root / "memory.current").write_text("40960\n")
+        (root / "memory.peak").write_text("49152\n")
+        (root / "memory.events").write_text("oom 0\noom_kill 0\n")
+        with mock.patch.object(sampler.os, "sysconf", return_value=100):
+            with sampler.SnapshotReader(123, root, proc_root=root / "proc") as reader:
+                assert reader.snapshot() == {
+                    "rss_kib": 40, "rss_anon_kib": 12, "rss_file_kib": 24,
+                    "rss_shmem_kib": 4, "pss_kib": 20, "cpu_usec": 100000,
+                    "cgroup_current_bytes": 40960, "cgroup_peak_bytes": 49152,
+                    "cgroup_oom": 0, "cgroup_oom_kill": 0,
+                }, "snapshot mixed accounting units or parsed CPU comm incorrectly"
+                (proc / "status").write_text(status.replace("RssAnon: 12 kB\n", ""))
+                try:
+                    reader.snapshot()
+                except ValueError:
+                    pass
+                else:
+                    raise AssertionError("missing RSS accounting was silently accepted")
+
+
+check_snapshot()
 check()
 check(reset_supported=False)
-print("persistent memory sampler: high/low and unsupported-reset scenarios passed")
+print("persistent memory sampler: snapshot, high/low and unsupported-reset scenarios passed")

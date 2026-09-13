@@ -13,7 +13,8 @@ import tempfile
 # their extracted xray members; intentionally independent of production data.
 VERSION = 'v26.3.27'
 COMMIT = 'd2758a023cd7f4174a5a5fa4ff66e487d4342ba0'
-BASE = 'https://github.com/XTLS/Xray-core/releases/download/'
+BASE = 'https://github.com/91sexboy/One-click-socks5-proxy-setup/releases/download/'
+DISTRIBUTION_TAG = 'xray-v26.3.27'
 PINS = {
     'amd64': {
         'asset': 'Xray-linux-64.zip',
@@ -68,16 +69,19 @@ def assignments(text, names):
 def release_url(text, asset):
     active = '\n'.join(line for line in text.splitlines()
                        if not line.lstrip().startswith('#'))
-    version = one(re.escape(BASE) + r'([^/\s"\']+)/' + re.escape(asset),
-                  active, 'Xray download URL')
-    require(version == VERSION, 'Xray download URL: wrong release')
+    urls = re.findall(r'https?://[^\s"\']+', active)
+    require(urls == [BASE + DISTRIBUTION_TAG + '/' + asset],
+            'Xray download URL: wrong mirror, tag or fallback')
 
 
 def check_installer(root, shell):
-    # Only the real library-mode selector executes. Every architecture starts
-    # fresh and clears outputs, so a deleted assignment cannot inherit a pin.
+    require(assignments((root / 'socks5.sh').read_text(), ['S5_XRAY_BASE']) == {
+        'S5_XRAY_BASE': BASE + 'xray-$S5_XRAY_VERSION'},
+        'installer: wrong or duplicate distribution base')
+    # Fresh selectors and a failing transport expose metadata drift and fallbacks.
     script = '''
 . "$1/socks5.sh" || exit 1
+S5_LANG=en
 S5_ARCHNAME=$2
 S5_ASSET_NAME= S5_ASSET_SIZE= S5_ASSET_SHA256=
 S5_ASSET_BINARY_SIZE= S5_ASSET_BINARY_SHA256=
@@ -85,19 +89,30 @@ s5_asset_select || exit 1
 printf '%s\\n' "$S5_XRAY_VERSION" "$S5_XRAY_COMMIT" "$S5_XRAY_BASE" \\
     "$S5_ASSET_NAME" "$S5_ASSET_SIZE" "$S5_ASSET_SHA256" \\
     "$S5_ASSET_BINARY_SIZE" "$S5_ASSET_BINARY_SHA256"
+: >"$S5_TEST_ROOT/curl.calls"
+curl() { printf '%s\\n' curl-call "$@" >>"$S5_TEST_ROOT/curl.calls"; return 1; }
+_fetch_status=0
+s5_fetch_archive "$S5_TEST_ROOT/archive" >/dev/null 2>&1 || _fetch_status=$?
+printf 'fetch-status=%s\\n' "$_fetch_status"
+cat "$S5_TEST_ROOT/curl.calls"
 '''
     with tempfile.TemporaryDirectory(prefix='s5-pin-selector-') as directory:
         Path(directory, '.s5-test-root').touch()
         env = dict(os.environ, S5_LIB_ONLY='1', S5_TEST_MODE='1',
                    S5_TEST_ROOT=directory, S5_ASSUME_ROOT='1', S5_SKIP_OWNERSHIP='1')
+        env.pop('S5_TEST_ASSET_PATH', None)
         for arch, pins in PINS.items():
             result = subprocess.run(
                 shlex.split(shell) + ['-c', script, 'release-contract', str(root), arch],
                 env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 timeout=15, check=False)
-            expected = [VERSION, COMMIT, BASE + VERSION] + list(pins.values())
+            expected = [VERSION, COMMIT, BASE + DISTRIBUTION_TAG] + list(pins.values())
+            expected += ['fetch-status=1', 'curl-call', '-fsSL', '--proto', '=https',
+                         '--proto-redir', '=https', '--max-time', '120', '--max-filesize',
+                         str(int(pins['size']) + 1), '-o', directory + '/archive',
+                         BASE + DISTRIBUTION_TAG + '/' + pins['asset']]
             require(result.returncode == 0 and result.stdout.splitlines() == expected,
-                    'installer ' + arch + ': selector metadata differs')
+                    'installer ' + arch + ': selector or download contract differs')
 
 
 def check_workflow(text):

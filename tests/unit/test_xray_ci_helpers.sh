@@ -11,4 +11,8 @@ t_run python3 "$S5_REPO_ROOT/tests/protocol/memory_sampler_selftest.py" "$S5_REP
 assert_eq "sampler keeps reset state across high and low workloads" 0 "$T_STATUS"
 if [ "$T_STATUS" -ne 0 ]; then printf '%s\n' "$T_OUT" >&2; fi
 
+t_run python3 "$S5_REPO_ROOT/tests/protocol/memory_compare_selftest.py" "$S5_REPO_ROOT"
+assert_eq "memory comparison measures owned services and rejects inconclusive evidence" 0 "$T_STATUS"
+if [ "$T_STATUS" -ne 0 ]; then printf '%s\n' "$T_OUT" >&2; fi
+
 t_summary

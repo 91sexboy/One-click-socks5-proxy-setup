@@ -169,6 +169,29 @@ assert_contains "the memory job asserts the cgroup OOM counters" \
     'memory.events' "$ci_text"
 assert_contains "the memory job loads connections to sample under" \
     'hold_connections.py' "$ci_text"
+_memory_text=$(awk '
+    /^  memory-report:/ {found=1; next}
+    found && /^  [a-z][a-z0-9-]*:/ {exit}
+    found {print}
+' "$CI")
+assert_contains "memory measurements run on the matrix runner" \
+    'runs-on: ${{ matrix.runner }}' "$_memory_text"
+assert_contains "memory measurements cover native amd64" \
+    'runner: ubuntu-24.04
+            arch: amd64' "$_memory_text"
+assert_contains "memory measurements cover native arm64" \
+    'runner: ubuntu-24.04-arm
+            arch: arm64' "$_memory_text"
+assert_contains "the memory job runs paired comparison with explicit CI environment" \
+    'sudo env GITHUB_ACTIONS=true python3 .github/scripts/memory-compare.py' "$_memory_text"
+assert_contains "paired comparison uses the installed verified binary" \
+    '--binary /usr/local/libexec/xray-socks5/xray' "$_memory_text"
+assert_contains "measurement artifacts use a pinned uploader" \
+    'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02' "$_memory_text"
+assert_contains "only the nonsecret comparison report is uploaded" \
+    'path: memory-comparison-${{ matrix.arch }}.json' "$_memory_text"
+assert_contains "missing comparison evidence fails the job" \
+    'if-no-files-found: error' "$_memory_text"
 assert_contains "OpenRC lifecycle job covers Alpine" 'openrc-integration' "$ci_text"
 assert_contains "OpenRC lifecycle job tests both supported versions" 'alpine:3.20' "$ci_text"
 assert_contains "OpenRC lifecycle job tests current Alpine" 'alpine:3.24' "$ci_text"
@@ -448,6 +471,8 @@ for _doc in README.md README.zh-CN.md; do
     README.zh-CN.md) _doclanguage='[English](README.md)' ;;
     esac
     assert_contains "$_doc links to the other language" "$_doclanguage" "$_doctext"
+    assert_contains "$_doc links to the verified local release mirror" \
+        "($_docrepo/releases/tag/xray-v26.3.27)" "$_doctext"
 done
 
 t_summary

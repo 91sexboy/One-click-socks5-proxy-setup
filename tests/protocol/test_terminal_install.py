@@ -3,11 +3,20 @@
 
 import os
 from pathlib import Path
+import pty
 import secrets
+import select
+import shlex
 import shutil
+import signal
 import subprocess
+import sys
 import tempfile
+import time
 import unittest
+
+sys.dont_write_bytecode = True
+import terminal_install
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -81,6 +90,152 @@ class TerminalProbeTests(unittest.TestCase):
         self.assertTrue("unique-wrong-card-diagnostic" in result.stderr)
         self.assertTrue("other-password" not in result.stderr)
         self.assert_private(result)
+
+
+class PromptInputTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory(prefix="s5-prompt-test-")
+        self.addCleanup(self.directory.cleanup)
+        self.work = Path(self.directory.name)
+        (self.work / ".s5-test-root").touch()
+        self.environment = dict(os.environ, S5_TEST_MODE="1", S5_LIB_ONLY="1",
+                                S5_TEST_ROOT=str(self.work))
+        self.answers = ["y", "23456", "prompt_user", secrets.token_hex(16)]
+        self.prompts = {
+            "zh": ["确认安装 Xray mixed 代理？[Y/n] ",
+                   "端口 [回车 = 随机 20000-60000]：",
+                   "账户名 [回车 = 随机]：",
+                   "密码（输入时可见）[回车 = 随机]："],
+            "en": ["Install the Xray mixed proxy? [Y/n] ",
+                   "Port [Enter = random 20000-60000]: ",
+                   "Username [Enter = random]: ",
+                   "Password (visible while typed) [Enter = random]: "],
+        }
+
+    def command(self, language):
+        return shlex.split(os.environ.get("S5_TEST_SHELL", "sh")) + ["-c", '''
+set -e
+. "$1"
+S5_LANG=$2
+s5_port_free() { return 0; }
+s5_confirm_install
+s5_prompt_port
+s5_prompt_username
+s5_prompt_password
+printf 'answers-accepted\\n'
+''', "prompt-test", str(ROOT / "socks5.sh"), language]
+
+    def read_until(self, descriptor, marker):
+        output = b""
+        deadline = time.monotonic() + 5
+        while marker not in output:
+            remaining = deadline - time.monotonic()
+            self.assertTrue(remaining > 0, "timed out waiting for prompt or echo")
+            ready, _, _ = select.select([descriptor], [], [], remaining)
+            self.assertTrue(ready, "terminal did not produce the expected output")
+            output += os.read(descriptor, 65536)
+        return output
+
+    def test_terminal_waits_for_enter_at_each_prompt(self):
+        for language, prompts in self.prompts.items():
+            with self.subTest(language=language):
+                master, slave = pty.openpty()
+                process = None
+                try:
+                    process = subprocess.Popen(self.command(language), env=self.environment,
+                                               stdin=slave, stdout=slave, stderr=slave,
+                                               start_new_session=True)
+                    os.close(slave)
+                    slave = None
+                    for index, (prompt, answer) in enumerate(zip(prompts, self.answers)):
+                        expected = (("\r\n" if index else "") + prompt).encode()
+                        output = self.read_until(master, prompt.encode())
+                        self.assertTrue(output == expected, "prompt order or terminal line layout changed")
+                        self.assertFalse(select.select([master], [], [], 0.1)[0],
+                                         "advanced before receiving an answer")
+                        os.write(master, answer.encode())
+                        echo = self.read_until(master, answer.encode())
+                        self.assertTrue(echo == answer.encode(), "unexpected output while typing")
+                        self.assertFalse(select.select([master], [], [], 0.1)[0],
+                                         "advanced before Enter")
+                        os.write(master, b"\n")
+                    self.read_until(master, b"answers-accepted")
+                    self.assertEqual(process.wait(timeout=5), 0)
+                finally:
+                    if process is not None and process.poll() is None:
+                        os.killpg(process.pid, signal.SIGKILL)
+                        process.wait()
+                    if slave is not None:
+                        os.close(slave)
+                    os.close(master)
+
+    def test_redirected_answers_keep_prompts_on_separate_lines(self):
+        for language, prompts in self.prompts.items():
+            for answers in (self.answers, ["", "", "", ""]):
+                with self.subTest(language=language, defaults=not answers[0]):
+                    result = subprocess.run(self.command(language), env=self.environment,
+                                            input="\n".join(answers) + "\n", capture_output=True,
+                                            text=True, timeout=10)
+                    self.assertEqual(result.returncode, 0)
+                    self.assertTrue(result.stderr == "\n".join(prompts) + "\n",
+                                    "redirected prompts ran together or exposed input")
+                    self.assertEqual(result.stdout, "answers-accepted\n")
+
+    def test_file_answers_with_terminal_output_keep_separate_lines(self):
+        answers = self.work / "answers"
+        answers.write_text("\n".join(self.answers) + "\n")
+        for language, prompts in self.prompts.items():
+            with self.subTest(language=language):
+                command = ["env", "S5_TEST_MODE=1", "S5_LIB_ONLY=1",
+                           "S5_TEST_ROOT=" + str(self.work)] + self.command(language)
+                output = terminal_install.capture_terminal(command, answers, timeout=10)
+                expected = "\n".join(prompts) + "\nanswers-accepted\n"
+                self.assertTrue(output.replace(b"\r\n", b"\n") == expected.encode(),
+                                "file-fed terminal prompts ran together or exposed input")
+
+    def test_terminal_input_with_redirected_prompts_keeps_separate_lines(self):
+        master, slave = pty.openpty()
+        process = None
+        try:
+            process = subprocess.Popen(self.command("en"), env=self.environment,
+                                       stdin=slave, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                       start_new_session=True)
+            os.close(slave)
+            slave = None
+            os.write(master, ("\n".join(self.answers) + "\n").encode())
+            output, prompts = process.communicate(timeout=5)
+            self.assertEqual(process.returncode, 0)
+            self.assertEqual(output, b"answers-accepted\n")
+            self.assertTrue(prompts == ("\n".join(self.prompts["en"]) + "\n").encode(),
+                            "redirected prompts relied on uncaptured input echo")
+        finally:
+            if process is not None and process.poll() is None:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.communicate()
+            if slave is not None:
+                os.close(slave)
+            os.close(master)
+
+    def test_invalid_answers_retry_without_exposing_input(self):
+        answers = ["y", "bad-port", "23456", "!", "prompt_user", "short", self.answers[-1]]
+        result = subprocess.run(self.command("en"), env=self.environment,
+                                input="\n".join(answers) + "\n", capture_output=True,
+                                text=True, timeout=5)
+        self.assertEqual(result.returncode, 0)
+        for prompt, count in zip(self.prompts["en"], (1, 2, 2, 2)):
+            self.assertEqual(result.stderr.splitlines().count(prompt), count)
+        self.assertTrue(self.answers[-1] not in result.stdout + result.stderr,
+                        "a password reached redirected output")
+
+    def test_eof_and_cancellation_do_not_advance(self):
+        for answer in ("", "n\n"):
+            with self.subTest(eof=not answer):
+                result = subprocess.run(self.command("en"), env=self.environment, input=answer,
+                                        capture_output=True, text=True, timeout=5)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertTrue(result.stderr == self.prompts["en"][0] + "\n",
+                                "EOF or cancellation advanced to another question")
+                self.assertNotIn("answers-accepted", result.stdout)
 
 
 if __name__ == "__main__":
