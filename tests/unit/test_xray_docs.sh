@@ -1,8 +1,8 @@
 #!/bin/sh
 # Cross-file consistency of the pinned Xray release facts.
 #
-# The release digests are hand-copied into both READMEs, the installer, the
-# workflow and the protocol launcher. Nothing else makes those
+# The release digests are hand-copied into the installer, the workflow and the
+# protocol launcher. Nothing else makes those
 # copies agree, and a test that restates the same literal cannot notice the
 # literal is itself malformed.
 #
@@ -33,9 +33,7 @@ EXPECT_ARM64_BINARY_SHA=c2d20a7045250497083afea0d79db0672f6c89a25aaaf37c92de034d
 # the upstream release tarball.
 EXPECT_SHELLCHECK_SHA=6c881ab0698e4e6ea235245f22832860544f17ba386442fe7e9d629f8cbedf87
 
-PINNED_FILES='README.md
-README.zh-CN.md
-socks5.sh
+PINNED_FILES='socks5.sh
 .github/workflows/ci.yml
 tests/protocol/start_engine.sh
 tests/unit/test_xray_asset.sh'
@@ -432,10 +430,7 @@ assert_contains "the protocol launcher resolves hostname destinations" \
     '"domainStrategy": "IPIfNonMatch"' "$(cat "$ROOT/tests/protocol/start_engine.sh")"
 for _dcdoc in README.md README.zh-CN.md; do
     _dctext=$(cat "$ROOT/$_dcdoc")
-    assert_contains "$_dcdoc states the destination boundary" \
-        '169.254.169.254' "$_dctext"
-    # A document that describes the boundary and also denies routing contradicts
-    # itself, and only one of the two halves used to be asserted.
+    # Destination routing exists even when the README omits its details.
     assert_not_contains "$_dcdoc does not deny the routing it describes" \
         'metrics, routing' "$_dctext"
     assert_not_contains "$_dcdoc does not deny the routing it describes (zh)" \
@@ -517,11 +512,16 @@ assert_contains "the protocol job consumes a listener-verified ready marker" \
 for _dcshell in 'command: sh' 'command: dash' 'command: bash' 'command: busybox sh'; do
     assert_contains "the unit matrix runs $_dcshell" "$_dcshell" "$ci_text"
 done
+_docrepo=https://github.com/91sexboy/One-click-socks5-proxy-setup
 for _doc in README.md README.zh-CN.md; do
     _doctext=$(cat "$ROOT/$_doc")
-    for _dcshell in '`sh`' '`dash`' '`bash`' 'BusyBox `sh`'; do
-        assert_contains "$_doc documents the $_dcshell unit shell" "$_dcshell" "$_doctext"
-    done
+    assert_contains "$_doc links the CI badge to the project" \
+        "[![CI — xray-only]($_docrepo/actions/workflows/ci.yml/badge.svg?branch=xray-only)]($_docrepo)" "$_doctext"
+    case "$_doc" in
+    README.md) _doclanguage='[简体中文](README.zh-CN.md)' ;;
+    README.zh-CN.md) _doclanguage='[English](README.md)' ;;
+    esac
+    assert_contains "$_doc links to the other language" "$_doclanguage" "$_doctext"
 done
 
 t_summary

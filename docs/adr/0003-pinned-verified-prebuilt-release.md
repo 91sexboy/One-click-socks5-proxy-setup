@@ -18,7 +18,7 @@ and SHA-256. Download only over HTTPS with a bounded response size; verify the
 archive size and SHA-256 before extraction; inspect archive members and reject
 unsafe paths, links, devices, duplicates, and unexpected members; install only
 the verified `xray` executable and re-check its recorded hash on every later
-command. See the [public release and asset table](../../README.md#pinned-xray-release-and-assets).
+command. See `s5_asset_select` in the [installer](../../socks5.sh) for the current pins.
 
 ## Alternatives considered
 
@@ -34,8 +34,8 @@ command. See the [public release and asset table](../../README.md#pinned-xray-re
 ## Consequences
 
 - Bumping Xray requires deliberate updates to the version, tag commit and
-  per-architecture asset metadata in `socks5.sh`, the READMEs, the workflow and
-  the protocol launcher, together with the asset and document test expectations.
+  per-architecture asset metadata in `socks5.sh`, the workflow and the protocol
+  launcher, together with the asset and document test expectations.
 - A wrong pin refuses every install on that architecture rather than installing an
   unverified binary (fail closed).
 - No GeoIP database ever reaches disk, which is why the destination boundary uses
