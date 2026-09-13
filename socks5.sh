@@ -757,9 +757,9 @@ s5_config_render() {
     # the default AsIs an "ip" rule can only ever match a literal address, so
     # any name resolving into a denied range would be routed direct.
     #
-    # This destination boundary is reconciled elsewhere: SPEC 3 and
-    # tests/protocol/start_engine.sh carry the same set, and test_xray_docs.sh
-    # fails if the three drift apart. It is a separate concern from
+    # test_xray_docs.sh compares this boundary and tests/protocol/start_engine.sh
+    # against the independent tests/fixtures/denied-destinations.txt set.
+    # It is a separate concern from
     # s5_ipv4_is_public (the advertise-safety check for the card's own address),
     # which encodes a different set for a different purpose.
     printf '%s\n' '  "routing": {'

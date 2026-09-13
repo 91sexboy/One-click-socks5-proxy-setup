@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted. Implemented in the service contract of `socks5.sh` (SPEC §5, §8).
+Accepted. Implemented in the service contract of `socks5.sh`.
 
 ## Context
 
@@ -20,7 +20,7 @@ or OpenRC `supervise-daemon` with `command_user`. Validate every candidate with
 require that a configuration error (exit 23) does not enter an automatic restart
 loop on either backend. Serialize install/update/restart/uninstall with an
 operation lock, and report ready only once the configured port is observed
-listening. See SPEC §5.
+listening. See the [public lifecycle description](../../README.md#lifecycle).
 
 ## Alternatives considered
 
@@ -30,8 +30,7 @@ listening. See SPEC §5.
 - **Restart on any exit** — rejected: a config error would then restart-loop; the
   exit-23 guard makes a bad config stop and stay stopped, surfacing the error.
 - **gRPC hot update** — rejected for updates: a full restart is simpler to reason
-  about and to verify; existing connections may close, which is acceptable
-  (SPEC §5).
+  about and to verify; existing connections may close, which is acceptable.
 - **Assume the recorded port is owned** — rejected: ownership is verified through
   the listener check, so a foreign or unobservable listener on that port is
   refused (fail closed).
@@ -42,5 +41,5 @@ listening. See SPEC §5.
   jobs), which are the authority for service behaviour; unit tests stub the
   managers. The backend decision is centralized in `s5_svc <verb>`.
 - config-test-before-restart, plus the operation lock, plus the transaction
-  rollback copies (SPEC §5) together make a failed update leave the running
+  rollback copies together make a failed update leave the running
   service and the published config untouched.

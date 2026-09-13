@@ -94,10 +94,9 @@ esac
 ENGINE="$WORK/xray"
 : >"$WORK/config.json" || fail 'cannot create Xray config'
 chmod 0600 "$WORK/config.json" || fail 'cannot protect Xray config'
-# The routing block is the destination boundary of SPEC 3, hand-copied here the
-# way the release digests are: this launcher stays independent of socks5.sh so a
-# renderer defect cannot mask a protocol defect. test_xray_docs.sh asserts that
-# the ranges below and the ones s5_config_render emits are the same set.
+# This launcher stays independent of socks5.sh so a renderer defect cannot mask
+# a protocol defect. test_xray_docs.sh compares both sets of destination ranges
+# against the independent tests/fixtures/denied-destinations.txt expectation.
 cat >"$WORK/config.json" <<CONFIG
 {
   "log": {"loglevel": "warning", "access": "none", "error": ""},

@@ -239,7 +239,9 @@ systems.
 ## Testing and memory
 
 The complete suite runs in GitHub Actions; the full slow suite is not run
-locally. CI verifies:
+locally. Unit tests run under `sh`, `dash`, `bash`, and BusyBox `sh`. The document
+checks also run in a public-checkout fixture without local-only documentation.
+CI verifies:
 
 - asset download, size, hash, architecture and safe extraction;
 - JSON shape and Xray `run -test`;

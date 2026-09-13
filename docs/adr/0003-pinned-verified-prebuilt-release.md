@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted. Implemented in the asset pipeline of `socks5.sh` (SPEC §3, §7).
+Accepted. Implemented in the asset pipeline of `socks5.sh`.
 
 ## Context
 
@@ -18,14 +18,14 @@ and SHA-256. Download only over HTTPS with a bounded response size; verify the
 archive size and SHA-256 before extraction; inspect archive members and reject
 unsafe paths, links, devices, duplicates, and unexpected members; install only
 the verified `xray` executable and re-check its recorded hash on every later
-command. See SPEC §3, §7.
+command. See the [public release and asset table](../../README.md#pinned-xray-release-and-assets).
 
 ## Alternatives considered
 
 - **A `latest` / dev channel** — rejected: unpinned downloads make the installed
   bytes unverifiable and the install unreproducible.
 - **Build from source** — rejected: the target receives no Go, Git, GCC, Make, or
-  headers (SPEC §3); a build toolchain is a large attack and maintenance surface
+  headers; a build toolchain is a large attack and maintenance surface
   for what is a static prebuilt binary.
 - **Verify the archive only** — rejected: the extracted binary is pinned
   separately, so a tampered member inside a correctly-sized archive is still
@@ -33,8 +33,9 @@ command. See SPEC §3, §7.
 
 ## Consequences
 
-- Bumping Xray is a deliberate change of five pinned values per architecture, in
-  `SPEC.md` and the asset table, guarded by the asset unit test.
+- Bumping Xray requires deliberate updates to the version, tag commit and
+  per-architecture asset metadata in `socks5.sh`, the READMEs, the workflow and
+  the protocol launcher, together with the asset and document test expectations.
 - A wrong pin refuses every install on that architecture rather than installing an
   unverified binary (fail closed).
 - No GeoIP database ever reaches disk, which is why the destination boundary uses

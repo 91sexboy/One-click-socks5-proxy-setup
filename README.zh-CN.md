@@ -186,7 +186,8 @@ OpenRC。对于不支持的 init 系统，`socks5.sh` 会拒绝安装。
 
 ## 测试和内存
 
-完整测试在 GitHub Actions 运行，不在本地运行完整慢速 suite。CI 验证：
+完整测试在 GitHub Actions 运行，不在本地运行完整慢速 suite。单元测试覆盖 `sh`、`dash`、
+`bash` 和 BusyBox `sh`，文档检查还会在不含本地专用文档的公开检出测试副本中运行。CI 验证：
 
 - asset 下载、大小、hash、架构和安全提取；
 - JSON shape 和 Xray `run -test`；

@@ -1,8 +1,8 @@
 #!/bin/sh
 # Cross-file consistency of the pinned Xray release facts.
 #
-# The release digests are hand-copied into the spec, both READMEs, the
-# installer, the workflow and the protocol launcher. Nothing else makes those
+# The release digests are hand-copied into both READMEs, the installer, the
+# workflow and the protocol launcher. Nothing else makes those
 # copies agree, and a test that restates the same literal cannot notice the
 # literal is itself malformed.
 #
@@ -33,8 +33,7 @@ EXPECT_ARM64_BINARY_SHA=c2d20a7045250497083afea0d79db0672f6c89a25aaaf37c92de034d
 # the upstream release tarball.
 EXPECT_SHELLCHECK_SHA=6c881ab0698e4e6ea235245f22832860544f17ba386442fe7e9d629f8cbedf87
 
-PINNED_FILES='SPEC.md
-README.md
+PINNED_FILES='README.md
 README.zh-CN.md
 socks5.sh
 .github/workflows/ci.yml
@@ -369,7 +368,7 @@ assert_contains "the Alpine gate requires the service to stay down" \
     'a broken config brought the service back up' "$alpine_text"
 assert_contains "the Alpine gate records the observed child_pid values" \
     'openrc: child_pid %s then %s' "$alpine_text"
-for _doc in README.md README.zh-CN.md SPEC.md; do
+for _doc in README.md README.zh-CN.md; do
     _doctext=$(cat "$ROOT/$_doc")
     if grep -qi 'alpine' "$ROOT/$_doc" && grep -qi 'openrc' "$ROOT/$_doc"; then
         t_ok
@@ -389,7 +388,7 @@ https://*) t_ok ;;
 *) t_bad "the card address endpoint is HTTPS: $S5_ADDR_ENDPOINT" ;;
 esac
 _addrhost=${S5_ADDR_ENDPOINT#https://}
-for _doc in README.md README.zh-CN.md SPEC.md; do
+for _doc in README.md README.zh-CN.md; do
     _addrtext=$(cat "$ROOT/$_doc")
     assert_contains "$_doc names the card address endpoint" \
         "$_addrhost" "$_addrtext"
@@ -397,10 +396,8 @@ for _doc in README.md README.zh-CN.md SPEC.md; do
         SERVER_IPV4 "$_addrtext"
 done
 
-# SPEC 3 inlines the destination boundary and section 7 makes denying it a
-# requirement, so those ranges are hand-copied exactly like the release digests
-# are. Comparing the sorted sets both ways catches a range dropped from the
-# config and a range the spec claims but the config does not deny.
+# The expected destination boundary is independent of both renderers, so a range
+# dropped from both cannot make their agreement pass as correctness.
 S5_PORT=23456
 S5_USERNAME=testuser
 S5_PASSWORD='TestPassword_123~x'
@@ -408,15 +405,16 @@ _dcextract() {
     sed -n '/"ip": \[/,/\]/p' | sed -n 's/.*"\([0-9a-f:.]*\/[0-9]*\)".*/\1/p' | sort
 }
 _dcrendered=$(s5_config_render | _dcextract)
-_dcspec=$(_dcextract <"$ROOT/SPEC.md")
+_dcfixture="$ROOT/tests/fixtures/denied-destinations.txt"
+assert_file_exists "the destination boundary fixture exists" "$_dcfixture"
+_dcexpected=$(sort "$_dcfixture")
 _dcengine=$(_dcextract <"$ROOT/tests/protocol/start_engine.sh")
-assert_ne "the renderer denies some range at all" '' "$_dcrendered"
-assert_eq "SPEC 3 names exactly the ranges the renderer denies" \
-    "$_dcrendered" "$_dcspec"
-# start_engine.sh stays independent of socks5.sh so a renderer defect cannot mask
-# a protocol defect, which makes its copy of the boundary another hand-copied fact.
-assert_eq "the protocol launcher denies exactly the same ranges" \
-    "$_dcrendered" "$_dcengine"
+assert_eq "the destination boundary has twelve distinct ranges" 12 \
+    "$(printf '%s\n' "$_dcexpected" | sort -u | wc -l | tr -d '[:space:]')"
+assert_eq "the renderer denies exactly the expected ranges" \
+    "$_dcexpected" "$_dcrendered"
+assert_eq "the protocol launcher denies exactly the expected ranges" \
+    "$_dcexpected" "$_dcengine"
 assert_contains "the protocol launcher resolves hostname destinations" \
     '"domainStrategy": "IPIfNonMatch"' "$(cat "$ROOT/tests/protocol/start_engine.sh")"
 for _dcdoc in README.md README.zh-CN.md; do
@@ -493,15 +491,16 @@ assert_contains "the long-lived case prints its own marker" \
 assert_eq "the mixed gate requires the long-lived tunnel to have run" 1 \
     "$(grep -c 'mixed_longlived=ok' "$ROOT/tests/protocol/run_xray_mixed.sh")"
 
-# SPEC 8 names the shells the unit suite runs under. On ubuntu-24.04 /bin/sh is
-# dash, so an `sh` leg beside a `dash` leg is the same interpreter twice; bash is
-# the /bin/sh of the EL family this branch supports and was never covered.
+# On ubuntu-24.04 /bin/sh is dash, so bash needs its own matrix leg to cover the
+# /bin/sh implementation used by the supported EL family.
 for _dcshell in 'command: sh' 'command: dash' 'command: bash' 'command: busybox sh'; do
     assert_contains "the unit matrix runs $_dcshell" "$_dcshell" "$ci_text"
 done
-# Only SPEC 8 documents the matrix; the READMEs describe what CI covers, not which
-# interpreters it uses.
-assert_contains "SPEC 8 names bash among the unit shells" \
-    'bash' "$(cat "$ROOT/SPEC.md")"
+for _doc in README.md README.zh-CN.md; do
+    _doctext=$(cat "$ROOT/$_doc")
+    for _dcshell in '`sh`' '`dash`' '`bash`' 'BusyBox `sh`'; do
+        assert_contains "$_doc documents the $_dcshell unit shell" "$_dcshell" "$_doctext"
+    done
+done
 
 t_summary

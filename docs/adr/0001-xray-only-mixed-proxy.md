@@ -19,7 +19,8 @@ Install and manage exactly one pinned Xray-core process, configured with a singl
 `protocol: "mixed"` inbound that serves both SOCKS5 (RFC 1929) and HTTP-proxy
 (Basic) authentication on one port, one account, `udp: false`, one direct
 outbound, and one blackhole outbound. No panel, database, API, subscription, or
-second engine. The client's URI scheme selects the protocol. See SPEC §1.
+second engine. The client's URI scheme selects the protocol. See the
+[public protocol description](../../README.md#what-mixed-means).
 
 ## Alternatives considered
 
@@ -33,11 +34,11 @@ second engine. The client's URI scheme selects the protocol. See SPEC §1.
 
 ## Consequences
 
-- The route is defined as much by what it refuses (SPEC §9 non-goals): no UDP,
+- The route is defined as much by what it refuses: no UDP,
   TLS, REALITY, WS/gRPC/XHTTP, GeoIP/GeoSite, or routing beyond the boundary.
 - It is independent of the 3proxy route and never touches the old
-  `socks5-manager` / `socks5proxy` namespace (SPEC §4). The two are separate
+  `socks5-manager` / `socks5proxy` namespace. The two are separate
   technical routes, not a migration.
 - "Mixed, not pure SOCKS5" is a permanent property the protocol gate asserts on
-  both protocols (SPEC §6). How the single outbound path is bounded is
+  both protocols. How the single outbound path is bounded is
   [ADR-0002](0002-literal-cidr-destination-boundary.md).
