@@ -78,7 +78,7 @@ assert_eq "rendered config matches the golden config" \
 mkdir -p "$S5_UNITDIR"
 s5_write_unit >/dev/null 2>&1
 golden_unit=$(cat "${S5_REPO_ROOT}/tests/golden/xray-socks5.service")
-rendered_unit=$(sed "s|$S5_TEST_ROOT||g" "$S5_UNIT")
+rendered_unit=$(sed "s|$S5_TEST_ROOT||g" "$S5_SERVICE_ARTIFACT")
 assert_eq "rendered unit matches the golden unit" "$golden_unit" "$rendered_unit"
 
 # status, show, restart, uninstall and update all recover the account from the

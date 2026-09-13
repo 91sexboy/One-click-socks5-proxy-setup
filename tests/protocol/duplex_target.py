@@ -19,6 +19,9 @@ COUNT_LOCK = threading.RLock()
 ACCEPTED = 0
 FRAMES = 0
 FAMILIES = []
+# Per-hello cohort observations, independent of the probe's task/worker counts.
+# Other tunnels (including the background long-lived one) do not enter these.
+COHORTS = {}
 
 
 def write_text(path, text):
@@ -39,7 +42,8 @@ def write_metrics(count_path, report_path):
     the run on a confusing error instead of the real outcome.
     """
     with COUNT_LOCK:
-        data = {"accepted": ACCEPTED, "frames": FRAMES, "families": list(FAMILIES)}
+        data = {"accepted": ACCEPTED, "frames": FRAMES, "families": list(FAMILIES),
+                "cohorts": COHORTS}
         if count_path:
             write_text(count_path, str(ACCEPTED) + "\n")
         if report_path:
@@ -102,6 +106,7 @@ class FrameWriter:
 def serve_connection(sock, count_path, report_path):
     global FRAMES
     sock.settimeout(1.0)
+    cohort = None
     try:
         first = read_exact(sock, 6)
         length = struct.unpack("!I", first[2:6])[0]
@@ -109,6 +114,18 @@ def serve_connection(sock, count_path, report_path):
         kind, cid, seq, nonce, payload = parse_frame(first + rest)
         if kind != ord("H"):
             return
+        if payload.startswith(b"cohort-"):
+            label = payload.decode("ascii")
+            with COUNT_LOCK:
+                observed = COHORTS.setdefault(label, {
+                    "active": 0, "peak": 0, "frame_min": None, "frames": 0, "members": {},
+                })
+                if str(cid) in observed["members"]:
+                    return
+                cohort = observed
+                cohort["members"][str(cid)] = 0
+                cohort["active"] += 1
+                cohort["peak"] = max(cohort["peak"], cohort["active"])
         sender_stop = threading.Event()
         writer = FrameWriter(sock)
 
@@ -137,6 +154,11 @@ def serve_connection(sock, count_path, report_path):
                 return
             with COUNT_LOCK:
                 FRAMES += 1
+                if cohort is not None:
+                    cohort["frames"] += 1
+                    cohort["members"][str(cid)] += 1
+                    minimum = cohort["frame_min"]
+                    cohort["frame_min"] = cohort["active"] if minimum is None else min(minimum, cohort["active"])
             writer.send(frame(ord("E"), cid, frame_seq, nonce, frame_payload))
     except (EOFError, OSError, ValueError):
         return
@@ -146,6 +168,9 @@ def serve_connection(sock, count_path, report_path):
         except UnboundLocalError:
             pass
         sock.close()
+        if cohort is not None:
+            with COUNT_LOCK:
+                cohort["active"] -= 1
         # Flushed here as well as on accept so the report is readable, and final
         # for every closed tunnel, while the target is still running.
         write_metrics(count_path, report_path)

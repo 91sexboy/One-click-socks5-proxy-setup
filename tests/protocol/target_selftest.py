@@ -277,7 +277,7 @@ def metrics_writer_checks(scratch):
     if problem:
         print("# %s" % problem)
     check("the report holds every counter",
-          report == {"accepted": 7, "frames": 11, "families": ["ipv4", "ipv6"]})
+          report == {"accepted": 7, "frames": 11, "families": ["ipv4", "ipv6"], "cohorts": {}})
     check("the count file holds the accepted count", slurp(count_path) == "7\n")
 
     # Last, and on a daemon thread: a metrics lock that is not reentrant leaves

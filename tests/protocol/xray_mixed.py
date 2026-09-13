@@ -7,6 +7,7 @@ import collections
 import concurrent.futures
 import json
 import os
+import select
 import socket
 import struct
 import sys
@@ -124,67 +125,68 @@ def http_authority(endpoint):
 
 def socks5_connect(proxy, target, creds, atyp="ipv4"):
     sock = connect(proxy)
-    deadline = time.monotonic() + 10
-    sock.sendall(b"\x05\x01\x02")
-    reply = read_exact(sock, 2, deadline)
-    if reply != b"\x05\x02":
-        fail("SOCKS5 did not select username/password authentication")
-    ub = creds.user.encode("ascii")
-    pb = creds.password.encode("ascii")
-    sock.sendall(b"\x01" + bytes([len(ub)]) + ub + bytes([len(pb)]) + pb)
-    auth = read_exact(sock, 2, deadline)
-    if auth != b"\x01\x00":
+    try:
+        deadline = time.monotonic() + 10
+        sock.sendall(b"\x05\x01\x02")
+        reply = read_exact(sock, 2, deadline)
+        if reply != b"\x05\x02":
+            fail("SOCKS5 did not select username/password authentication")
+        ub = creds.user.encode("ascii")
+        pb = creds.password.encode("ascii")
+        sock.sendall(b"\x01" + bytes([len(ub)]) + ub + bytes([len(pb)]) + pb)
+        auth = read_exact(sock, 2, deadline)
+        if auth != b"\x01\x00":
+            fail("SOCKS5 credentials were rejected")
+        sock.sendall(b"\x05\x01\x00" + socks5_target_address(atyp, target.host) + struct.pack("!H", target.port))
+        head = read_exact(sock, 4, deadline)
+        if head[0] != 5 or head[1] != 0:
+            fail("SOCKS5 CONNECT was refused")
+        if head[3] == 1:
+            read_exact(sock, 6, deadline)
+        elif head[3] == 3:
+            length = read_exact(sock, 1, deadline)[0]
+            read_exact(sock, length + 2, deadline)
+        elif head[3] == 4:
+            read_exact(sock, 18, deadline)
+        else:
+            fail("SOCKS5 returned an unknown address type")
+        return sock
+    except BaseException:
         sock.close()
-        fail("SOCKS5 credentials were rejected")
-    sock.sendall(b"\x05\x01\x00" + socks5_target_address(atyp, target.host) + struct.pack("!H", target.port))
-    head = read_exact(sock, 4, deadline)
-    if head[0] != 5 or head[1] != 0:
-        sock.close()
-        fail("SOCKS5 CONNECT was refused")
-    if head[3] == 1:
-        read_exact(sock, 6, deadline)
-    elif head[3] == 3:
-        length = read_exact(sock, 1, deadline)[0]
-        read_exact(sock, length + 2, deadline)
-    elif head[3] == 4:
-        read_exact(sock, 18, deadline)
-    else:
-        sock.close()
-        fail("SOCKS5 returned an unknown address type")
-    return sock
+        raise
 
 
 def http_connect(proxy, target, creds):
     sock = connect(proxy)
-    token = base64.b64encode((creds.user + ":" + creds.password).encode("ascii")).decode("ascii")
-    authority = http_authority(target)
-    request = (
-        "CONNECT %s HTTP/1.1\r\n"
-        "Host: %s\r\n"
-        "Proxy-Authorization: Basic %s\r\n"
-        "Connection: keep-alive\r\n\r\n"
-    ) % (authority, authority, token)
-    sock.sendall(request.encode("ascii"))
-    deadline = time.monotonic() + 10
-    response = bytearray()
-    while b"\r\n\r\n" not in response:
-        if time.monotonic() >= deadline:
-            sock.close()
-            fail("HTTP CONNECT response deadline expired")
-        sock.settimeout(max(0.05, deadline - time.monotonic()))
-        chunk = sock.recv(4096)
-        if not chunk:
-            sock.close()
-            fail("HTTP proxy closed before CONNECT response")
-        response.extend(chunk)
-        if len(response) > 16384:
-            sock.close()
-            fail("HTTP CONNECT response is too large")
-    line = bytes(response).split(b"\r\n", 1)[0]
-    if not line.startswith(b"HTTP/1.1 200") and not line.startswith(b"HTTP/1.0 200"):
+    try:
+        token = base64.b64encode((creds.user + ":" + creds.password).encode("ascii")).decode("ascii")
+        authority = http_authority(target)
+        request = (
+            "CONNECT %s HTTP/1.1\r\n"
+            "Host: %s\r\n"
+            "Proxy-Authorization: Basic %s\r\n"
+            "Connection: keep-alive\r\n\r\n"
+        ) % (authority, authority, token)
+        sock.sendall(request.encode("ascii"))
+        deadline = time.monotonic() + 10
+        response = bytearray()
+        while b"\r\n\r\n" not in response:
+            if time.monotonic() >= deadline:
+                fail("HTTP CONNECT response deadline expired")
+            sock.settimeout(max(0.05, deadline - time.monotonic()))
+            chunk = sock.recv(4096)
+            if not chunk:
+                fail("HTTP proxy closed before CONNECT response")
+            response.extend(chunk)
+            if len(response) > 16384:
+                fail("HTTP CONNECT response is too large")
+        line = bytes(response).split(b"\r\n", 1)[0]
+        if not line.startswith(b"HTTP/1.1 200") and not line.startswith(b"HTTP/1.0 200"):
+            fail("HTTP CONNECT was not accepted")
+        return sock
+    except BaseException:
         sock.close()
-        fail("HTTP CONNECT was not accepted")
-    return sock
+        raise
 
 
 def socks5_wrong_auth(proxy, creds):
@@ -294,50 +296,83 @@ def read_frame(sock, deadline):
     return body[0], struct.unpack("!II", body[1:9]), body[9:17], body[17:]
 
 
-def exchange(sock, cid, nonce, count=4, idle=False, spacing=0.0):
-    seen_echo = set()
-    seen_server = set()
-    for seq in range(count):
-        if seq and spacing:
-            time.sleep(spacing)
-        payload = ("client-%d-%d" % (cid, seq)).encode("ascii")
+def validate_server_frame(frame, cid, nonce, expected_seq):
+    kind, ids, frame_nonce, payload = frame
+    if kind != ord("S") or ids[0] != cid or frame_nonce != nonce:
+        fail("unsolicited frame identity mismatch")
+    if ids[1] != expected_seq:
+        fail("unsolicited frame sequence mismatch")
+    # Independent of duplex_target.frame() and its sender: this is the wire
+    # contract, not an expected value supplied by the implementation under test.
+    if payload != ("server-%d" % expected_seq).encode("ascii"):
+        fail("unsolicited frame payload mismatch")
+
+
+def exchange(sock, cid, nonce, count=4, idle=False, spacing=0.0, server_seq=0):
+    # The target emits every 0.25s. Allow eight such intervals for scheduling,
+    # but require progress throughout the exchange, including its final window.
+    # Read during spacing/idle rather than counting buffered old frames as fresh
+    # progress when the client resumes writing.
+    progress_window = 2.0
+    last_server = time.monotonic()
+    first_server_seq = server_seq
+
+    def receive(until, expected_echo=None):
+        nonlocal server_seq, last_server
+        now = time.monotonic()
+        if now - last_server >= progress_window:
+            fail("unsolicited server frames stopped progressing")
+        if now >= until:
+            return False
+        ready = select.select([sock], [], [], min(until, last_server + progress_window) - now)[0]
+        if not ready:
+            if time.monotonic() - last_server >= progress_window:
+                fail("unsolicited server frames stopped progressing")
+            return False
+        frame = read_frame(sock, last_server + progress_window)
+        kind, ids, frame_nonce, frame_payload = frame
+        if kind == ord("S"):
+            validate_server_frame(frame, cid, nonce, server_seq)
+            server_seq += 1
+            last_server = time.monotonic()
+        elif kind == ord("E"):
+            if expected_echo is None or ids != (cid, expected_echo[0]) or frame_nonce != nonce:
+                fail("target echo identity or sequence mismatch")
+            if frame_payload != expected_echo[1]:
+                fail("target echo payload mismatch")
+            return True
+        else:
+            fail("target sent an unexpected frame type")
+        return False
+
+    def drain_for(duration):
+        until = time.monotonic() + duration
+        while time.monotonic() < until:
+            receive(until)
+
+    total = count + int(idle)
+    for seq in range(total):
+        if seq == count:
+            drain_for(4)
+            payload = ("after-idle-%d" % cid).encode("ascii")
+        else:
+            if seq and spacing:
+                drain_for(spacing)
+            payload = ("client-%d-%d" % (cid, seq)).encode("ascii")
         sock.sendall(make_frame(ord("C"), cid, seq, nonce, payload))
         with STATS_LOCK:
             STATS["client_frames"] += 1
         deadline = time.monotonic() + 8
-        while seq not in seen_echo:
-            kind, ids, frame_nonce, frame_payload = read_frame(sock, deadline)
-            if ids[0] != cid or frame_nonce != nonce:
-                fail("target frame identity mismatch")
-            if kind == ord("E"):
-                if ids[1] != seq or frame_payload != payload:
-                    fail("target echo payload mismatch")
-                seen_echo.add(seq)
-            elif kind == ord("S"):
-                seen_server.add(ids[1])
-            else:
-                fail("target sent an unexpected frame type")
-    if idle:
-        time.sleep(4)
-        payload = ("after-idle-%d" % cid).encode("ascii")
-        sock.sendall(make_frame(ord("C"), cid, count, nonce, payload))
-        with STATS_LOCK:
-            STATS["client_frames"] += 1
-        deadline = time.monotonic() + 8
-        while count not in seen_echo:
-            kind, ids, frame_nonce, frame_payload = read_frame(sock, deadline)
-            if ids[0] != cid or frame_nonce != nonce:
-                fail("post-idle frame identity mismatch")
-            if kind == ord("E"):
-                if ids[1] != count or frame_payload != payload:
-                    fail("post-idle echo mismatch")
-                seen_echo.add(count)
-            elif kind == ord("S"):
-                seen_server.add(ids[1])
-            else:
-                fail("unexpected post-idle frame type")
-    if not seen_server:
-        fail("target never sent an unsolicited server frame")
+        while not receive(deadline, (seq, payload)):
+            if time.monotonic() >= deadline:
+                fail("target echo deadline expired")
+    # Fast exchanges may finish their echoes before the first periodic S frame.
+    # Still require a fresh one here, even if the caller already read an initial
+    # S frame to prove the target accepted the hello before a cohort barrier.
+    while server_seq == first_server_seq:
+        receive(last_server + progress_window)
+    if time.monotonic() - last_server >= progress_window:
+        fail("unsolicited server frames stopped progressing in the final window")
 
 
 def tunnel_once(protocol, proxy, target, creds, cid, atyp="ipv4"):
@@ -380,11 +415,45 @@ def longlived_tunnel(proxy, target, creds, cid, frames=24, spacing=0.5):
         STATS["tunnels"] += 1
 
 
-def concurrency(protocol, proxy, target, creds, count):
-    with concurrent.futures.ThreadPoolExecutor(max_workers=min(count, 64)) as pool:
-        futures = [pool.submit(tunnel_once, protocol, proxy, target, creds, 1000 + i) for i in range(count)]
+def concurrency(protocol, proxy, target, creds, count, timeout=15):
+    # Both barriers are essential: nobody sends C until every target has read H,
+    # and nobody closes until every peer has validated all its echoed frames.
+    # The independent target records occupancy during C, scoped by H's cohort
+    # label so the background long-lived tunnel cannot inflate this proof.
+    barrier = threading.Barrier(count, timeout=timeout)
+
+    def member(index):
+        sock = None
+        try:
+            if barrier.broken:
+                fail("cohort aborted before connection establishment")
+            cid = 1000 + index
+            nonce = struct.pack("!Q", cid * 104729 + 17)
+            if protocol == "socks5":
+                sock = socks5_connect(proxy, target, creds)
+            else:
+                sock = http_connect(proxy, target, creds)
+            sock.sendall(make_frame(ord("H"), cid, 0, nonce,
+                                    ("cohort-%d" % count).encode("ascii")))
+            validate_server_frame(read_frame(sock, time.monotonic() + 8), cid, nonce, 0)
+            barrier.wait()
+            # Five C frames preserves the previous four + post-idle frame totals;
+            # the separate tunnel_once cases still test the four-second idle.
+            exchange(sock, cid, nonce, count=5, spacing=0.1, server_seq=1)
+            barrier.wait()
+            with STATS_LOCK:
+                STATS["tunnels"] += 1
+        except BaseException:
+            barrier.abort()
+            raise
+        finally:
+            if sock is not None:
+                sock.close()
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=count) as pool:
+        futures = [pool.submit(member, i) for i in range(count)]
         for future in futures:
-            future.result(timeout=45)
+            future.result()
 
 
 def direct_control(endpoint):

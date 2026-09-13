@@ -24,7 +24,7 @@ while read -r _dfix _darch _dwant; do
     S5_OS_FAMILY=''
     S5_PKGMGR=''
     S5_INIT=''
-    S5_UNIT=''
+    S5_SERVICE_ARTIFACT=''
     if [ "$_dwant" = reject ]; then
         t_run s5_detect_platform
         assert_ne "$_dfix on $_darch is refused" 0 "$T_STATUS"
@@ -36,10 +36,10 @@ while read -r _dfix _darch _dwant; do
         "$S5_OS_FAMILY:$S5_PKGMGR:$S5_INIT"
     if [ "$S5_INIT" = openrc ]; then
         assert_eq "$_dfix service artifact is an init script" \
-            "$S5_INITSCRIPT" "$S5_UNIT"
+            "$S5_INITSCRIPT" "$S5_SERVICE_ARTIFACT"
     else
         assert_eq "$_dfix service artifact is a systemd unit" \
-            "$S5_UNITDIR/$S5_PROJECT.service" "$S5_UNIT"
+            "$S5_UNITDIR/$S5_PROJECT.service" "$S5_SERVICE_ARTIFACT"
     fi
 done <<'TABLE'
 ubuntu-20.04 amd64 debian:apt:systemd

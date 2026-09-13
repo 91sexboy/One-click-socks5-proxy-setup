@@ -9,15 +9,15 @@
 set -eu
 # shellcheck source=.github/scripts/lifecycle-common.sh
 . "$(dirname "$0")/lifecycle-common.sh"
+# shellcheck source=.github/scripts/lifecycle-target.sh
+. "$(dirname "$0")/lifecycle-target.sh"
 printf 'lifecycle: start\n'
 work=$(mktemp -d)
 printf 'lifecycle: workdir-ready\n'
-cleanup() {
-  rm -f "$work/pass" "$work/answers" "$work/target.log" "$work/install.log" "$work/status.log" "$work/restart.log" "$work/uninstall.log" "$work/pass.update" "$work/answers.update" "$work/update.log"
+lifecycle_cleanup_namespace() {
   sh .github/scripts/remove-xray-namespace.sh
-  rm -rf "$work"
 }
-trap cleanup EXIT HUP INT TERM
+lifecycle_cleanup_init
 chmod 0700 "$work"
 lifecycle_write_fixtures "$work"
 : >"$work/answers.empty"
@@ -49,9 +49,7 @@ PY
 sudo sh .github/scripts/run-socks5.sh status \
   "$work/answers.empty" "$work/status.log" "$work/pass"
 printf 'lifecycle: status-ok\n'
-printf 'lifecycle: status-log='
-sudo cat "$work/status.log" | tr '\n' ' '
-printf '\n'
+# run-socks5.sh already replayed this log through its credential filter.
 sudo grep -q 'mixed' "$work/status.log"
 printf 'lifecycle: status-content-ok\n'
 sudo sh .github/scripts/run-socks5.sh restart \
@@ -113,7 +111,7 @@ printf 'lifecycle: audit-ok\n'
 # in-place update. Rotate the credentials, keep the port, and require
 # the new identity in both the config and the state.
 sudo sh .github/scripts/run-socks5.sh install \
-  "$work/answers.update" "$work/update.log" "$work/pass.update"
+  "$work/answers.update" "$work/update.log" "$work/pass.update" "$work/pass"
 printf 'lifecycle: update-ok\n'
 sudo grep -q 'ciuser2' /etc/xray-socks5/config.json
 sudo grep -qE '^username[[:space:]]+ciuser2$' /var/lib/xray-socks5/state
@@ -129,7 +127,7 @@ sudo id xray-socks5
 sudo stat -c '%M %U:%G %n' /etc/xray-socks5/config.json /var/lib/xray-socks5/state /usr/local/libexec/xray-socks5/xray
 sudo find /etc/xray-socks5 /var/lib/xray-socks5 /usr/local/libexec/xray-socks5 -maxdepth 2 -printf '%M %U:%G %p\n'
 sudo sh .github/scripts/run-socks5.sh uninstall \
-  "$work/answers.uninstall" "$work/uninstall.log" "$work/pass"
+  "$work/answers.uninstall" "$work/uninstall.log" "$work/pass.update" "$work/pass"
 test ! -e /etc/xray-socks5
 test ! -e /var/lib/xray-socks5
 test ! -e /usr/local/libexec/xray-socks5

@@ -1,263 +1,156 @@
 #!/bin/sh
-# Xray installer flow with service and state stubs.
+# Xray installer and state validation with isolated lifecycle scenarios.
 
 S5T_NAME=test_xray_install
 . "${S5_REPO_ROOT}/tests/lib/assert.sh"
-ROOT=${S5_REPO_ROOT}
-t_mktestroot
-mkdir -p "$S5_TEST_ROOT/bin"
-S5_LIB_ONLY=1
-S5_ASSUME_ROOT=1
-S5_SKIP_OWNERSHIP=1
-S5_OSRELEASE="$ROOT/tests/fixtures/os-release/debian-12"
-S5_ARCHNAME=amd64
-export S5_LIB_ONLY S5_ASSUME_ROOT S5_SKIP_OWNERSHIP S5_OSRELEASE
-# shellcheck source=/dev/null
-. "$ROOT/socks5.sh"
+. "${S5_REPO_ROOT}/tests/lib/xray-fixture.sh"
 
-S5_LANG=en
-# socks5.sh initialises its own globals, so the platform facts have to be set
-# after sourcing. Set before it, they were reset to empty and s5_state_write
-# recorded an empty arch, family and init -- a state file that fails the schema
-# check the product itself enforces, which made every later s5_state_load in this
-# file refuse for that reason rather than the one under test.
-S5_ARCHNAME=amd64
-S5_OS_FAMILY=debian
-S5_INIT=systemd
-S5_PORT=23456
-S5_USERNAME=alice
-S5_PASSWORD='Secret_123~x'
-S5_SECRET=$S5_PASSWORD
-S5_LISTEN=127.0.0.1
-S5_PORT_PROBE="$S5_TEST_ROOT/portprobe"
-cat >"$S5_PORT_PROBE" <<'PROBE'
-#!/bin/sh
-if [ -f "$S5_TEST_ROOT/svc_active" ] && [ "$(cat "$S5_TEST_ROOT/svc_active")" = "$1" ]; then exit 1; fi
-exit 0
-PROBE
-chmod 0755 "$S5_PORT_PROBE"
-export S5_PORT_PROBE
+test_install() {
+    t_xray_fixture 23456
+    t_xray_install
+    assert_file_exists "Xray config exists" "$S5_CFG"
+    assert_file_exists "Xray state exists" "$S5_STATE"
+    assert_file_exists "Xray unit exists" "$S5_SERVICE_ARTIFACT"
+    assert_eq "state engine marker" xray "$(s5_state_get engine)"
+    assert_eq "state protocol marker" mixed "$(s5_state_get protocol)"
+    assert_eq "service command recorded" 1 "$(grep -c 'start xray-socks5.service' "$S5_TEST_ROOT/transcript")"
+    assert_eq "install enables the unit on boot" 1 "$(grep -c 'enable xray-socks5.service' "$S5_TEST_ROOT/transcript")"
+    assert_contains "config test ran before service start" 'config-test' "$(cat "$S5_TEST_ROOT/xray-calls")"
+    assert_not_contains "password is absent from state" "$S5_PASSWORD" "$(cat "$S5_STATE")"
+    assert_mode "config is group-readable only" 640 "$S5_CFG"
+    assert_mode "state is private" 600 "$S5_STATE"
 
-# Use a valid local Xray-shaped executable and bypass network asset download;
-# the production flow remains covered by the asset unit tests.
-S5_ASSET_NAME=Xray-linux-64.zip
-S5_ASSET_SIZE=1
-S5_ASSET_SHA256=deadbeef
-S5_ASSET_BINARY_SIZE=1
-S5_ASSET_BINARY_SHA256=deadbeef
-s5_asset_select() { return 0; }
-s5_binary_ready() { return 1; }
-s5_download_engine() {
-    mkdir -p "$S5_PREFIX"
-    printf '#!/bin/sh\nexit 0\n' >"$S5_BIN"
-    chmod 0755 "$S5_BIN"
-    S5_CREATED_BIN=1
-    S5_BINARY_SHA256=deadbeef
-    return 0
+    # Old namespace remains untouched.
+    mkdir -p "$S5_TEST_ROOT/etc/socks5-manager"
+    printf legacy >"$S5_TEST_ROOT/etc/socks5-manager/3proxy.cfg"
+    assert_file_exists "legacy namespace remains present" "$S5_TEST_ROOT/etc/socks5-manager/3proxy.cfg"
+    unit=$(cat "$S5_SERVICE_ARTIFACT")
+    assert_not_contains "unit does not expose password" "$S5_PASSWORD" "$unit"
+    assert_contains "unit runs Xray" 'run -c' "$unit"
 }
-s5_config_test() { printf 'config-test %s\n' "$1" >>"$S5_TEST_ROOT/xray-calls"; return 0; }
 
-cat >"$S5_TEST_ROOT/bin/systemctl" <<'SYSTEMCTL'
-#!/bin/sh
-T="$S5_TEST_ROOT/transcript"
-printf 'systemctl' >>"$T"
-for a in "$@"; do printf ' %s' "$a" >>"$T"; done
-printf '\n' >>"$T"
-case "$1" in
-start|restart)
-    port=$(sed -n 's/^[[:space:]]*"port":[[:space:]]*\([0-9][0-9]*\),*/\1/p' "$S5_STUB_CFG" | head -n 1)
-    printf '%s\n' "$port" >"$S5_TEST_ROOT/svc_active"
-    ;;
-stop) rm -f "$S5_TEST_ROOT/svc_active" ;;
-is-active)
-    if [ -f "$S5_TEST_ROOT/svc_active" ]; then exit 0; else exit 3; fi
-    ;;
-daemon-reload|enable|disable) ;;
-esac
-exit 0
-SYSTEMCTL
-chmod 0755 "$S5_TEST_ROOT/bin/systemctl"
-PATH="$S5_TEST_ROOT/bin:$PATH"
-export PATH
-S5_STUB_CFG=$S5_CFG
-export S5_STUB_CFG
+test_config_corrupt() {
+    t_xray_fixture 23456
+    t_xray_install
+    # This return-2 assertion was already valid with the old binary metadata:
+    # config verification precedes binary verification. The healthy baseline now
+    # proves that changing the config is the only reason validation fails.
+    printf 'external change\n' >"$S5_CFG"
+    t_run s5_state_load
+    assert_eq "an externally changed config has its own status" 2 "$T_STATUS"
+    t_run s5_report_state_load 2
+    assert_contains "the diagnosis names the config, not the state" \
+        'changed externally' "$T_OUT"
+    assert_not_contains "the diagnosis does not call the state invalid" \
+        'invalid state file' "$T_OUT"
+}
 
-# Minimal stateful account commands for this isolated install flow.
-for _acct_cmd in getent groupadd groupdel useradd userdel id; do
-    cat >"$S5_TEST_ROOT/bin/$_acct_cmd" <<'ACCT'
-#!/bin/sh
-case "${0##*/}" in
-getent)
-    if [ "$1" = passwd ] && [ -f "$S5_TEST_ROOT/user-exists" ]; then exit 0; fi
-    if [ "$1" = group ] && [ -f "$S5_TEST_ROOT/group-exists" ]; then exit 0; fi
-    exit 2 ;;
-groupadd) : >"$S5_TEST_ROOT/group-exists"; exit 0 ;;
-useradd) : >"$S5_TEST_ROOT/user-exists"; exit 0 ;;
-groupdel) rm -f "$S5_TEST_ROOT/group-exists"; exit 0 ;;
-userdel) rm -f "$S5_TEST_ROOT/user-exists"; exit 0 ;;
-id) printf '900\n'; exit 0 ;;
-esac
-ACCT
-    chmod 0755 "$S5_TEST_ROOT/bin/$_acct_cmd"
+test_binary_corrupt() {
+    t_xray_fixture 23456
+    t_xray_install
+    printf '# changed executable\n' >>"$S5_BIN"
+    t_run s5_state_load
+    assert_eq "a changed binary is invalid state, not config drift" 1 "$T_STATUS"
+}
+
+test_unit_corrupt() {
+    t_xray_fixture 23456
+    t_xray_install
+    printf '# changed unit\n' >>"$S5_SERVICE_ARTIFACT"
+    t_run s5_state_load
+    assert_eq "a changed service unit is invalid state" 1 "$T_STATUS"
+}
+
+test_account_corrupt() {
+    t_xray_fixture 23456
+    t_xray_install
+    printf '901\n' >"$S5_TEST_ROOT/user-exists"
+    t_run s5_state_load
+    assert_eq "a changed account identity is invalid state" 1 "$T_STATUS"
+}
+
+test_cleanup_temps() {
+    t_xray_fixture 23456
+    t_xray_install
+    # An interrupted atomic write leaves private temporaries behind. This command
+    # owns none of the published files from the previous installation process.
+    : >"$S5_SYSCONFDIR/.s5tmp.abc123"
+    : >"$S5_STATEDIR/.s5state.xyz789"
+    : >"$S5_PREFIX/.xray.qqq111"
+    s5_cleanup
+    assert_file_absent "cleanup removes its own config temporary" "$S5_SYSCONFDIR/.s5tmp.abc123"
+    assert_file_absent "cleanup removes its own state temporary" "$S5_STATEDIR/.s5state.xyz789"
+    assert_file_absent "cleanup removes its own binary temporary" "$S5_PREFIX/.xray.qqq111"
+    assert_file_exists "cleanup leaves the published config alone" "$S5_CFG"
+    t_xray_assert_healthy
+
+    # A matching dotfile in the caller's cwd must not expand the cleanup pattern
+    # before it reaches the directory being cleaned.
+    : >"$S5_SYSCONFDIR/.s5tmp.cwdcase"
+    mkdir -p "$S5_TEST_ROOT/decoycwd"
+    : >"$S5_TEST_ROOT/decoycwd/.s5tmp.decoy"
+    ( cd "$S5_TEST_ROOT/decoycwd" && s5_cleanup_own_temps "$S5_SYSCONFDIR" )
+    assert_file_absent "cleanup ignores a matching name in the caller's cwd" "$S5_SYSCONFDIR/.s5tmp.cwdcase"
+}
+
+test_openrc_runtime() {
+    t_xray_fixture 23456
+    # supervise-daemon runtime files belong to the running service until this
+    # invocation actually touches it (e.g. declining an update must preserve them).
+    S5_INIT=openrc
+    mkdir -p "$S5_OPENRC_OPTION_DIR" "$(dirname "$S5_PIDFILE")"
+    : >"$S5_PIDFILE"
+    : >"$S5_OPENRC_OPTION_DIR/child_pid"
+    s5_cleanup
+    assert_file_exists "cleanup keeps a foreign OpenRC pidfile" "$S5_PIDFILE"
+    assert_file_exists "cleanup keeps a foreign child_pid" "$S5_OPENRC_OPTION_DIR/child_pid"
+    S5_SERVICE_STARTED=1
+    s5_cleanup
+    assert_file_absent "cleanup removes the runtime files it owns" "$S5_PIDFILE"
+}
+
+test_locks() {
+    t_xray_fixture 23456
+    _lkboot=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || uname -n)
+    # Call directly: t_run's command substitution would lose S5_LOCK_HELD.
+    s5_lock_acquire
+    assert_eq "the lock is acquired when free" 0 "$?"
+    s5_lock_acquire
+    assert_eq "acquiring a lock this process holds is a no-op" 0 "$?"
+    s5_lock_release
+    assert_file_absent "releasing removes the lock directory" "$S5_LOCKDIR"
+
+    mkdir -p "$S5_LOCKDIR"
+    printf '%s\n%s\n' "$_lkboot" "$$" >"$S5_LOCK_OWNER"
+    s5_lock_acquire 2>/dev/null
+    assert_ne "a lock held by a live owner is refused" 0 "$?"
+    assert_file_exists "a live owner's lock is left in place" "$S5_LOCK_OWNER"
+
+    (exit 0) &
+    _lkdead=$!
+    wait "$_lkdead" 2>/dev/null || true
+    printf '%s\n%s\n' "$_lkboot" "$_lkdead" >"$S5_LOCK_OWNER"
+    s5_lock_acquire 2>/dev/null
+    assert_eq "a lock left by a dead owner is reclaimed" 0 "$?"
+    s5_lock_release
+
+    mkdir -p "$S5_LOCKDIR"
+    printf '%s\n%s\n' "boot-from-a-previous-life" "$$" >"$S5_LOCK_OWNER"
+    s5_lock_acquire 2>/dev/null
+    assert_eq "a lock from a previous boot is reclaimed" 0 "$?"
+    s5_lock_release
+    assert_file_absent "the reclaimed lock is released cleanly" "$S5_LOCKDIR"
+}
+
+# Optional scenario arguments support isolated runs, permutation and repetition.
+if [ "$#" -eq 0 ]; then
+    set -- install config_corrupt binary_corrupt unit_corrupt account_corrupt cleanup_temps openrc_runtime locks
+fi
+for scenario do
+    case "$scenario" in
+    install|config_corrupt|binary_corrupt|unit_corrupt|account_corrupt|cleanup_temps|openrc_runtime|locks)
+        "test_$scenario" ;;
+    *) t_bad "unknown install scenario: $scenario" ;;
+    esac
 done
-
-mkdir -p "$S5_UNITDIR"
-s5_account_create() {
-    S5_CREATED_GROUP=1
-    S5_CREATED_USER=1
-    S5_ACCOUNT_UID=900
-    S5_ACCOUNT_GID=900
-    return 0
-}
-s5_account_identity() { return 0; }
-s5_account_remove() { return 0; }
-s5_prompt_port() { return 0; }
-s5_prompt_username() { return 0; }
-s5_prompt_password() { return 0; }
-s5_confirm_install() { return 0; }
-# Existing install uses the same state protocol but a test executable avoids a
-# network download and lets the service stub observe the JSON port.
-s5_install_new
-status=$?
-assert_eq "new Xray installation completes" 0 "$status"
-assert_file_exists "Xray config exists" "$S5_CFG"
-assert_file_exists "Xray state exists" "$S5_STATE"
-# S5_UNIT comes from the sourced socks5.sh; it is not a typo for S5_INIT.
-# shellcheck disable=SC2153
-assert_file_exists "Xray unit exists" "$S5_UNIT"
-assert_eq "state engine marker" xray "$(s5_state_get engine)"
-assert_eq "state protocol marker" mixed "$(s5_state_get protocol)"
-assert_eq "service command recorded" 1 "$(grep -c 'start xray-socks5.service' "$S5_TEST_ROOT/transcript")"
-assert_eq "install enables the unit on boot" 1 "$(grep -c 'enable xray-socks5.service' "$S5_TEST_ROOT/transcript")"
-assert_contains "config test ran before service start" 'config-test' "$(cat "$S5_TEST_ROOT/xray-calls")"
-assert_not_contains "password is absent from state" "$S5_PASSWORD" "$(cat "$S5_STATE")"
-assert_mode "config is group-readable only" 640 "$S5_CFG"
-assert_mode "state is private" 600 "$S5_STATE"
-
-# A changed config makes status fail closed rather than reporting a healthy
-# installation from stale state. The status is its own value: the state file is
-# intact and the config is what changed, and every command reports that as
-# config.external rather than as a corrupt state file.
-printf 'external change\n' >"$S5_CFG"
-t_run s5_state_load
-assert_eq "an externally changed config has its own status" 2 "$T_STATUS"
-t_run s5_report_state_load 2
-assert_contains "the diagnosis names the config, not the state" \
-    'changed externally' "$T_OUT"
-assert_not_contains "the diagnosis does not call the state invalid" \
-    'invalid state file' "$T_OUT"
-
-# Old namespace remains untouched.
-mkdir -p "$S5_TEST_ROOT/etc/socks5-manager"
-printf legacy >"$S5_TEST_ROOT/etc/socks5-manager/3proxy.cfg"
-assert_file_exists "legacy namespace remains present" "$S5_TEST_ROOT/etc/socks5-manager/3proxy.cfg"
-
-# Service unit never carries credentials.
-unit=$(cat "$S5_UNIT")
-assert_not_contains "unit does not expose password" "$S5_PASSWORD" "$unit"
-assert_contains "unit runs Xray" 'run -c' "$unit"
-
-# An interrupted atomic write leaves a private temporary behind. Cleanup has to
-# remove its own, or uninstall's empty-directory check refuses the parent later.
-: >"$S5_SYSCONFDIR/.s5tmp.abc123"
-: >"$S5_STATEDIR/.s5state.xyz789"
-: >"$S5_PREFIX/.xray.qqq111"
-S5_INSTALL_COMPLETE=0
-S5_SERVICE_STARTED=0
-S5_CREATED_UNIT=0
-S5_CREATED_CFG=0
-S5_CREATED_BIN=0
-S5_CREATED_USER=0
-S5_CREATED_GROUP=0
-S5_CREATED_CONFDIR=0
-S5_CREATED_STATEDIR=0
-S5_CREATED_PREFIX=0
-s5_cleanup
-assert_file_absent "cleanup removes its own config temporary" \
-    "$S5_SYSCONFDIR/.s5tmp.abc123"
-assert_file_absent "cleanup removes its own state temporary" \
-    "$S5_STATEDIR/.s5state.xyz789"
-assert_file_absent "cleanup removes its own binary temporary" \
-    "$S5_PREFIX/.xray.qqq111"
-assert_file_exists "cleanup leaves the published config alone" "$S5_CFG"
-
-# Unquoted patterns were expanded against the caller's working directory instead
-# of reaching the inner glob, so a matching dotfile anywhere in the cwd replaced
-# the pattern with a literal name the inner glob could never find in the target
-# directory. The decoy cwd is deliberately not the directory being cleaned: when
-# the two coincide the bug is harmless, which is what makes it easy to miss.
-: >"$S5_SYSCONFDIR/.s5tmp.cwdcase"
-mkdir -p "$S5_TEST_ROOT/decoycwd"
-: >"$S5_TEST_ROOT/decoycwd/.s5tmp.decoy"
-_cwdsave=$PWD
-cd "$S5_TEST_ROOT/decoycwd" || exit 1
-s5_cleanup_own_temps "$S5_SYSCONFDIR"
-cd "$_cwdsave" || exit 1
-assert_file_absent "cleanup ignores a matching name in the caller's cwd" \
-    "$S5_SYSCONFDIR/.s5tmp.cwdcase"
-
-# supervise-daemon's runtime files belong to whatever service is running.
-# Declining the update prompt, or interrupting the port prompt, used to delete
-# them for an installation this run never touched, leaving a healthy Alpine proxy
-# unstoppable and unobservable.
-_initsave=$S5_INIT
-S5_INIT=openrc
-mkdir -p "$S5_OPENRC_OPTION_DIR" "$(dirname "$S5_PIDFILE")"
-: >"$S5_PIDFILE"
-: >"$S5_OPENRC_OPTION_DIR/child_pid"
-S5_SERVICE_STARTED=0
-S5_CREATED_UNIT=0
-s5_cleanup
-assert_file_exists "cleanup keeps a foreign OpenRC pidfile" "$S5_PIDFILE"
-assert_file_exists "cleanup keeps a foreign child_pid" \
-    "$S5_OPENRC_OPTION_DIR/child_pid"
-S5_SERVICE_STARTED=1
-s5_cleanup
-assert_file_absent "cleanup removes the runtime files it owns" "$S5_PIDFILE"
-S5_INIT=$_initsave
-S5_SERVICE_STARTED=0
-
-# /run is tmpfs, so nothing else ever clears a lock left behind by a killed run.
-# Only s5_cmd_install installed traps, so one interrupt during status, show,
-# restart or uninstall wedged every later command -- uninstall included -- until
-# the host rebooted. The owner token records boot_id and pid precisely so a dead
-# owner can be told from a live one.
-_lkboot=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || uname -n)
-# Called directly rather than through t_run: t_run runs its command in a command
-# substitution, so S5_LOCK_HELD would be set in a subshell and lost here.
-S5_LOCK_HELD=0
-s5_lock_acquire
-assert_eq "the lock is acquired when free" 0 "$?"
-s5_lock_acquire
-assert_eq "acquiring a lock this process holds is a no-op" 0 "$?"
-s5_lock_release
-assert_file_absent "releasing removes the lock directory" "$S5_LOCKDIR"
-
-# A live owner still wins: this test's own pid is alive by definition.
-mkdir -p "$S5_LOCKDIR"
-printf '%s\n%s\n' "$_lkboot" "$$" >"$S5_LOCK_OWNER"
-S5_LOCK_HELD=0
-s5_lock_acquire 2>/dev/null
-assert_ne "a lock held by a live owner is refused" 0 "$?"
-assert_file_exists "a live owner's lock is left in place" "$S5_LOCK_OWNER"
-
-# A dead owner on this boot is reclaimed. The pid is reaped first, so it is gone.
-(exit 0) &
-_lkdead=$!
-wait "$_lkdead" 2>/dev/null || true
-printf '%s\n%s\n' "$_lkboot" "$_lkdead" >"$S5_LOCK_OWNER"
-S5_LOCK_HELD=0
-s5_lock_acquire 2>/dev/null
-assert_eq "a lock left by a dead owner is reclaimed" 0 "$?"
-s5_lock_release
-
-# A lock recorded against a different boot cannot have a live owner.
-mkdir -p "$S5_LOCKDIR"
-printf '%s\n%s\n' "boot-from-a-previous-life" "$$" >"$S5_LOCK_OWNER"
-S5_LOCK_HELD=0
-s5_lock_acquire 2>/dev/null
-assert_eq "a lock from a previous boot is reclaimed" 0 "$?"
-s5_lock_release
-assert_file_absent "the reclaimed lock is released cleanly" "$S5_LOCKDIR"
-
 t_summary

@@ -43,6 +43,9 @@ grep -q '^mixed_denied_control=ok$' "$OUT/probe.log" || exit 1
 grep -q '^mixed_denied_destination=ok$' "$OUT/probe.log" || exit 1
 grep -q '^mixed_denied_hostname=ok$' "$OUT/probe.log" || exit 1
 grep -q '^mixed_longlived=ok$' "$OUT/probe.log" || exit 1
+grep -q '^mixed_concurrency_1=ok$' "$OUT/probe.log" || exit 1
+grep -q '^mixed_concurrency_32=ok$' "$OUT/probe.log" || exit 1
+grep -q '^mixed_concurrency_128=ok$' "$OUT/probe.log" || exit 1
 
 # The target flushes its counters as each tunnel closes, so the two sides
 # converge shortly after the probe exits rather than only at shutdown.
@@ -67,7 +70,8 @@ while True:
     # visible.
     tunnels = stats["tunnels"] + stats["control_tunnels"]
     frames = stats["client_frames"] + stats["control_frames"]
-    if report["accepted"] == tunnels and report["frames"] == frames:
+    if (report["accepted"] == tunnels and report["frames"] == frames
+            and all(group["active"] == 0 for group in report.get("cohorts", {}).values())):
         break
     if time.monotonic() >= deadline:
         sys.exit(
@@ -76,6 +80,19 @@ while True:
             % (report["accepted"], report["frames"], tunnels, frames)
         )
     time.sleep(0.2)
+# Literal expected cohorts are deliberately not derived from probe STATS: total
+# completed tasks cannot prove simultaneous traffic. The target observed every
+# C frame while all cohort members were live, excluding background tunnels.
+cohorts = report.get("cohorts", {})
+if set(cohorts) != {"cohort-1", "cohort-32", "cohort-128"}:
+    sys.exit("the target did not observe exactly the required concurrency cohorts")
+for count in (1, 32, 128):
+    group = cohorts["cohort-%d" % count]
+    if (group["peak"] != count or group["frame_min"] != count
+            or group["frames"] != 5 * count
+            or group["members"] != {str(1000 + i): 5 for i in range(count)}):
+        sys.exit("target cohort %d did not carry every frame with all members live" % count)
+    print("duplex_concurrency_%d=%d" % (count, group["frame_min"]))
 # The IPv6 target is conditional on the host providing the address, and the probe
 # decides that for itself, so `unavailable` on its own proves nothing. The target
 # reports which families it actually bound, which is an independent observation:

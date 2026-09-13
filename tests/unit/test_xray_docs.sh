@@ -177,6 +177,9 @@ for _root in tests/run.sh 'tests/lib/*.sh' 'tests/unit/*.sh' \
     'tests/protocol/*.sh' '.github/scripts/*.sh'; do
     assert_contains "shellcheck covers $_root" "$_root" "$ci_text"
 done
+for _root in 'tests/protocol/*.py' 'tests/lib/*.py' '.github/scripts/*.py'; do
+    assert_contains "Python syntax checks cover $_root" "$_root" "$ci_text"
+done
 
 # Those globs only reach files, so the workflow's own inline run: blocks were read
 # by neither lint step -- which is why the two lifecycle gates had to become files
@@ -227,22 +230,28 @@ fi
 
 # SPEC 8 memory evidence: the sampler's cgroup branch has to actually run, OOM
 # counters have to be recorded, and the four connection stages kept separate.
-sampler_text=$(cat "$ROOT/.github/scripts/memory-sample.sh")
+sampler_text=$(cat "$ROOT/.github/scripts/memory-sampler.py")
 assert_contains "the sampler records cgroup OOM counters" \
     '_cgroup_oom=' "$sampler_text"
 assert_contains "the sampler records cgroup OOM kills" \
     '_cgroup_oom_kill=' "$sampler_text"
-assert_contains "the memory job passes a cgroup directory to the sampler" \
-    'memory-sample.sh "$pid" idle "$cgdir"' "$ci_text"
-assert_contains "the memory job resets peak before sampling" \
-    'memory-sample.sh "$pid" reset "$cgdir"' "$ci_text"
+assert_contains "the memory job starts one sampler with the service cgroup" \
+    'memory-sample.sh "$pid" "$cgdir"' "$ci_text"
+assert_contains "the memory job resets its idle stage through the persistent sampler" \
+    'sample_request reset idle' "$ci_text"
+assert_contains "the memory job checks high then low peaks on the actual kernel" \
+    'memory-peak-check.py --real-cgroup' "$ci_text"
+assert_contains "the sampler records the actual kernel release" \
+    'kernel_release=' "$sampler_text"
+assert_contains "systemd transition timing is not called listener readiness" \
+    'xray_startup_measurement=systemd_state_transition_not_listener_readiness' "$ci_text"
 # A stage's peak has to cover establishing its connections, not just holding them.
 # Resetting after the holder reported ready left peak measuring a few milliseconds
 # of steady state, where it cannot differ meaningfully from current, and threw away
 # the allocation spike the number exists to record. The reset therefore precedes
 # the holder, and the assertion anchors on that order rather than on either line.
 assert_contains "each stage resets peak before its connections are established" \
-    'reset "$cgdir"
+    'sample_request reset "conn$stage"
             rm -f "$root/held"
             python3 tests/protocol/hold_connections.py' "$ci_text"
 assert_contains "the memory job resolves the service cgroup" \
@@ -265,7 +274,7 @@ assert_contains "it names the pids that must stay outside" \
 assert_contains "the memory job proves xray itself is inside the cgroup" \
     'not in its own cgroup' "$ci_text"
 assert_contains "each connection stage carries its own label" \
-    'memory-sample.sh "$pid" "conn$stage" "$cgdir"' "$ci_text"
+    'sample_request sample "conn$stage"' "$ci_text"
 assert_contains "the memory job asserts the cgroup OOM counters" \
     'memory.events' "$ci_text"
 assert_contains "the memory job loads connections to sample under" \
@@ -338,6 +347,10 @@ assert_eq "both gates require the updated identity in the state" 2 \
     "$(printf '%s\n' "$gates_text" | grep -c 'username\[\[:space:\]\]+ciuser2')"
 assert_eq "both gates require no transaction evidence after an update" 2 \
     "$(printf '%s\n' "$gates_text" | grep -c 'test ! -e /var/lib/xray-socks5/transaction')"
+assert_contains "update diagnostics filter both known credential generations" \
+    '"$work/answers.update" "$work/update.log" "$work/pass.update" "$work/pass"' "$systemd_text"
+assert_contains "uninstall diagnostics filter the rotated and previous credentials" \
+    '"$work/answers.uninstall" "$work/uninstall.log" "$work/pass.update" "$work/pass"' "$systemd_text"
 
 # The audit is shared between backends, so it must not hard-code systemd paths.
 audit_text=$(cat "$ROOT/tests/protocol/post_install_audit.sh")
@@ -490,6 +503,14 @@ assert_contains "the long-lived case prints its own marker" \
     'mixed_longlived=ok' "$_a2probe"
 assert_eq "the mixed gate requires the long-lived tunnel to have run" 1 \
     "$(grep -c 'mixed_longlived=ok' "$ROOT/tests/protocol/run_xray_mixed.sh")"
+for _dcconcurrency in 1 32 128; do
+    assert_eq "the mixed gate requires $_dcconcurrency concurrent tunnels" 1 \
+        "$(grep -c "mixed_concurrency_$_dcconcurrency=ok" "$ROOT/tests/protocol/run_xray_mixed.sh")"
+done
+assert_contains "the probe emits concurrency completion markers" \
+    'mixed_concurrency_%d=ok' "$_a2probe"
+assert_contains "the protocol job consumes a listener-verified ready marker" \
+    'test -s "$root/out/ready"' "$ci_text"
 
 # On ubuntu-24.04 /bin/sh is dash, so bash needs its own matrix leg to cover the
 # /bin/sh implementation used by the supported EL family.

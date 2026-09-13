@@ -51,21 +51,33 @@ S5_TEST_ADDR_PATH=$S5_TEST_ROOT/body
 s5t_body() {
     # shellcheck disable=SC2059
     printf "$1" >"$S5_TEST_ADDR_PATH"
-    _lpb=''
     s5_read_public_ipv4
 }
 
 s5t_body '198.100.20.30\n'
 assert_eq "a single terminated line is read" 0 "$?"
-assert_eq "the address is the line" 198.100.20.30 "$_lpb"
+assert_eq "the address is the line" 198.100.20.30 "$S5_PUBLIC_IPV4_CANDIDATE"
 s5t_body '198.100.20.30'
 assert_eq "an unterminated line is read" 0 "$?"
-assert_eq "an unterminated address is the line" 198.100.20.30 "$_lpb"
+assert_eq "an unterminated address is the line" 198.100.20.30 "$S5_PUBLIC_IPV4_CANDIDATE"
 s5t_body '198.100.20.30\r\n'
 assert_eq "a CRLF terminator is read" 0 "$?"
-assert_eq "the CR is not part of the address" 198.100.20.30 "$_lpb"
+assert_eq "the CR is not part of the address" 198.100.20.30 "$S5_PUBLIC_IPV4_CANDIDATE"
+
+# These APIs may be interleaved in one shell; unrelated generators and dependency
+# queries must not consume the address the reader intentionally returns.
+s5_random_port >"$S5_TEST_ROOT/random-port"
+S5_INIT=openrc
+s5_runtime_packages install >"$S5_TEST_ROOT/packages"
+assert_eq "dependency discovery preserves the reader's candidate" 198.100.20.30 "$S5_PUBLIC_IPV4_CANDIDATE"
+s5_valid_port "$(cat "$S5_TEST_ROOT/random-port")"
+assert_eq "interleaved random generation still produces a port" 0 "$?"
+assert_contains "interleaved dependency discovery still requests unzip" \
+    unzip "$(cat "$S5_TEST_ROOT/packages")"
+S5_INIT=systemd
 s5t_body '1.2.3.4\n\n'
 assert_ne "a double terminator is refused" 0 "$?"
+assert_eq "a failed read clears the previous candidate" '' "$S5_PUBLIC_IPV4_CANDIDATE"
 s5t_body '1.2.3.4\n5.6.7.8\n'
 assert_ne "a second line is refused" 0 "$?"
 s5t_body '1.2.3.4\nx'
@@ -81,7 +93,7 @@ assert_ne "an empty body is refused" 0 "$?"
 # structurally valid body that is not an address still never reaches a card.
 s5t_body '255.255.255.2555\n'
 assert_eq "an over-long octet parses as a line" 0 "$?"
-s5_ipv4_is_public "$_lpb"
+s5_ipv4_is_public "$S5_PUBLIC_IPV4_CANDIDATE"
 assert_ne "an over-long octet is not a usable address" 0 "$?"
 
 # s5t_card: render into a file. t_run would capture through a command

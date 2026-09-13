@@ -1,391 +1,356 @@
 #!/bin/sh
-# Update transaction: the happy in-place update, and the rollback ladder.
+# Update transactions and cleanup, each starting at a fresh invocation boundary.
 
 S5T_NAME=test_xray_update
 . "${S5_REPO_ROOT}/tests/lib/assert.sh"
-ROOT=${S5_REPO_ROOT}
-t_mktestroot
-mkdir -p "$S5_TEST_ROOT/bin"
-S5_LIB_ONLY=1
-S5_ASSUME_ROOT=1
-S5_SKIP_OWNERSHIP=1
-S5_OSRELEASE="$ROOT/tests/fixtures/os-release/debian-12"
-S5_ARCHNAME=amd64
-export S5_LIB_ONLY S5_ASSUME_ROOT S5_SKIP_OWNERSHIP S5_OSRELEASE
-# shellcheck disable=SC1091
-. "$ROOT/socks5.sh"
+. "${S5_REPO_ROOT}/tests/lib/xray-fixture.sh"
 
-S5_LANG=en
-# socks5.sh initialises its own globals, so the architecture has to be set after
-# sourcing or the state it writes records an empty arch.
-S5_ARCHNAME=amd64
-S5_PORT=23456
-S5_USERNAME=alice
-S5_PASSWORD='Secret_123~x'
-S5_SECRET=$S5_PASSWORD
-S5_LISTEN=127.0.0.1
-# The real flow always detects the platform first, and the update guard reads the
-# family and init it establishes.
-s5_detect_platform || { printf 'platform detection failed\n' >&2; exit 1; }
-S5_PORT_PROBE="$S5_TEST_ROOT/portprobe"
-cat >"$S5_PORT_PROBE" <<'PROBE'
-#!/bin/sh
-if [ -f "$S5_TEST_ROOT/svc_active" ] && [ "$(cat "$S5_TEST_ROOT/svc_active")" = "$1" ]; then exit 1; fi
-exit 0
-PROBE
-chmod 0755 "$S5_PORT_PROBE"
-export S5_PORT_PROBE
-
-S5_ASSET_NAME=Xray-linux-64.zip
-S5_ASSET_SIZE=1
-S5_ASSET_SHA256=deadbeef
-S5_ASSET_BINARY_SIZE=1
-S5_ASSET_BINARY_SHA256=deadbeef
-s5_asset_select() { return 0; }
-s5_download_engine() {
-    mkdir -p "$S5_PREFIX"
-    printf '#!/bin/sh\nexit 0\n' >"$S5_BIN"
-    chmod 0755 "$S5_BIN"
-    S5_CREATED_BIN=1
-    # State validation re-hashes the installed binary, so the recorded asset
-    # metadata has to describe the stub rather than a placeholder.
-    S5_ASSET_BINARY_SIZE=$(wc -c <"$S5_BIN" | tr -d '[:space:]')
-    S5_ASSET_BINARY_SHA256=$(sha256sum "$S5_BIN" | awk '{print $1}')
-    S5_BINARY_SHA256=$S5_ASSET_BINARY_SHA256
-    return 0
+test_family() {
+    t_xray_fixture 23456
+    t_xray_install
+    assert_eq "state records the installed port" 23456 "$(s5_state_get port)"
+    # Debian and EL share the systemd path; family must still match the host.
+    S5_OS_FAMILY=el
+    t_run s5_state_load
+    assert_ne "a state file from another OS family is refused" 0 "$T_STATUS"
+    S5_OS_FAMILY=debian
+    t_run s5_state_load
+    assert_eq "the family check does not reject the recorded family" 0 "$T_STATUS"
 }
-s5_config_test() { return "$(cat "$S5_TEST_ROOT/cfgtest" 2>/dev/null || printf 0)"; }
-s5_verify_dataplane() { return 0; }
 
-cat >"$S5_TEST_ROOT/bin/systemctl" <<'SYSTEMCTL'
-#!/bin/sh
-T="$S5_TEST_ROOT/transcript"
-printf 'systemctl' >>"$T"
-for a in "$@"; do printf ' %s' "$a" >>"$T"; done
-printf '\n' >>"$T"
-case "$1" in
-start|restart)
-    port=$(sed -n 's/^[[:space:]]*"port":[[:space:]]*\([0-9][0-9]*\),*/\1/p' "$S5_STUB_CFG" | head -n 1)
-    printf '%s\n' "$port" >"$S5_TEST_ROOT/svc_active"
-    ;;
-stop) rm -f "$S5_TEST_ROOT/svc_active" ;;
-is-active)
-    if [ -f "$S5_TEST_ROOT/svc_active" ]; then exit 0; else exit 3; fi
-    ;;
-daemon-reload|enable|disable) ;;
-esac
-exit 0
-SYSTEMCTL
-chmod 0755 "$S5_TEST_ROOT/bin/systemctl"
-PATH="$S5_TEST_ROOT/bin:$PATH"
-export PATH
-S5_STUB_CFG=$S5_CFG
-export S5_STUB_CFG
-
-mkdir -p "$S5_UNITDIR"
-s5_account_create() {
-    S5_CREATED_GROUP=1
-    S5_CREATED_USER=1
-    S5_ACCOUNT_UID=900
-    S5_ACCOUNT_GID=900
-    return 0
+test_update() {
+    t_xray_fixture 23456
+    t_xray_install
+    # A successful update deliberately runs in this shell. Running another
+    # scenario after it checks that initialization discards its completed flags.
+    s5_prompt_port() { S5_PORT=23999; return 0; }
+    s5_install_update
+    assert_eq "update completes" 0 "$?"
+    assert_contains "config carries the new port" '"port": 23999' "$(cat "$S5_CFG")"
+    assert_eq "state records the new port" 23999 "$(s5_state_get port)"
+    assert_file_absent "update leaves no transaction directory" "$S5_TXNDIR"
+    assert_eq "service listens on the new port" 23999 "$(cat "$S5_TEST_ROOT/svc_active")"
+    t_xray_assert_healthy
 }
-s5_account_identity() { return 0; }
-s5_confirm_install() { return 0; }
-s5_confirm_update() { return 0; }
-s5_prompt_username() { return 0; }
-s5_prompt_password() { return 0; }
-s5_prompt_port() { return 0; }
 
-s5_install_new || { printf 'setup install failed\n' >&2; exit 1; }
-assert_eq "state records the installed port" 23456 "$(s5_state_get port)"
+test_owned_port() {
+    t_xray_fixture 23999
+    t_xray_install
+    # A listener this installation already owns is allowed during update.
+    s5_port_free 23999
+    assert_eq "the running port reads as busy" 1 "$?"
+    t_run s5_port_owned_by_service 23999
+    assert_eq "the port this service owns is accepted" 0 "$T_STATUS"
+    t_run s5_port_owned_by_service 24001
+    assert_ne "a port this service does not own is refused" 0 "$T_STATUS"
 
-# debian and el share the systemd unit path, so the init cross-check alone accepts
-# a state file written on the other family, and the family is what chooses the
-# package manager an update installs from. The recorded value was read into a
-# variable nothing ever compared.
-_upfamily=$S5_OS_FAMILY
-t_run s5_state_load
-assert_eq "the recorded family is accepted on the host that wrote it" \
-    0 "$T_STATUS"
-S5_OS_FAMILY=el
-t_run s5_state_load
-assert_ne "a state file from another OS family is refused" 0 "$T_STATUS"
-S5_OS_FAMILY=$_upfamily
-t_run s5_state_load
-assert_eq "the family check does not reject the recorded family" 0 "$T_STATUS"
-
-# The update reuses the installed binary rather than downloading again.
-s5_binary_ready() { return 0; }
-
-# An update swaps in a new config, restarts, and records the new state, leaving
-# no transaction directory behind.
-s5_prompt_port() { S5_PORT=23999; return 0; }
-s5_install_update
-assert_eq "update completes" 0 "$?"
-assert_contains "config carries the new port" '"port": 23999' "$(cat "$S5_CFG")"
-assert_eq "state records the new port" 23999 "$(s5_state_get port)"
-assert_file_absent "update leaves no transaction directory" "$S5_TXNDIR"
-assert_eq "service listens on the new port" 23999 "$(cat "$S5_TEST_ROOT/svc_active")"
-s5_prompt_port() { return 0; }
-
-# An update has to be able to keep its own port. The running service holds that
-# listener, so the generic in-use probe reports it busy and the prompt would
-# refuse the port the installation already owns.
-s5_port_free 23999
-assert_eq "the running port reads as busy" 1 "$?"
-S5_PORT=23999
-t_run s5_port_owned_by_service 23999
-assert_eq "the port this service owns is accepted" 0 "$T_STATUS"
-t_run s5_port_owned_by_service 24001
-assert_ne "a port this service does not own is refused" 0 "$T_STATUS"
-
-# Ownership is verified rather than assumed, so an unowned or unobservable
-# listener on the recorded port is still refused.
-S5_LISTENER_PROBE=$S5_TEST_ROOT/foreignprobe
-cat >"$S5_LISTENER_PROBE" <<'FP'
-#!/bin/sh
-exit 2
-FP
-chmod 0755 "$S5_LISTENER_PROBE"
-export S5_LISTENER_PROBE
-t_run s5_port_owned_by_service 23999
-assert_ne "a foreign listener on the recorded port is refused" 0 "$T_STATUS"
-unset S5_LISTENER_PROBE
-
-# SPEC 5: a rejected candidate config is caught before a healthy service is
-# stopped, and it leaves the published config in place.
-_upcfg=$(sha256sum "$S5_CFG" | awk '{print $1}')
-_upstops=$(grep -c 'systemctl stop' "$S5_TEST_ROOT/transcript" || true)
-printf 1 >"$S5_TEST_ROOT/cfgtest"
-s5_prompt_port() { S5_PORT=24555; return 0; }
-t_run s5_install_update
-assert_ne "a rejected candidate config fails the update" 0 "$T_STATUS"
-assert_eq "the published config is untouched" \
-    "$_upcfg" "$(sha256sum "$S5_CFG" | awk '{print $1}')"
-assert_eq "a healthy service is never stopped" \
-    "$_upstops" "$(grep -c 'systemctl stop' "$S5_TEST_ROOT/transcript" || true)"
-assert_eq "the service keeps its previous port" 23999 "$(cat "$S5_TEST_ROOT/svc_active")"
-rm -f "$S5_TEST_ROOT/cfgtest"
-
-# When the swapped-in config starts but never reaches the listener, the old
-# config and state come back and the transaction evidence is removed.
-_upcfg=$(sha256sum "$S5_CFG" | awk '{print $1}')
-_upstate=$(sha256sum "$S5_STATE" | awk '{print $1}')
-s5_wait_listening() { return 1; }
-s5_prompt_port() { S5_PORT=24777; return 0; }
-t_run s5_install_update
-assert_ne "an unreachable listener fails the update" 0 "$T_STATUS"
-assert_eq "the old config is restored" \
-    "$_upcfg" "$(sha256sum "$S5_CFG" | awk '{print $1}')"
-assert_eq "the old state is restored" \
-    "$_upstate" "$(sha256sum "$S5_STATE" | awk '{print $1}')"
-assert_file_absent "the transaction evidence is removed" "$S5_TXNDIR"
-
-# SPEC 5 puts the candidate config-test ahead of stopping a healthy service and
-# leaves the old config untouched. s5_install_update copies the config and state
-# into the transaction directory before it renders and tests the candidate, so a
-# rejection reaches s5_cleanup with a full transaction and nothing published. The
-# guard there is only "both files exist", so it restored a byte-identical config
-# over the live one and restarted a healthy service for a candidate that never
-# reached publication.
-#
-# The seam is s5_cmd_install rather than s5_install_update: the cleanup only runs
-# from there, which is why the cases above could not see this. The restart is
-# counted separately from the stop for the same reason -- s5_svc restart issues
-# `systemctl restart`, so an oracle counting only `systemctl stop` stays green.
-_upinode=$(stat -c '%i' "$S5_CFG")
-_upcfg=$(sha256sum "$S5_CFG" | awk '{print $1}')
-_upstate=$(sha256sum "$S5_STATE" | awk '{print $1}')
-_uprestarts=$(grep -c 'systemctl restart' "$S5_TEST_ROOT/transcript" || true)
-s5_precheck() { return 0; }
-printf 1 >"$S5_TEST_ROOT/cfgtest"
-s5_prompt_port() { S5_PORT=24999; return 0; }
-# This file is one long-lived shell, but production runs each command in a fresh
-# process, so the flags s5_cleanup reads have to be put back to their start-up
-# values. The earlier successful update left S5_INSTALL_COMPLETE=1, which skips
-# the whole cleanup body and would hide exactly what this case is about.
-S5_INSTALL_COMPLETE=0
-S5_IN_CLEANUP=0
-S5_SERVICE_STARTED=0
-S5_UNIT_ENABLED=0
-S5_CONFIG_REPLACED=0
-S5_CREATED_UNIT=0
-S5_CREATED_CFG=0
-S5_CREATED_BIN=0
-S5_CREATED_USER=0
-S5_CREATED_GROUP=0
-S5_CREATED_CONFDIR=0
-S5_CREATED_STATEDIR=0
-S5_CREATED_PREFIX=0
-# A subshell so the command's EXIT trap fires there instead of displacing the
-# harness's own cleanup. That is also how the real command behaves: the trap runs
-# as the process exits.
-( s5_cmd_install ) >"$S5_TEST_ROOT/cmdinstall.log" 2>&1
-_upstatus=$?
-rm -f "$S5_TEST_ROOT/cfgtest"
-assert_ne "a rejected candidate fails the install command" 0 "$_upstatus"
-assert_eq "the live config file is not replaced" \
-    "$_upinode" "$(stat -c '%i' "$S5_CFG")"
-assert_eq "the live config content is unchanged" \
-    "$_upcfg" "$(sha256sum "$S5_CFG" | awk '{print $1}')"
-assert_eq "the live state is unchanged" \
-    "$_upstate" "$(sha256sum "$S5_STATE" | awk '{print $1}')"
-assert_eq "a healthy service is not restarted" "$_uprestarts" \
-    "$(grep -c 'systemctl restart' "$S5_TEST_ROOT/transcript" || true)"
-assert_file_absent "the transaction is not left behind" "$S5_TXNDIR"
-assert_eq "the service still listens on its own port" 23999 \
-    "$(cat "$S5_TEST_ROOT/svc_active")"
-
-# SPEC 5, the window the S5_CONFIG_REPLACED flag exists to close. The flag is set
-# after the mv that publishes the candidate, so a signal delivered between the two
-# -- the rename has completed, the flag is still 0 -- takes s5_cleanup down the
-# "nothing was published" branch: it deletes the transaction backup and leaves this
-# run's unverified config live against the old recorded state hash, the exact
-# unrecoverable state the flag is meant to prevent. Shadowing mv fires the real
-# signal handler the instant the publish rename returns, which is where the window
-# is; the one-shot guard keeps the restore's own mv inside cleanup from re-firing.
-_winold=$(sha256sum "$S5_CFG" | awk '{print $1}')
-s5_precheck() { return 0; }
-s5_wait_listening() { return 0; }
-s5_wait_stopped() { return 0; }
-rm -f "$S5_TEST_ROOT/cfgtest"
-s5_prompt_port() { S5_PORT=24333; return 0; }
-S5_INSTALL_COMPLETE=0
-S5_IN_CLEANUP=0
-S5_SERVICE_STARTED=0
-S5_UNIT_ENABLED=0
-S5_CONFIG_REPLACED=0
-S5_CREATED_UNIT=0
-S5_CREATED_CFG=0
-S5_CREATED_BIN=0
-S5_CREATED_USER=0
-S5_CREATED_GROUP=0
-S5_CREATED_CONFDIR=0
-S5_CREATED_STATEDIR=0
-S5_CREATED_PREFIX=0
-S5T_MV_FIRED=0
-mv() {
-    command mv "$@" || return $?
-    _mvdest=''
-    for _mvdest in "$@"; do :; done
-    if [ "$_mvdest" = "$S5_CFG" ] && [ "$S5T_MV_FIRED" = 0 ]; then
-        S5T_MV_FIRED=1
-        s5_on_signal 143
-    fi
+    # Ownership is verified, not assumed from the recorded port.
+    S5_LISTENER_PROBE=$S5_TEST_ROOT/foreignprobe
+    printf '#!/bin/sh\nexit 2\n' >"$S5_LISTENER_PROBE"
+    chmod 0755 "$S5_LISTENER_PROBE"
+    export S5_LISTENER_PROBE
+    t_run s5_port_owned_by_service 23999
+    assert_ne "a foreign listener on the recorded port is refused" 0 "$T_STATUS"
 }
-( s5_cmd_install ) >"$S5_TEST_ROOT/winsignal.log" 2>&1
-_winstatus=$?
-unset -f mv
-s5_prompt_port() { return 0; }
-assert_ne "a signal in the publish window fails the command" 0 "$_winstatus"
-assert_eq "a signal in the publish window leaves the recoverable old config live" \
-    "$_winold" "$(sha256sum "$S5_CFG" | awk '{print $1}')"
-t_run s5_state_load
-assert_eq "the installation is still loadable after an interrupted publish" \
-    0 "$T_STATUS"
-assert_eq "the restored service listens on the port it owned" 23999 \
-    "$(cat "$S5_TEST_ROOT/svc_active" 2>/dev/null || printf missing)"
 
-# A symlinked config is refused before its recorded hash is trusted -- the same
-# guard the state, unit and binary already carry. The link points at byte-identical
-# content, so only the [ ! -L ] check can reject it; the hash comparison alone would
-# follow the link and load. The state above loads cleanly, so this isolates the guard.
-cp "$S5_CFG" "$S5_TEST_ROOT/realcfg"
-rm -f "$S5_CFG"
-ln -s "$S5_TEST_ROOT/realcfg" "$S5_CFG"
-t_run s5_state_load
-assert_ne "a symlinked config is refused even with matching content" 0 "$T_STATUS"
-rm -f "$S5_CFG"
-mv "$S5_TEST_ROOT/realcfg" "$S5_CFG"
-t_run s5_state_load
-assert_eq "the regular config still loads after the symlink check" 0 "$T_STATUS"
+test_rejected_candidate() {
+    t_xray_fixture 23999
+    t_xray_install
+    # Config-test precedes service stop and leaves the published config alone.
+    _upcfg=$(sha256sum "$S5_CFG" | awk '{print $1}')
+    _upstops=$(grep -c 'systemctl stop' "$S5_TEST_ROOT/transcript" || true)
+    printf 1 >"$S5_TEST_ROOT/cfgtest"
+    s5_prompt_port() { S5_PORT=24555; return 0; }
+    t_run s5_install_update
+    assert_ne "a rejected candidate config fails the update" 0 "$T_STATUS"
+    assert_eq "the published config is untouched" \
+        "$_upcfg" "$(sha256sum "$S5_CFG" | awk '{print $1}')"
+    assert_eq "a healthy service is never stopped" \
+        "$_upstops" "$(grep -c 'systemctl stop' "$S5_TEST_ROOT/transcript" || true)"
+    assert_eq "the service keeps its previous port" 23999 "$(cat "$S5_TEST_ROOT/svc_active")"
+}
 
-# Uninstall had no unit coverage at all, and it removed the unit, config, binary,
-# account and state before checking that the directories were empty. A leftover
-# from an interrupted update therefore aborted it after the destructive half, and
-# the re-run reported success through the state.missing short-circuit while the
-# namespace, including a transaction copy of the old config, survived.
-s5_precheck() { return 0; }
-s5_wait_stopped() { return 0; }
-s5_account_remove() { S5_CREATED_USER=0; S5_CREATED_GROUP=0; return 0; }
-mkdir -p "$S5_TXNDIR"
-printf '{}\n' >"$S5_TXNDIR/old.config.json"
-printf 'engine\txray\n' >"$S5_TXNDIR/old.state"
-chmod 0600 "$S5_TXNDIR/old.config.json" "$S5_TXNDIR/old.state"
-: >"$S5_SYSCONFDIR/.s5new.leftover.json"
-printf 'y\n' >"$S5_TEST_ROOT/answers.uninstall"
-# The streams are split rather than merged with 2>&1: the confirmation prompt is
-# the only thing uninstall writes to stderr, so keeping it apart is what lets the
-# assertion below see whether it terminated its own line. Merging it with the
-# reports on stdout would hide that, which is how uninstall came to ask its
-# question through s5_msg_print while install and update did not.
-s5_cmd_uninstall <"$S5_TEST_ROOT/answers.uninstall" \
-    >"$S5_TEST_ROOT/uninst.out" 2>"$S5_TEST_ROOT/uninst.err" &&
-    T_STATUS=0 || T_STATUS=$?
-T_OUT=$(cat "$S5_TEST_ROOT/uninst.out" "$S5_TEST_ROOT/uninst.err")
-assert_eq "uninstall completes despite an interrupted update's leftovers" \
-    0 "$T_STATUS"
-assert_eq "the uninstall confirmation keeps the answer on its own line" 0 \
-    "$(wc -l <"$S5_TEST_ROOT/uninst.err" | tr -d '[:space:]')"
-assert_file_absent "uninstall removes the config directory" "$S5_SYSCONFDIR"
-assert_file_absent "uninstall removes the state directory" "$S5_STATEDIR"
-assert_file_absent "uninstall removes the install prefix" "$S5_PREFIX"
+test_listener_failure() {
+    t_xray_fixture 23999
+    t_xray_install
+    # If the published config never reaches the listener, old config/state return.
+    _upcfg=$(sha256sum "$S5_CFG" | awk '{print $1}')
+    _upstate=$(sha256sum "$S5_STATE" | awk '{print $1}')
+    s5_wait_listening() { return 1; }
+    s5_prompt_port() { S5_PORT=24777; return 0; }
+    t_run s5_install_update
+    assert_ne "an unreachable listener fails the update" 0 "$T_STATUS"
+    assert_eq "the old config is restored" \
+        "$_upcfg" "$(sha256sum "$S5_CFG" | awk '{print $1}')"
+    assert_eq "the old state is restored" \
+        "$_upstate" "$(sha256sum "$S5_STATE" | awk '{print $1}')"
+    assert_file_absent "the transaction evidence is removed" "$S5_TXNDIR"
+    t_xray_assert_healthy
+}
 
-# A second run must not call an empty state file success while residue survives.
-mkdir -p "$S5_STATEDIR"
-: >"$S5_STATEDIR/.s5state.residue"
-T_OUT=$(s5_cmd_uninstall <"$S5_TEST_ROOT/answers.uninstall" 2>&1) &&
-    T_STATUS=0 || T_STATUS=$?
-assert_ne "a missing state file with residue is not success" 0 "$T_STATUS"
-rm -rf "$S5_STATEDIR"
-T_OUT=$(s5_cmd_uninstall <"$S5_TEST_ROOT/answers.uninstall" 2>&1) &&
-    T_STATUS=0 || T_STATUS=$?
-assert_eq "a clean namespace reports nothing installed" 0 "$T_STATUS"
+test_rejected_command() {
+    t_xray_fixture 23999
+    t_xray_install
+    # Unlike the direct-update case, the command's EXIT trap must run. A rejected
+    # candidate has full backups but no published config: cleanup must not replace
+    # even a byte-identical live file, nor restart a service it never stopped.
+    _upinode=$(stat -c '%i' "$S5_CFG")
+    _upcfg=$(sha256sum "$S5_CFG" | awk '{print $1}')
+    _upstate=$(sha256sum "$S5_STATE" | awk '{print $1}')
+    _uprestarts=$(grep -c 'systemctl restart' "$S5_TEST_ROOT/transcript" || true)
+    s5_precheck() { return 0; }
+    printf 1 >"$S5_TEST_ROOT/cfgtest"
+    s5_prompt_port() { S5_PORT=24999; return 0; }
+    # The subshell fires the real EXIT trap without replacing the harness trap.
+    ( s5_cmd_install ) >"$S5_TEST_ROOT/cmdinstall.log" 2>&1
+    _upstatus=$?
+    assert_ne "a rejected candidate fails the install command" 0 "$_upstatus"
+    assert_eq "the live config file is not replaced" \
+        "$_upinode" "$(stat -c '%i' "$S5_CFG")"
+    assert_eq "the live config content is unchanged" \
+        "$_upcfg" "$(sha256sum "$S5_CFG" | awk '{print $1}')"
+    assert_eq "the live state is unchanged" \
+        "$_upstate" "$(sha256sum "$S5_STATE" | awk '{print $1}')"
+    assert_eq "a healthy service is not restarted" "$_uprestarts" \
+        "$(grep -c 'systemctl restart' "$S5_TEST_ROOT/transcript" || true)"
+    assert_file_absent "the transaction is not left behind" "$S5_TXNDIR"
+    assert_eq "the service still listens on its own port" 23999 \
+        "$(cat "$S5_TEST_ROOT/svc_active")"
+    t_xray_assert_healthy
+}
 
-# Residue outside the three namespace directories must fail closed too. A unit file
-# that survived a partial cleanup lives under S5_UNITDIR (systemd here), not in the
-# config/state/prefix dirs, so the earlier scan could not see it and reported
-# "nothing installed" while the unit lingered.
-_sa3unit=$S5_UNITDIR/$S5_PROJECT.service
-: >"$_sa3unit"
-T_OUT=$(s5_cmd_uninstall <"$S5_TEST_ROOT/answers.uninstall" 2>&1) &&
-    T_STATUS=0 || T_STATUS=$?
-assert_ne "a surviving unit file is residue, not nothing-installed" 0 "$T_STATUS"
-rm -f "$_sa3unit"
-T_OUT=$(s5_cmd_uninstall <"$S5_TEST_ROOT/answers.uninstall" 2>&1) &&
-    T_STATUS=0 || T_STATUS=$?
-assert_eq "the namespace with the unit gone reports nothing installed" 0 "$T_STATUS"
+test_publish_signal() {
+    t_xray_fixture 23999
+    t_xray_install
+    # Deliver the signal after the publish rename returns, before its caller can
+    # update flags. Cleanup must restore the old config against the old state.
+    _winold=$(sha256sum "$S5_CFG" | awk '{print $1}')
+    s5_precheck() { return 0; }
+    s5_prompt_port() { S5_PORT=24333; return 0; }
+    (
+        S5T_MV_FIRED=0
+        mv() {
+            command mv "$@" || return $?
+            _mvdest=''
+            for _mvdest in "$@"; do :; done
+            if [ "$_mvdest" = "$S5_CFG" ] && [ "$S5T_MV_FIRED" = 0 ]; then
+                S5T_MV_FIRED=1
+                s5_on_signal 143
+            fi
+        }
+        s5_cmd_install
+    ) >"$S5_TEST_ROOT/winsignal.log" 2>&1
+    _winstatus=$?
+    assert_eq "a signal in the publish window exits through the signal handler" 143 "$_winstatus"
+    assert_eq "a signal in the publish window leaves the recoverable old config live" \
+        "$_winold" "$(sha256sum "$S5_CFG" | awk '{print $1}')"
+    t_run s5_state_load
+    assert_eq "the installation is still loadable after an interrupted publish" 0 "$T_STATUS"
+    assert_eq "the restored service listens on the port it owned" 23999 \
+        "$(cat "$S5_TEST_ROOT/svc_active" 2>/dev/null || printf missing)"
+}
 
-# The verifier records its cleartext credential temp in S5_VERIFY_TEMP so a signal
-# handler can remove it. On the update path there is no S5_WORKDIR, so a signal
-# during data-plane verification runs s5_on_signal -> s5_cleanup, which must release
-# that temp. Only s5_on_signal_lock (the read-only commands) did; s5_cleanup left the
-# password stranded in /var/tmp, surviving even uninstall. Anchored on the file, not
-# on which function clears it, so it stays honest if the release site moves.
-_v1dir=$S5_TEST_ROOT/vtmp
-mkdir -p "$_v1dir"
-_v1cred=$_v1dir/.s5pass.leaked
-printf '%s\n%s\n' "$S5_USERNAME" "$S5_PASSWORD" >"$_v1cred"
-chmod 0600 "$_v1cred"
-S5_VERIFY_TEMP=$_v1cred
-S5_WORKDIR=''
-S5_INSTALL_COMPLETE=0
-S5_IN_CLEANUP=0
-S5_LOCK_HELD=0
-S5_SERVICE_STARTED=0
-S5_UNIT_ENABLED=0
-S5_CONFIG_REPLACED=0
-S5_CREATED_UNIT=0
-S5_CREATED_CFG=0
-S5_CREATED_BIN=0
-S5_CREATED_USER=0
-S5_CREATED_GROUP=0
-S5_CREATED_CONFDIR=0
-S5_CREATED_STATEDIR=0
-S5_CREATED_PREFIX=0
-s5_cleanup
-assert_file_absent "s5_cleanup releases the recorded verifier credential temp" "$_v1cred"
-assert_eq "s5_cleanup clears S5_VERIFY_TEMP after releasing it" '' "$S5_VERIFY_TEMP"
+test_config_symlink() {
+    t_xray_fixture 23999
+    t_xray_install
+    # Byte-identical content isolates the symlink guard from hash verification.
+    cp "$S5_CFG" "$S5_TEST_ROOT/realcfg"
+    rm -f "$S5_CFG"
+    ln -s "$S5_TEST_ROOT/realcfg" "$S5_CFG"
+    t_run s5_state_load
+    assert_eq "a symlinked config is refused even with matching content" 1 "$T_STATUS"
+    rm -f "$S5_CFG"
+    mv "$S5_TEST_ROOT/realcfg" "$S5_CFG"
+    t_run s5_state_load
+    assert_eq "the regular config still loads after the symlink check" 0 "$T_STATUS"
+}
 
+test_uninstall_leftovers() {
+    t_xray_fixture 23999
+    t_xray_install
+    # An interrupted update's known private leftovers are safe to remove.
+    s5_precheck() { return 0; }
+    mkdir -p "$S5_TXNDIR"
+    printf '{}\n' >"$S5_TXNDIR/old.config.json"
+    printf 'engine\txray\n' >"$S5_TXNDIR/old.state"
+    chmod 0600 "$S5_TXNDIR/old.config.json" "$S5_TXNDIR/old.state"
+    : >"$S5_SYSCONFDIR/.s5new.leftover.json"
+    printf 'y\n' >"$S5_TEST_ROOT/answers.uninstall"
+    # Split streams: merging the prompt with stdout hides its newline regression.
+    s5_cmd_uninstall <"$S5_TEST_ROOT/answers.uninstall" \
+        >"$S5_TEST_ROOT/uninst.out" 2>"$S5_TEST_ROOT/uninst.err" &&
+        T_STATUS=0 || T_STATUS=$?
+    assert_eq "uninstall completes despite an interrupted update's leftovers" 0 "$T_STATUS"
+    assert_eq "the uninstall confirmation keeps the answer on its own line" 0 \
+        "$(wc -l <"$S5_TEST_ROOT/uninst.err" | tr -d '[:space:]')"
+    assert_file_absent "uninstall removes the config directory" "$S5_SYSCONFDIR"
+    assert_file_absent "uninstall removes the state directory" "$S5_STATEDIR"
+    assert_file_absent "uninstall removes the install prefix" "$S5_PREFIX"
+}
+
+test_uninstall_residue() {
+    t_xray_fixture 23456
+    s5_precheck() { return 0; }
+    printf 'y\n' >"$S5_TEST_ROOT/answers.uninstall"
+    # A missing state is not success if namespace residue survives.
+    mkdir -p "$S5_STATEDIR"
+    : >"$S5_STATEDIR/.s5state.residue"
+    T_OUT=$(s5_cmd_uninstall <"$S5_TEST_ROOT/answers.uninstall" 2>&1) &&
+        T_STATUS=0 || T_STATUS=$?
+    assert_ne "a missing state file with residue is not success" 0 "$T_STATUS"
+    rm -rf "$S5_STATEDIR"
+    T_OUT=$(s5_cmd_uninstall <"$S5_TEST_ROOT/answers.uninstall" 2>&1) &&
+        T_STATUS=0 || T_STATUS=$?
+    assert_eq "a clean namespace reports nothing installed" 0 "$T_STATUS"
+
+    # The unit lives outside the three namespace directories, but is residue too.
+    : >"$S5_SERVICE_ARTIFACT"
+    T_OUT=$(s5_cmd_uninstall <"$S5_TEST_ROOT/answers.uninstall" 2>&1) &&
+        T_STATUS=0 || T_STATUS=$?
+    assert_ne "a surviving unit file is residue, not nothing-installed" 0 "$T_STATUS"
+    rm -f "$S5_SERVICE_ARTIFACT"
+    T_OUT=$(s5_cmd_uninstall <"$S5_TEST_ROOT/answers.uninstall" 2>&1) &&
+        T_STATUS=0 || T_STATUS=$?
+    assert_eq "the namespace with the unit gone reports nothing installed" 0 "$T_STATUS"
+}
+
+test_verifier_cleanup() {
+    t_xray_fixture 23456
+    # Updates have no workdir: the recorded cleartext verifier temp must still be
+    # removed by cleanup, including on repeated cleanup attempts.
+    _v1dir=$S5_TEST_ROOT/vtmp
+    mkdir -p "$_v1dir"
+    _v1cred=$_v1dir/.s5pass.leaked
+    printf '%s\n%s\n' "$S5_USERNAME" "$S5_PASSWORD" >"$_v1cred"
+    chmod 0600 "$_v1cred"
+    S5_VERIFY_TEMP=$_v1cred
+    s5_cleanup
+    assert_file_absent "s5_cleanup releases the recorded verifier credential temp" "$_v1cred"
+    assert_eq "s5_cleanup clears S5_VERIFY_TEMP after releasing it" '' "$S5_VERIFY_TEMP"
+    s5_cleanup
+    assert_file_absent "repeated cleanup does not recreate the verifier credential temp" "$_v1cred"
+}
+
+test_restore_failure() {
+    for _restore_target in config state; do
+        t_xray_fixture 23456
+        t_xray_install
+        _restore_cfg=$(sha256sum "$S5_CFG" | awk '{print $1}')
+        _restore_state=$(sha256sum "$S5_STATE" | awk '{print $1}')
+        (
+            s5_precheck() { return 0; }
+            s5_prompt_port() { S5_PORT=24567; }
+            s5_state_write() { : >"$S5_TEST_ROOT/fail-restore"; return 1; }
+            mktemp() {
+                if [ -f "$S5_TEST_ROOT/fail-restore" ]; then
+                    case "$_restore_target:$1" in
+                    config:"$S5_SYSCONFDIR"/.s5tmp.* | state:"$S5_STATEDIR"/.s5tmp.*) return 1 ;;
+                    esac
+                fi
+                command mktemp "$@"
+            }
+            s5_cmd_install
+        ) >"$S5_TEST_ROOT/restore.log" 2>&1
+        _restore_rc=$?
+        assert_ne "$_restore_target restore failure fails the command" 0 "$_restore_rc"
+        assert_eq "$_restore_target failure preserves old config through EXIT cleanup" \
+            "$_restore_cfg" "$(sha256sum "$S5_TXNDIR/old.config.json" 2>/dev/null | awk '{print $1}')"
+        assert_eq "$_restore_target failure preserves old state through EXIT cleanup" \
+            "$_restore_state" "$(sha256sum "$S5_TXNDIR/old.state" 2>/dev/null | awk '{print $1}')"
+        assert_eq "$_restore_target restore failure never restarts an unrestored service" 0 \
+            "$(grep -c 'systemctl restart' "$S5_TEST_ROOT/transcript" || true)"
+        assert_file_absent "failed update is stopped during cleanup" "$S5_TEST_ROOT/svc_active"
+        assert_contains "restore failure identifies retained recovery data" \
+            'recovery copies retained' "$(cat "$S5_TEST_ROOT/restore.log")"
+        if [ -f "$S5_TXNDIR/old.config.json" ] && [ -f "$S5_TXNDIR/old.state" ]; then
+            _restore_events=$(cat "$S5_TEST_ROOT/transcript")
+            (
+                s5_precheck() { return 0; }
+                s5_confirm_update() { printf 'update confirmation reached\n' >>"$S5_TEST_ROOT/transcript"; }
+                s5_cmd_install
+            ) >"$S5_TEST_ROOT/next-install.log" 2>&1
+            assert_ne "a later install cannot overwrite pending recovery data" 0 "$?"
+            if [ "$_restore_target" = state ]; then
+                assert_contains "pending recovery is reported before asking to update" \
+                    'pending recovery directory' "$(cat "$S5_TEST_ROOT/next-install.log")"
+            fi
+            assert_eq "a later install preserves retained config backup" "$_restore_cfg" \
+                "$(sha256sum "$S5_TXNDIR/old.config.json" 2>/dev/null | awk '{print $1}')"
+            assert_eq "a later install preserves retained state backup" "$_restore_state" \
+                "$(sha256sum "$S5_TXNDIR/old.state" 2>/dev/null | awk '{print $1}')"
+            assert_eq "a later install leaves the service untouched until recovery" \
+                "$_restore_events" "$(cat "$S5_TEST_ROOT/transcript")"
+            if [ ! -f "$S5_TXNDIR/old.config.json" ] || [ ! -f "$S5_TXNDIR/old.state" ]; then
+                continue
+            fi
+            ( s5_update_rollback "$S5_TXNDIR/old.config.json" "$S5_TXNDIR/old.state" ) \
+                >"$S5_TEST_ROOT/retry.log" 2>&1
+            assert_eq "retained backups allow a later restore" 0 "$?"
+            t_xray_assert_healthy
+            assert_file_absent "successful restore removes the transaction" "$S5_TXNDIR"
+            assert_eq "successful restore starts the previous port" 23456 "$(cat "$S5_TEST_ROOT/svc_active")"
+        fi
+    done
+}
+
+test_uninstall_unknown() {
+    for _unknown_dir in config state binary transaction; do
+        for _unknown_kind in file directory symlink; do
+            t_xray_fixture 23456
+            t_xray_install
+            s5_precheck() { return 0; }
+            case "$_unknown_dir" in
+            config) _unknown_parent=$S5_SYSCONFDIR ;;
+            state) _unknown_parent=$S5_STATEDIR ;;
+            binary) _unknown_parent=$S5_PREFIX ;;
+            transaction) _unknown_parent=$S5_TXNDIR; mkdir "$S5_TXNDIR" ;;
+            esac
+            _unknown_path=$_unknown_parent/operator-note
+            case "$_unknown_kind" in
+            file) printf 'preserve me\n' >"$_unknown_path" ;;
+            directory) mkdir "$_unknown_path" ;;
+            symlink) ln -s "$S5_TEST_ROOT/no-such-target" "$_unknown_path" ;;
+            esac
+            _unknown_hashes=$(sha256sum "$S5_CFG" "$S5_STATE" "$S5_BIN" "$S5_SERVICE_ARTIFACT")
+            _unknown_events=$(cat "$S5_TEST_ROOT/transcript")
+            printf 'y\n' >"$S5_TEST_ROOT/answers.uninstall"
+            ( s5_cmd_uninstall <"$S5_TEST_ROOT/answers.uninstall" ) >"$S5_TEST_ROOT/uninstall.log" 2>&1
+            assert_ne "$_unknown_dir $_unknown_kind refuses uninstall" 0 "$?"
+            assert_eq "$_unknown_dir $_unknown_kind leaves every managed artifact unchanged" \
+                "$_unknown_hashes" "$(sha256sum "$S5_CFG" "$S5_STATE" "$S5_BIN" "$S5_SERVICE_ARTIFACT" 2>/dev/null)"
+            assert_eq "$_unknown_dir $_unknown_kind leaves the service untouched" \
+                "$_unknown_events" "$(cat "$S5_TEST_ROOT/transcript")"
+            assert_file_exists "refusal preserves the service account" "$S5_TEST_ROOT/user-exists"
+            assert_file_exists "refusal preserves the service group" "$S5_TEST_ROOT/group-exists"
+            if [ -e "$_unknown_path" ] || [ -L "$_unknown_path" ]; then t_ok; else t_bad 'unknown entry was deleted'; fi
+            case "$_unknown_kind" in
+            directory) rmdir "$_unknown_path" ;;
+            *) rm -f "$_unknown_path" ;;
+            esac
+            ( s5_cmd_uninstall <"$S5_TEST_ROOT/answers.uninstall" ) >"$S5_TEST_ROOT/retry.log" 2>&1
+            assert_eq "uninstall can retry after the unknown entry is removed" 0 "$?"
+            assert_file_absent "successful retry removes the managed state" "$S5_STATE"
+        done
+    done
+}
+
+test_rollback_exit() {
+    t_run python3 "$S5_REPO_ROOT/tests/lib/lock_reclaim.py" "$S5_REPO_ROOT/socks5.sh" \
+        "${S5_TEST_SHELL:-sh}" rollback-exit
+    assert_eq "EXIT cannot retry rollback while another command holds the lock" 0 "$T_STATUS"
+    assert_contains "the competing operation retained its lock and recovery evidence" \
+        'rollback stops before releasing operation lock' "$T_OUT"
+}
+
+# Optional scenario arguments support isolated runs, permutation and repetition.
+if [ "$#" -eq 0 ]; then
+    set -- family update owned_port rejected_candidate listener_failure rejected_command publish_signal config_symlink uninstall_leftovers uninstall_residue verifier_cleanup restore_failure uninstall_unknown rollback_exit
+fi
+for scenario do
+    case "$scenario" in
+    family|update|owned_port|rejected_candidate|listener_failure|rejected_command|publish_signal|config_symlink|uninstall_leftovers|uninstall_residue|verifier_cleanup|restore_failure|uninstall_unknown|rollback_exit)
+        "test_$scenario" ;;
+    *) t_bad "unknown update scenario: $scenario" ;;
+    esac
+done
 t_summary

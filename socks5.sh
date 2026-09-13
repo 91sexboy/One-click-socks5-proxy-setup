@@ -32,6 +32,7 @@ S5_WORKDIR=''
 S5_LOCK_HELD=0
 S5_LOCK_TOKEN=''
 S5_VERIFY_TEMP=''
+S5_PUBLIC_IPV4_CANDIDATE=''
 S5_CARD_ADDR=''
 S5_CARD_KIND=''
 S5_CONFIG_REPLACED=0
@@ -42,6 +43,7 @@ S5_CREATED_GROUP_NAMED=0
 S5_CREATED_PREFIX=0
 S5_CREATED_CONFDIR=0
 S5_CREATED_STATEDIR=0
+S5_CREATED_TRANSACTION=0
 S5_CREATED_BIN=0
 S5_CREATED_CFG=0
 S5_CREATED_UNIT=0
@@ -110,10 +112,9 @@ S5_UNITDIR=$S5_ROOTDIR/etc/systemd/system
 S5_BIN=$S5_PREFIX/xray
 S5_CFG=$S5_SYSCONFDIR/config.json
 S5_STATE=$S5_STATEDIR/state
-S5_UNIT=$S5_UNITDIR/$S5_PROJECT.service
 S5_INITSCRIPTDIR=$S5_ROOTDIR/etc/init.d
 S5_INITSCRIPT=$S5_INITSCRIPTDIR/$S5_PROJECT
-S5_SERVICE_ARTIFACT=$S5_UNIT
+S5_SERVICE_ARTIFACT=''
 S5_LOCKDIR=$S5_ROOTDIR/run/$S5_PROJECT.lock
 S5_LOCK_OWNER=$S5_LOCKDIR/owner
 S5_TXNDIR=$S5_STATEDIR/transaction
@@ -174,6 +175,8 @@ s5_msg() {
     asset.download) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '正在下载并校验 Xray 资产：%s。' "$1" ;; en) printf 'downloading and verifying Xray asset: %s.' "$1" ;; esac ;;
     asset.invalid) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf 'Xray 资产校验失败：%s。' "$1" ;; en) printf 'Xray asset verification failed: %s.' "$1" ;; esac ;;
     config.invalid) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf 'Xray 配置测试失败；旧配置未改变。' ;; en) printf 'Xray configuration test failed; the old configuration was unchanged.' ;; esac ;;
+    transaction.pending) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '存在待处理的恢复目录，拒绝覆盖：%s。' "$1" ;; en) printf 'pending recovery directory must be resolved before updating: %s.' "$1" ;; esac ;;
+    transaction.restore) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法恢复旧配置和状态；恢复备份保留在 %s。' "$1" ;; en) printf 'could not restore the previous config and state; recovery copies retained at %s.' "$1" ;; esac ;;
     config.external) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '配置文件已被外部修改；拒绝继续。' ;; en) printf 'the configuration was changed externally; refusing to continue.' ;; esac ;;
     config.unreadable) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法读取或校验配置文件：%s。' "$1" ;; en) printf 'the configuration file could not be read or validated: %s.' "$1" ;; esac ;;
     service.start) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf 'Xray 服务启动失败。' ;; en) printf 'the Xray service failed to start.' ;; esac ;;
@@ -197,6 +200,7 @@ s5_msg() {
     show.socks) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf 'SOCKS5：%s' "$1" ;; en) printf 'SOCKS5: %s' "$1" ;; esac ;;
     show.http) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf 'HTTP：%s' "$1" ;; en) printf 'HTTP: %s' "$1" ;; esac ;;
     show.warning) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '认证信息会在网络上传输，密码以明文保存在受保护的配置文件中。' ;; en) printf 'credentials are sent on the wire, and the password is stored in cleartext in the protected config file.' ;; esac ;;
+    uninstall.residue) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '发现未知或不安全的残留，拒绝卸载：%s。' "$1" ;; en) printf 'refusing uninstall with unknown or unsafe residue: %s.' "$1" ;; esac ;;
     uninstall.confirm) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '确认删除 Xray mixed 代理及其账户？[y/N] ' ;; en) printf 'Remove the Xray mixed proxy and its account? [y/N] ' ;; esac ;;
     uninstall.done) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '卸载完成；系统软件包和防火墙规则未修改。' ;; en) printf 'uninstall completed; system packages and firewall rules were not modified.' ;; esac ;;
     install.confirm) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '确认安装 Xray mixed 代理？[Y/n] ' ;; en) printf 'Install the Xray mixed proxy? [Y/n] ' ;; esac ;;
@@ -328,6 +332,17 @@ s5_map_arch() {
     esac
 }
 
+# The selected backend owns one service-definition path. Writers also call this
+# boundary so standalone generation cannot reuse a previous backend's path.
+s5_select_service_artifact() {
+    S5_SERVICE_ARTIFACT=''
+    case "${S5_INIT:-systemd}" in
+    systemd) S5_SERVICE_ARTIFACT=$S5_UNITDIR/$S5_PROJECT.service ;;
+    openrc) S5_SERVICE_ARTIFACT=$S5_INITSCRIPT ;;
+    *) return 1 ;;
+    esac
+}
+
 s5_detect_platform() {
     _sdf=${S5_OSRELEASE:-/etc/os-release}
     S5_OS_ID=$(s5_osrel_get "$_sdf" ID) || return 1
@@ -365,12 +380,7 @@ s5_detect_platform() {
         ;;
     *) return 1 ;;
     esac
-    if [ "$S5_INIT" = openrc ]; then
-        S5_UNIT=$S5_INITSCRIPT
-    else
-        S5_UNIT=$S5_UNITDIR/$S5_PROJECT.service
-    fi
-    return 0
+    s5_select_service_artifact
 }
 
 s5_require_commands() {
@@ -470,13 +480,11 @@ s5_random_string() {
 }
 
 s5_random_port() {
-    # tr -cd '0-9', not tr -cd '0-9': BusyBox tr reads '[:space:]' as the
-    # literal set {[ : s p a c e ]} rather than the whitespace class, so od's
-    # leading space would survive and the value below would fail its digit check.
-    # A blank port answer on Alpine then aborts the install instead of generating.
-    _srp=$(od -An -N2 -tu2 /dev/urandom 2>/dev/null | tr -cd '0-9') || return 1
-    case "$_srp" in '' | *[!0-9]*) return 1 ;; esac
-    printf '%s' "$((20000 + (_srp % 40001)))"
+    # Keep only decimal digits: BusyBox tr can treat '[:space:]' literally,
+    # leaving od's leading spaces in a value used for shell arithmetic.
+    _srandport_value=$(od -An -N2 -tu2 /dev/urandom 2>/dev/null | tr -cd '0-9') || return 1
+    case "$_srandport_value" in '' | *[!0-9]*) return 1 ;; esac
+    printf '%s' "$((20000 + (_srandport_value % 40001)))"
 }
 
 s5_port_free() {
@@ -641,28 +649,31 @@ $$"
     return 0
 }
 
-# Reclaim a lock whose owner is provably gone: a different boot, or this boot with
-# a dead pid. A live pid is never touched, so a genuine concurrent operation still
-# wins, and pid reuse can only make this refuse. An owner file that is absent
-# entirely is left alone, because that is also the brief window a legitimate
-# acquisition passes through between mkdir and the link.
-s5_lock_reclaim() {
-    [ -f "$S5_LOCK_OWNER" ] || return 1
-    _slrowner=$(cat "$S5_LOCK_OWNER" 2>/dev/null) || return 1
-    _slrboot=$(printf '%s\n' "$_slrowner" | sed -n '1p')
-    _slrpid=$(printf '%s\n' "$_slrowner" | sed -n '2p')
+# The working directory pins the inspected directory inode. Another reclaimer
+# may remove it and acquire a new lock at the same pathname; relative unlinks
+# must never touch that replacement. Its owner (or publication temp) prevents
+# the final rmdir from removing a lock that is already held.
+s5_lock_reclaim() (
+    [ -d "$S5_LOCKDIR" ] && [ ! -L "$S5_LOCKDIR" ] || return 1
+    CDPATH='' cd -P "$S5_LOCKDIR" || return 1
+    [ -f owner ] && [ ! -L owner ] || return 1
+    {
+        IFS= read -r _slrboot && IFS= read -r _slrpid && ! IFS= read -r _slrextra
+    } <owner || return 1
+    [ -n "$_slrboot" ] && [ -z "$_slrextra" ] || return 1
+    case "$_slrpid" in '' | *[!0-9]* | 0) return 1 ;; esac
     _slrnow=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || uname -n)
-    if [ -n "$_slrboot" ] && [ "$_slrboot" != "$_slrnow" ]; then
+    if [ "$_slrboot" != "$_slrnow" ]; then
         :
-    elif [ -n "$_slrpid" ] && ! kill -0 "$_slrpid" 2>/dev/null; then
+    elif ! kill -0 "$_slrpid" 2>/dev/null; then
         :
     else
         return 1
     fi
-    rm -f "$S5_LOCK_OWNER" "$S5_LOCKDIR"/.owner.* 2>/dev/null || true
+    rm -f owner .owner.* 2>/dev/null || return 1
     rmdir "$S5_LOCKDIR" 2>/dev/null || return 1
     return 0
-}
+)
 
 s5_lock_acquire() {
     [ "$S5_LOCK_HELD" = 1 ] && return 0
@@ -1069,12 +1080,13 @@ s5_write_config_candidate() {
 }
 
 s5_write_unit() {
+    s5_select_service_artifact || return 1
     case "${S5_INIT:-systemd}" in
     openrc)
         if [ ! -d "$S5_INITSCRIPTDIR" ]; then
             s5_mkdir_parents "$S5_INITSCRIPTDIR" || return 1
         fi
-        s5_atomic_write "$S5_INITSCRIPT" root:root 0755 <<UNIT
+        s5_atomic_write "$S5_SERVICE_ARTIFACT" root:root 0755 <<UNIT
 #!/sbin/openrc-run
 
 name="$S5_PROJECT"
@@ -1095,18 +1107,12 @@ depend() {
 	use dns logger
 }
 UNIT
-        # The status has to be captured before the assignment: a plain assignment
-        # always succeeds, so `return $?` after it reported a failed init-script
-        # write as success and the caller set S5_CREATED_UNIT for a missing file.
-        _swurc=$?
-        S5_UNIT=$S5_INITSCRIPT
-        return "$_swurc"
         ;;
     systemd)
         if [ ! -d "$S5_UNITDIR" ]; then
             s5_mkdir_parents "$S5_UNITDIR" || return 1
         fi
-        s5_atomic_write "$S5_UNIT" root:root 0644 <<UNIT
+        s5_atomic_write "$S5_SERVICE_ARTIFACT" root:root 0644 <<UNIT
 [Unit]
 Description=Xray mixed SOCKS5 and HTTP proxy
 After=network-online.target
@@ -1139,25 +1145,37 @@ UNIT
     esac
 }
 
+# Queries are for individual callers; state loading uses one validated snapshot.
 s5_state_get() {
     awk -F '\t' -v k="$1" '$1 == k { print $2; exit }' "$S5_STATE" 2>/dev/null
 }
 
-s5_state_schema_valid() {
+# Emit one value per line in this fixed order only after the whole schema passes.
+# Values cannot contain tabs/newlines; read -r consumes them as data, never code.
+# The legacy schema omits family, represented by an empty line in that slot.
+s5_state_parse() {
     awk -F '\t' '
-        BEGIN { valid=1 }
+        BEGIN {
+            count=split("engine release commit asset archive_size archive_sha256 binary_size binary_sha256 protocol auth udp listen port username os arch family init account_uid account_gid config_sha256 unit_sha256 status", keys, " ")
+            for (i=1; i<=count; i++) allowed[keys[i]]=1
+            valid=1
+        }
         {
             if (NF != 2 || $1 == "" || $2 == "") valid=0
-            if ($1 !~ /^(engine|release|commit|asset|archive_size|archive_sha256|binary_size|binary_sha256|protocol|auth|udp|listen|port|username|os|arch|family|init|account_uid|account_gid|config_sha256|unit_sha256|status)$/) valid=0
-            seen[$1]++
+            if (!($1 in allowed) || seen[$1]++) valid=0
+            values[$1]=$2
         }
         END {
             if (NR != 22 && NR != 23) valid=0
-            if (NR == 22 && seen["family"]) valid=0
-            for (key in seen) if (seen[key] != 1) valid=0
-            exit valid ? 0 : 1
+            if (NR == 22 && ("family" in seen)) valid=0
+            if (!valid) exit 1
+            for (i=1; i<=count; i++) print values[keys[i]]
         }
     ' "$S5_STATE" 2>/dev/null
+}
+
+s5_state_schema_valid() {
+    s5_state_parse >/dev/null
 }
 
 s5_state_write() {
@@ -1196,8 +1214,8 @@ s5_verify_installed_artifacts() {
     # -- the state is intact and the config is the file that changed, which
     # s5_report_state_load renders differently from an invalid state -- while every
     # other failure returns 1.
-    [ -f "$S5_UNIT" ] && [ ! -L "$S5_UNIT" ] || return 1
-    [ "$(sha256sum "$S5_UNIT" 2>/dev/null | awk '{print $1}')" = "$S5_UNIT_SHA256" ] || return 1
+    [ -f "$S5_SERVICE_ARTIFACT" ] && [ ! -L "$S5_SERVICE_ARTIFACT" ] || return 1
+    [ "$(sha256sum "$S5_SERVICE_ARTIFACT" 2>/dev/null | awk '{print $1}')" = "$S5_UNIT_SHA256" ] || return 1
     [ -f "$S5_CFG" ] && [ ! -L "$S5_CFG" ] || return 1
     [ "$(sha256sum "$S5_CFG" 2>/dev/null | awk '{print $1}')" = "$S5_CONFIG_SHA256" ] || return 2
     [ -f "$S5_BIN" ] && [ ! -L "$S5_BIN" ] && [ -x "$S5_BIN" ] || return 1
@@ -1206,76 +1224,79 @@ s5_verify_installed_artifacts() {
 }
 
 s5_state_load() {
-    _slcurrent_family=$S5_OS_FAMILY
-    _slcurrent_init=$S5_INIT
+    _sload_current_family=$S5_OS_FAMILY
+    _sload_current_init=$S5_INIT
     [ -f "$S5_STATE" ] && [ ! -L "$S5_STATE" ] || return 1
     [ "$(stat -c '%a' "$S5_STATE" 2>/dev/null)" = 600 ] || return 1
-    s5_state_schema_valid || return 1
+    _sload_fields=$(s5_state_parse) || return 1
     [ -d "$S5_PREFIX" ] && [ ! -L "$S5_PREFIX" ] || return 1
     [ -d "$S5_SYSCONFDIR" ] && [ ! -L "$S5_SYSCONFDIR" ] || return 1
     [ -d "$S5_STATEDIR" ] && [ ! -L "$S5_STATEDIR" ] || return 1
-    [ "$(s5_state_get engine)" = xray ] || return 1
-    [ "$(s5_state_get release)" = "$S5_XRAY_VERSION" ] || return 1
-    [ "$(s5_state_get commit)" = "$S5_XRAY_COMMIT" ] || return 1
-    [ "$(s5_state_get protocol)" = mixed ] || return 1
-    [ "$(s5_state_get auth)" = password ] || return 1
-    [ "$(s5_state_get udp)" = false ] || return 1
-    [ "$(s5_state_get status)" = complete ] || return 1
-    S5_ARCHNAME=$(s5_state_get arch)
+    # Separate reads preserve the empty legacy family and literal whitespace or
+    # backslashes. A pipeline would lose assignments in a subshell on POSIX sh.
+    {
+        IFS= read -r _sload_engine
+        IFS= read -r _sload_release
+        IFS= read -r _sload_commit
+        IFS= read -r _sload_asset
+        IFS= read -r _sload_size
+        IFS= read -r _sload_sha
+        IFS= read -r _sload_binsize
+        IFS= read -r _sload_binsha
+        IFS= read -r _sload_protocol
+        IFS= read -r _sload_auth
+        IFS= read -r _sload_udp
+        IFS= read -r S5_LISTEN
+        IFS= read -r S5_PORT
+        IFS= read -r S5_USERNAME
+        IFS= read -r _sload_os
+        IFS= read -r S5_ARCHNAME
+        IFS= read -r S5_OS_FAMILY
+        IFS= read -r S5_INIT
+        IFS= read -r S5_ACCOUNT_UID
+        IFS= read -r S5_ACCOUNT_GID
+        IFS= read -r S5_CONFIG_SHA256
+        IFS= read -r S5_UNIT_SHA256
+        IFS= read -r _sload_status
+    } <<STATE_FIELDS
+$_sload_fields
+STATE_FIELDS
+    _sload_fields=''
+    [ "$_sload_engine" = xray ] || return 1
+    [ "$_sload_release" = "$S5_XRAY_VERSION" ] || return 1
+    [ "$_sload_commit" = "$S5_XRAY_COMMIT" ] || return 1
+    [ "$_sload_protocol" = mixed ] || return 1
+    [ "$_sload_auth" = password ] || return 1
+    [ "$_sload_udp" = false ] || return 1
+    [ "$_sload_status" = complete ] || return 1
     s5_asset_select || return 1
-    _slasset=$(s5_state_get asset)
-    _slsize=$(s5_state_get archive_size)
-    _slsha=$(s5_state_get archive_sha256)
-    _slbinsize=$(s5_state_get binary_size)
-    _slbinsha=$(s5_state_get binary_sha256)
-    [ "$S5_ASSET_NAME" = "$_slasset" ] &&
-        [ "$S5_ASSET_SIZE" = "$_slsize" ] &&
-        [ "$S5_ASSET_SHA256" = "$_slsha" ] &&
-        [ "$S5_ASSET_BINARY_SIZE" = "$_slbinsize" ] &&
-        [ "$S5_ASSET_BINARY_SHA256" = "$_slbinsha" ] || return 1
-    S5_ASSET_NAME=$_slasset
-    S5_ASSET_SIZE=$_slsize
-    S5_ASSET_SHA256=$_slsha
-    S5_ASSET_BINARY_SIZE=$_slbinsize
-    S5_BINARY_SHA256=$_slbinsha
-    S5_LISTEN=$(s5_state_get listen)
-    S5_PORT=$(s5_state_get port)
-    S5_USERNAME=$(s5_state_get username)
-    S5_ARCHNAME=$(s5_state_get arch)
-    S5_OS_FAMILY=$(s5_state_get family)
-    S5_INIT=$(s5_state_get init)
+    [ "$S5_ASSET_NAME" = "$_sload_asset" ] &&
+        [ "$S5_ASSET_SIZE" = "$_sload_size" ] &&
+        [ "$S5_ASSET_SHA256" = "$_sload_sha" ] &&
+        [ "$S5_ASSET_BINARY_SIZE" = "$_sload_binsize" ] &&
+        [ "$S5_ASSET_BINARY_SHA256" = "$_sload_binsha" ] || return 1
+    S5_BINARY_SHA256=$_sload_binsha
     # The recorded family is cross-checked like the init is below. debian and el
     # share the systemd unit path, so the init check alone accepts a state file
     # written on the other one, and the family is what picks the package manager
-    # an update installs from. An empty value is left to the fallback: it means an
-    # older state file recorded no family, not that the host disagrees.
-    if [ -n "$S5_OS_FAMILY" ] && [ -n "$_slcurrent_family" ]; then
-        [ "$S5_OS_FAMILY" = "$_slcurrent_family" ] || return 1
-    fi
+    # an update installs from. Legacy state implies Debian; apply that fallback
+    # before comparing so an absent family cannot bypass host-family verification.
     if [ -z "$S5_OS_FAMILY" ]; then
         case "$S5_INIT" in
         systemd) S5_OS_FAMILY=debian ;;
         *) return 1 ;;
         esac
     fi
-    [ -n "$_slcurrent_init" ] && [ "$_slcurrent_init" = "$S5_INIT" ] || return 1
-    case "$S5_OS_FAMILY:$S5_INIT" in
-    alpine:openrc) S5_INITSCRIPT=$S5_ROOTDIR/etc/init.d/$S5_PROJECT; S5_UNIT=$S5_INITSCRIPT ;;
-    debian:systemd | el:systemd) S5_UNIT=$S5_UNITDIR/$S5_PROJECT.service ;;
-    *) return 1 ;;
-    esac
-    S5_SERVICE_ARTIFACT=$S5_UNIT
-    S5_ACCOUNT_UID=$(s5_state_get account_uid)
-    S5_ACCOUNT_GID=$(s5_state_get account_gid)
-    S5_CONFIG_SHA256=$(s5_state_get config_sha256)
-    S5_UNIT_SHA256=$(s5_state_get unit_sha256)
-    [ -n "$S5_ASSET_NAME" ] && [ -n "$S5_ASSET_SIZE" ] && [ -n "$S5_ASSET_SHA256" ] || return 1
-    [ -n "$S5_ASSET_BINARY_SIZE" ] && [ -n "$S5_BINARY_SHA256" ] || return 1
-    [ -n "$S5_UNIT_SHA256" ] || return 1
+    if [ -n "$_sload_current_family" ]; then
+        [ "$S5_OS_FAMILY" = "$_sload_current_family" ] || return 1
+    fi
+    [ -n "$_sload_current_init" ] && [ "$_sload_current_init" = "$S5_INIT" ] || return 1
+    s5_backend_supported || return 1
+    s5_select_service_artifact || return 1
     s5_valid_port "$S5_PORT" && s5_valid_username "$S5_USERNAME" && s5_ipv4_is_canonical "$S5_LISTEN" || return 1
     s5_verify_installed_artifacts
-    _slr=$?
-    [ "$_slr" -eq 0 ] || return "$_slr"
+    _sload_result=$?
+    [ "$_sload_result" -eq 0 ] || return "$_sload_result"
     s5_account_identity || return 1
     return 0
 }
@@ -1595,6 +1616,7 @@ s5_cleanup_transaction() {
         rm -f "$_sctf" || return 1
     done
     rmdir "$S5_TXNDIR" 2>/dev/null || return 1
+    S5_CREATED_TRANSACTION=0
     return 0
 }
 
@@ -1637,7 +1659,7 @@ s5_cleanup() {
             fi
             S5_UNIT_ENABLED=0
         fi
-        if [ "$S5_CREATED_UNIT" = 1 ]; then rm -f "$S5_UNIT" 2>/dev/null || true; fi
+        if [ "$S5_CREATED_UNIT" = 1 ]; then rm -f "$S5_SERVICE_ARTIFACT" 2>/dev/null || true; fi
         # supervise-daemon's pidfile and child_pid belong to whatever service is
         # running. Removing them for an installation this run never touched left a
         # healthy Alpine proxy unstoppable and unobservable: status reports no
@@ -1661,27 +1683,11 @@ s5_cleanup() {
         # rmdir below, and uninstall later, both refuse a non-empty directory.
         s5_cleanup_own_temps "$S5_SYSCONFDIR" || true
         s5_cleanup_own_temps "$S5_STATEDIR" || true
-        # The transaction directory holds the only copy of the pre-update config
-        # and state. Deleting it without restoring left the newly published config
-        # live against the old recorded hash, which s5_state_load then refuses
-        # forever: the installation could be neither repaired nor removed through
-        # the CLI. If the restore itself fails, keep the evidence for the next run
-        # rather than destroying it.
-        #
-        # Restoring is gated on this run having actually published a new config.
-        # Every other resource carries an S5_CREATED_* flag and the transaction
-        # carried none, so an update that aborted before publication -- a rejected
-        # candidate, or a binary that failed its digest -- came through here and
-        # replaced the live config file with a byte-identical copy and restarted a
-        # healthy service for a candidate that never reached it.
-        if [ "$S5_CONFIG_REPLACED" = 1 ] &&
-            [ -f "$S5_TXNDIR/old.config.json" ] && [ -f "$S5_TXNDIR/old.state" ]; then
-            if s5_restore_transaction "$S5_TXNDIR/old.config.json" "$S5_TXNDIR/old.state"; then
-                s5_svc restart || true
-                s5_cleanup_transaction || true
-                S5_CONFIG_REPLACED=0
-            fi
-        else
+        # Recovery copies remain until both files have been restored, including
+        # when a signal interrupts publication or only one backup is readable.
+        if [ "$S5_CONFIG_REPLACED" = 1 ]; then
+            s5_update_rollback "$S5_TXNDIR/old.config.json" "$S5_TXNDIR/old.state" || true
+        elif [ "$S5_CREATED_TRANSACTION" = 1 ]; then
             s5_cleanup_transaction || true
         fi
         s5_cleanup_own_temps "$S5_PREFIX" || true
@@ -1742,15 +1748,15 @@ s5_trap_lock_only() {
 s5_runtime_packages() {
     case "${1:-}" in install | update) ;; *) return 0 ;; esac
     [ "$S5_INIT" = openrc ] || return 0
-    _srp=''
-    command -v curl >/dev/null 2>&1 || _srp="$_srp curl ca-certificates"
+    _spkgs_list=''
+    command -v curl >/dev/null 2>&1 || _spkgs_list="$_spkgs_list curl ca-certificates"
     # BusyBox provides a stripped unzip without -Z, so a present unzip proves
     # nothing about archive inspection; Info-ZIP is always requested.
-    _srp="$_srp unzip"
-    command -v file >/dev/null 2>&1 || _srp="$_srp file"
-    command -v python3 >/dev/null 2>&1 || _srp="$_srp python3"
-    command -v ss >/dev/null 2>&1 || _srp="$_srp iproute2"
-    printf '%s' "${_srp# }"
+    _spkgs_list="$_spkgs_list unzip"
+    command -v file >/dev/null 2>&1 || _spkgs_list="$_spkgs_list file"
+    command -v python3 >/dev/null 2>&1 || _spkgs_list="$_spkgs_list python3"
+    command -v ss >/dev/null 2>&1 || _spkgs_list="$_spkgs_list iproute2"
+    printf '%s' "${_spkgs_list# }"
 }
 
 s5_install_runtime_dependencies() {
@@ -1870,22 +1876,25 @@ s5_restore_transaction() {
     return 0
 }
 
-# Every failure after the new config is published unwinds the same way: put the
-# old config and state back, bring the service up on them, and drop the
-# transaction evidence. Each step is best-effort because a rollback that aborts
-# halfway leaves the installation in a worse state than the failure it handles.
+# Explicit failure and EXIT cleanup share the same recovery policy. A failed
+# restore leaves the publication flag set so later cleanup cannot discard backups.
 s5_update_rollback() {
-    s5_restore_transaction "$1" "$2" || true
-    s5_svc restart || true
-    s5_cleanup_transaction || true
+    if ! s5_restore_transaction "$1" "$2"; then
+        s5_msg_err transaction.restore "$S5_TXNDIR"
+        return 1
+    fi
     S5_SERVICE_STARTED=0
+    s5_svc restart || { s5_msg_err service.start; return 1; }
+    S5_CONFIG_REPLACED=0
+    s5_cleanup_transaction
 }
 
 s5_install_new() {
+    s5_select_service_artifact || return 1
     if [ -e "$S5_PREFIX" ] || [ -L "$S5_PREFIX" ] ||
         [ -e "$S5_SYSCONFDIR" ] || [ -L "$S5_SYSCONFDIR" ] ||
         [ -e "$S5_STATEDIR" ] || [ -L "$S5_STATEDIR" ] ||
-        [ -e "$S5_UNIT" ] || [ -L "$S5_UNIT" ]; then
+        [ -e "$S5_SERVICE_ARTIFACT" ] || [ -L "$S5_SERVICE_ARTIFACT" ]; then
         s5_msg_err state.invalid "$S5_PROJECT"
         return 1
     fi
@@ -1909,18 +1918,8 @@ s5_install_new() {
     _sinc=$(s5_write_config_candidate) || return 1
     mv -f "$_sinc" "$S5_CFG" || return 1
     S5_CREATED_CFG=1
-    if [ "$S5_INIT" = openrc ]; then
-        S5_UNIT=$S5_INITSCRIPT
-    else
-        S5_UNIT=$S5_UNITDIR/$S5_PROJECT.service
-    fi
     s5_write_unit || return 1
     S5_CREATED_UNIT=1
-    if [ "$S5_INIT" = openrc ]; then
-        S5_SERVICE_ARTIFACT=$S5_INITSCRIPT
-    else
-        S5_SERVICE_ARTIFACT=$S5_UNIT
-    fi
     S5_UNIT_SHA256=$(sha256sum "$S5_SERVICE_ARTIFACT" | awk '{print $1}')
     if [ "$S5_INIT" = openrc ]; then
         s5_svc enable || return 1
@@ -1943,11 +1942,10 @@ s5_install_new() {
 }
 
 s5_backend_supported() {
-    if [ "$S5_OS_FAMILY" = alpine ]; then
-        [ "$S5_INIT" = openrc ]
-    else
-        [ "$S5_INIT" = systemd ]
-    fi
+    case "$S5_OS_FAMILY:$S5_INIT" in
+    alpine:openrc | debian:systemd | el:systemd) return 0 ;;
+    *) return 1 ;;
+    esac
 }
 
 # s5_report_state_load <status>: one diagnosis for every command that loads
@@ -1975,13 +1973,18 @@ s5_install_update() {
     s5_state_load
     s5_report_state_load $? || return 1
     s5_backend_supported || { s5_msg_err state.invalid "$S5_STATE"; return 1; }
+    if [ -e "$S5_TXNDIR" ] || [ -L "$S5_TXNDIR" ]; then
+        s5_msg_err transaction.pending "$S5_TXNDIR"
+        return 1
+    fi
     s5_config_extract || { s5_msg_err config.unreadable "$S5_CFG"; return 1; }
     s5_confirm_update || return 1
     s5_prompt_port || return 1
     s5_prompt_username || return 1
     s5_prompt_password || return 1
     s5_asset_select || return 1
-    s5_mkdir_private "$S5_TXNDIR" || return 1
+    mkdir -m 0700 "$S5_TXNDIR" || return 1
+    S5_CREATED_TRANSACTION=1
     _sioldcfg=$S5_TXNDIR/old.config.json
     _sioldstate=$S5_TXNDIR/old.state
     cp "$S5_CFG" "$_sioldcfg" || return 1
@@ -2035,6 +2038,7 @@ s5_install_update() {
     # The flag's lifetime is the transaction's: once there is nothing to roll back
     # to, nothing may try.
     S5_CONFIG_REPLACED=0
+    S5_CREATED_TRANSACTION=0
     S5_INSTALL_COMPLETE=1
     return 0
 }
@@ -2059,6 +2063,7 @@ s5_cmd_install() {
     fi
     if [ "$_sic" -ne 0 ]; then
         s5_cleanup
+        trap - EXIT HUP INT TERM
         return 1
     fi
     s5_lock_release || return 1
@@ -2097,7 +2102,8 @@ s5_cmd_status() {
     return 0
 }
 
-# Reads one candidate address into $_lpb. One hardened request to the fixed
+# Returns a candidate line in S5_PUBLIC_IPV4_CANDIDATE, empty on failure; the
+# caller must still validate the address. One hardened request to the fixed
 # endpoint: -q so no user or system curlrc can alter it, --noproxy '*' so an
 # ambient proxy variable cannot redirect or observe it, IPv4 only, HTTPS only, no
 # redirects, bounded, stdin detached. The body is captured to a private file
@@ -2106,61 +2112,61 @@ s5_cmd_status() {
 # for the request and nothing else, so the parsing below is the same code a real
 # response goes through.
 s5_read_public_ipv4() {
-    _lpb=''
-    _lpf=$(mktemp "${TMPDIR:-/tmp}/.s5ip.XXXXXX") || return 1
+    S5_PUBLIC_IPV4_CANDIDATE=''
+    _sripv4_file=$(mktemp "${TMPDIR:-/tmp}/.s5ip.XXXXXX") || return 1
     if [ "${S5_TEST_MODE:-0}" = 1 ] && [ -n "${S5_TEST_ADDR_PATH:-}" ]; then
-        cp "$S5_TEST_ADDR_PATH" "$_lpf" || { rm -f "$_lpf"; _lpf=''; return 1; }
+        cp "$S5_TEST_ADDR_PATH" "$_sripv4_file" || { rm -f "$_sripv4_file"; _sripv4_file=''; return 1; }
     else
         if ! command -v curl >/dev/null 2>&1; then
-            rm -f "$_lpf"
-            _lpf=''
+            rm -f "$_sripv4_file"
+            _sripv4_file=''
             return 1
         fi
         if ! curl -q -4 --noproxy '*' --proto '=https' --fail --silent \
             --connect-timeout 3 --max-time 5 --max-filesize 17 \
-            --output "$_lpf" "$S5_ADDR_ENDPOINT" </dev/null 2>/dev/null; then
-            rm -f "$_lpf"
-            _lpf=''
+            --output "$_sripv4_file" "$S5_ADDR_ENDPOINT" </dev/null 2>/dev/null; then
+            rm -f "$_sripv4_file"
+            _sripv4_file=''
             return 1
         fi
     fi
-    _lpsz=$(wc -c <"$_lpf" 2>/dev/null | tr -cd '0-9')
-    case "$_lpsz" in '' | *[!0-9]*) _lpsz=18 ;; esac
+    _sripv4_size=$(wc -c <"$_sripv4_file" 2>/dev/null | tr -cd '0-9')
+    case "$_sripv4_size" in '' | *[!0-9]*) _sripv4_size=18 ;; esac
     # The longest address is 15 bytes and one terminator is allowed two, so a
     # larger body cannot be a single address. Checked before the read so an
     # endpoint that ignores --max-filesize cannot stream an unbounded line.
-    if [ "$_lpsz" -gt 17 ]; then
-        rm -f "$_lpf"
-        _lpf=''
-        _lpsz=''
+    if [ "$_sripv4_size" -gt 17 ]; then
+        rm -f "$_sripv4_file"
+        _sripv4_file=''
+        _sripv4_size=''
         return 1
     fi
-    IFS= read -r _lpb <"$_lpf" 2>/dev/null || true
-    rm -f "$_lpf"
-    _lpf=''
+    IFS= read -r S5_PUBLIC_IPV4_CANDIDATE <"$_sripv4_file" 2>/dev/null || true
+    rm -f "$_sripv4_file"
+    _sripv4_file=''
     # The raw line still carries the CR of a CRLF terminator, so its length is
     # the exact byte count of everything before the LF.
-    _lpn=${#_lpb}
+    _sripv4_length=${#S5_PUBLIC_IPV4_CANDIDATE}
     # read leaves that CR on the line, and a command substitution strips trailing
     # newlines but not a CR.
-    _lpcr=$(printf 'x\r')
-    _lpcr=${_lpcr#x}
-    _lpb=${_lpb%"$_lpcr"}
-    _lpcr=''
+    _sripv4_cr=$(printf 'x\r')
+    _sripv4_cr=${_sripv4_cr#x}
+    S5_PUBLIC_IPV4_CANDIDATE=${S5_PUBLIC_IPV4_CANDIDATE%"$_sripv4_cr"}
+    _sripv4_cr=''
     # The body has to be one line and one optional terminator. Comparing the
     # file's byte count against the raw line plus that terminator rejects a
     # second line, a double terminator and unterminated trailing bytes without
     # enumerating them, which a command substitution cannot do because it strips
     # every trailing newline.
-    if [ "$_lpsz" -gt "$((_lpn + 1))" ]; then
-        _lpb=''
-        _lpsz=''
-        _lpn=''
+    if [ "$_sripv4_size" -gt "$((_sripv4_length + 1))" ]; then
+        S5_PUBLIC_IPV4_CANDIDATE=''
+        _sripv4_size=''
+        _sripv4_length=''
         return 1
     fi
-    _lpsz=''
-    _lpn=''
-    [ -n "$_lpb" ] || return 1
+    _sripv4_size=''
+    _sripv4_length=''
+    [ -n "$S5_PUBLIC_IPV4_CANDIDATE" ] || return 1
     return 0
 }
 
@@ -2175,13 +2181,13 @@ s5_resolve_card_address() {
         S5_CARD_KIND=configured
         return 0
     fi
-    if s5_read_public_ipv4 && s5_ipv4_is_public "$_lpb"; then
-        S5_CARD_ADDR=$_lpb
+    if s5_read_public_ipv4 && s5_ipv4_is_public "$S5_PUBLIC_IPV4_CANDIDATE"; then
+        S5_CARD_ADDR=$S5_PUBLIC_IPV4_CANDIDATE
         S5_CARD_KIND=external
-        _lpb=''
+        S5_PUBLIC_IPV4_CANDIDATE=''
         return 0
     fi
-    _lpb=''
+    S5_PUBLIC_IPV4_CANDIDATE=''
     S5_CARD_ADDR=SERVER_IPV4
     S5_CARD_KIND=placeholder
     return 0
@@ -2266,6 +2272,34 @@ s5_remove_owned_dir() {
     return 0
 }
 
+s5_uninstall_preflight() {
+    for _supdir in "$S5_PREFIX" "$S5_SYSCONFDIR" "$S5_STATEDIR" "$S5_TXNDIR"; do
+        [ -e "$_supdir" ] || [ -L "$_supdir" ] || continue
+        if [ ! -d "$_supdir" ] || [ -L "$_supdir" ]; then
+            s5_msg_err uninstall.residue "$_supdir"
+            return 1
+        fi
+        for _supentry in "$_supdir"/* "$_supdir"/.[!.]* "$_supdir"/..?*; do
+            [ -e "$_supentry" ] || [ -L "$_supentry" ] || continue
+            _supvalid=0
+            case "$_supentry" in
+            "$S5_TXNDIR")
+                [ -d "$_supentry" ] && [ ! -L "$_supentry" ] || _supvalid=1 ;;
+            "$S5_CFG" | "$S5_STATE" | "$S5_BIN" | "$S5_TXNDIR/old.config.json" | "$S5_TXNDIR/old.state" | "$_supdir"/.s5tmp.* | "$_supdir"/.s5new.*)
+                [ -f "$_supentry" ] && [ ! -L "$_supentry" ] || _supvalid=1 ;;
+            "$_supdir"/.s5state.* | "$_supdir"/.xray.*)
+                [ "$_supdir" != "$S5_TXNDIR" ] && [ -f "$_supentry" ] && [ ! -L "$_supentry" ] || _supvalid=1 ;;
+            *) _supvalid=1 ;;
+            esac
+            if [ "$_supvalid" != 0 ]; then
+                s5_msg_err uninstall.residue "$_supentry"
+                return 1
+            fi
+        done
+    done
+    return 0
+}
+
 s5_cmd_uninstall() {
     s5_precheck uninstall || return 1
     s5_lock_acquire || return 1
@@ -2280,14 +2314,11 @@ s5_cmd_uninstall() {
         # The three directories are not the whole namespace: the service unit lives
         # outside them and so does the account, so a partial cleanup that spared
         # either would otherwise read as "nothing installed".
-        case "$S5_INIT" in
-        openrc) _suunit=$S5_INITSCRIPT ;;
-        *) _suunit=$S5_UNITDIR/$S5_PROJECT.service ;;
-        esac
+        s5_select_service_artifact || return 1
         s5_getent_state passwd "$S5_SERVICE_USER"
         _suacct=$?
         if [ -e "$S5_SYSCONFDIR" ] || [ -e "$S5_STATEDIR" ] || [ -e "$S5_PREFIX" ] ||
-            [ -e "$_suunit" ] || [ -L "$_suunit" ] || [ "$_suacct" = 0 ]; then
+            [ -e "$S5_SERVICE_ARTIFACT" ] || [ -L "$S5_SERVICE_ARTIFACT" ] || [ "$_suacct" = 0 ]; then
             s5_msg_err state.invalid "$S5_STATE"
             return 1
         fi
@@ -2302,21 +2333,19 @@ s5_cmd_uninstall() {
     _suc=''
     IFS= read -r _suc || { s5_fail_locked; return 1; }
     case "$_suc" in y | Y) ;; *) s5_lock_release || true; s5_msg_print install.cancelled; return 1 ;; esac
+    s5_uninstall_preflight || { s5_fail_locked; return 1; }
     s5_svc stop || { s5_fail_locked service.stop; return 1; }
     s5_wait_stopped
     case $? in 0) ;; *) s5_fail_locked service.stop; return 1 ;; esac
     s5_account_identity || { s5_fail_locked account.identity; return 1; }
-    # Clear this installation's own leftovers before anything destructive runs. An
-    # interrupted update leaves a transaction directory, and s5_remove_owned_dir
-    # refuses a non-empty directory -- which used to abort uninstall only after the
-    # unit, config, binary, account and state were already gone. Junk that is not
-    # ours still stops us here, now before the first deletion rather than after.
+    # Preflight rejects unknown entries before stopping the service. Keep the
+    # deletion-time checks too: the operation lock does not exclude outside edits.
     s5_cleanup_own_temps "$S5_SYSCONFDIR" || { s5_fail_locked; return 1; }
     s5_cleanup_own_temps "$S5_STATEDIR" || { s5_fail_locked; return 1; }
     s5_cleanup_own_temps "$S5_PREFIX" || { s5_fail_locked; return 1; }
     s5_cleanup_transaction || { s5_fail_locked; return 1; }
     s5_svc disable || { s5_fail_locked; return 1; }
-    s5_remove_owned_file "$S5_UNIT" || { s5_fail_locked; return 1; }
+    s5_remove_owned_file "$S5_SERVICE_ARTIFACT" || { s5_fail_locked; return 1; }
     s5_remove_owned_file "$S5_CFG" || { s5_fail_locked; return 1; }
     s5_remove_owned_file "$S5_BIN" || { s5_fail_locked; return 1; }
     if [ "$S5_INIT" = systemd ]; then

@@ -1,9 +1,11 @@
 #!/bin/sh
-# The negative probes must read exactly, not keep whatever one recv returns.
+# Protocol probes must validate complete replies, ongoing traffic and readiness.
 
 S5T_NAME=test_xray_probe
 . "${S5_REPO_ROOT}/tests/lib/assert.sh"
 ROOT=${S5_REPO_ROOT}
+PYTHONDONTWRITEBYTECODE=1
+export PYTHONDONTWRITEBYTECODE
 t_mktestroot
 
 if ! command -v python3 >/dev/null 2>&1; then
@@ -40,5 +42,54 @@ assert_contains "the short-reading copy dropped the exact read" 'while False:' \
 cp "$ROOT/tests/protocol/probe_selftest.py" "$_tpdir/probe_selftest.py"
 t_run python3 "$_tpdir/probe_selftest.py"
 assert_ne "a short-reading probe fails the self-test" 0 "$T_STATUS"
+
+# CI-01/03/04: these execute the real transport and launcher paths using only
+# loopback sockets and temporary fixtures; no Xray download or root is needed.
+t_run python3 "$ROOT/tests/protocol/probe_selftest.py" --exchange-only
+assert_eq "unsolicited frames have correct content, order and ongoing progress" 0 "$T_STATUS"
+assert_contains "the last progress window is exercised" 'ok - unsolicited late-stop is rejected' "$T_OUT"
+t_run python3 "$ROOT/tests/protocol/concurrency_selftest.py"
+assert_eq "cohorts carry overlapping traffic and the gate checks independent occupancy" 0 "$T_STATUS"
+assert_contains "the 64-worker mutation fails boundedly" 'ok - max64 mutant rejects boundedly' "$T_OUT"
+t_run python3 "$ROOT/tests/protocol/launcher_selftest.py" --shell "${S5_TEST_SHELL:-sh}"
+assert_eq "readiness follows the listener and stale outputs cannot release clients" 0 "$T_STATUS"
+assert_not_contains "readiness has no failing check" 'not ok' "$T_OUT"
+
+# Mutation proofs are behaviour checks, not source-presence claims. Removing
+# either S validation dimension, or restoring early readiness publication, must
+# make the corresponding real-path selftest red.
+t_run python3 - "$ROOT" "$S5_TEST_ROOT" <<'PY'
+from pathlib import Path
+import sys
+root, scratch = map(Path, sys.argv[1:])
+source = (root / "tests/protocol/xray_mixed.py").read_text()
+for name, old, new in (
+    ("no-payload", 'if payload != ("server-%d" % expected_seq).encode("ascii"):', 'if False:'),
+    ("no-progress", 'progress_window = 2.0', 'progress_window = 60.0'),
+):
+    assert source.count(old) == 1
+    directory = scratch / name
+    directory.mkdir()
+    (directory / "xray_mixed.py").write_text(source.replace(old, new))
+    (directory / "probe_selftest.py").write_text((root / "tests/protocol/probe_selftest.py").read_text())
+launcher = (root / "tests/protocol/start_engine.sh").read_text()
+lines = launcher.splitlines(keepends=True)
+publication = ''.join(line for line in lines if line.startswith(("printf '%s\\n' \"$PORT\"", 'mv -f "$OUTDIR/ready.tmp"')))
+assert publication and launcher.count(publication) == 1
+launcher = launcher.replace(publication, '').replace('ready=0\n', publication + 'ready=0\n')
+(scratch / "early-ready.sh").write_text(launcher)
+PY
+assert_eq "transport and readiness mutations were constructed" 0 "$T_STATUS"
+t_run python3 "$S5_TEST_ROOT/no-payload/probe_selftest.py" --exchange-only payload
+assert_ne "dropping unsolicited payload validation makes the selftest red" 0 "$T_STATUS"
+assert_contains "payload mutation reaches its specific regression" 'not ok - unsolicited payload is rejected' "$T_OUT"
+t_run python3 "$S5_TEST_ROOT/no-progress/probe_selftest.py" --exchange-only late-stop
+assert_ne "dropping ongoing progress validation makes the selftest red" 0 "$T_STATUS"
+assert_contains "progress mutation reaches its final-window regression" 'not ok - unsolicited late-stop is rejected' "$T_OUT"
+t_run python3 "$ROOT/tests/protocol/launcher_selftest.py" --shell "${S5_TEST_SHELL:-sh}" \
+    --launcher "$S5_TEST_ROOT/early-ready.sh"
+assert_ne "publishing readiness early makes the selftest red" 0 "$T_STATUS"
+assert_contains "early readiness mutation reaches the delayed-listener regression" \
+    'not ok - delayed listener never releases the protocol consumer early' "$T_OUT"
 
 t_summary

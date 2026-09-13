@@ -41,4 +41,10 @@ for _fam in debian el alpine; do
 done
 
 unset -f id getent
+
+t_run python3 "$ROOT/tests/lib/lock_reclaim.py" "$ROOT/socks5.sh" "${S5_TEST_SHELL:-sh}"
+assert_eq "a paused stale-lock reclaimer cannot remove a new live lock" 0 "$T_STATUS"
+assert_contains "the interleaving reaches the lock ownership assertions" \
+    'stale-lock interleaving preserves mutual exclusion' "$T_OUT"
+
 t_summary

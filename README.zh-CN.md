@@ -161,6 +161,11 @@ xray run -c /etc/xray-socks5/config.json
 
 更新采用完整重启，不实现 Xray gRPC 热更新。已有连接会因服务重启而断开；重启完成后脚本会等待服务和精确监听端口恢复。Xray 配置错误使用退出状态 23，并由 systemd `RestartPreventExitStatus=23` 防止配置错误被无限重启。
 
+发布新配置后更新失败时，脚本先恢复旧配置和状态，再重启服务。如果恢复本身失败，会报告
+事务备份目录并保留恢复副本，而不是删除它们。后续更新会拒绝覆盖待处理的恢复目录，失败
+重试也不会清理上一次调用留下的恢复副本。卸载会在停止服务、删除受管文件和账户前，
+检查私有目录中的未知或不安全条目；这些条目保持原样，确认并移走后可以重试卸载。
+
 ## 支持范围
 
 `socks5.sh` 的平台检查接受：
@@ -198,7 +203,17 @@ OpenRC。对于不支持的 init 系统，`socks5.sh` 会拒绝安装。
 - systemd restart、`SIGKILL` 后的崩溃恢复，以及 `RestartPreventExitStatus=23` 对配置错误重启循环的阻断；
 - Xray 进程 `VmRSS`、服务的 systemd `MemoryCurrent` 与 `MemoryPeak`，以及 restart count。
 
-尚未公布内存预算。内存 job 只记录原始证据：Xray 进程 `VmRSS`、systemd `MemoryCurrent` 与 `MemoryPeak`、每个阶段前重置的 cgroup 峰值、idle/1/32/128 连接各自的峰值、来自 systemd 单调时间戳的启动时间、OOM 计数，以及 restart count 为零。不设置未经测量的 `MemoryMax`，且这些证据仅在 systemd 上采集。
+并发门禁会在传输前和关闭连接前同步同组隧道。独立目标必须在每个客户端帧到达时观察到
+该组全部 1/32/128 条隧道在线，且每条隧道接收五帧；无关的后台长连接不计入本组。
+服务端主动帧会校验载荷和连续序号，整个交换过程（包括末尾窗口）不允许超过两秒没有进展。
+CI 启动器只有通过监听检查后才发布就绪标记。
+
+尚未公布内存预算。内存 job 记录 Xray 进程 `VmRSS` 快照、cgroup 当前用量及
+idle/1/32/128 连接各自的阶段峰值。常驻采样器在重置、建立连接和取样期间保持同一个
+可读写的 `memory.peak` 文件描述符，并用先高负载、释放后再低负载的实验核对实际 runner
+内核的重置语义，同时记录内核版本。systemd `MemoryCurrent` 与整个运行期的 `MemoryPeak`
+单独输出，另记录 OOM 计数并要求 restart count 为零。systemd 单调状态时间戳之差
+**不是监听就绪耗时**。不设置未经测量的 `MemoryMax`，内存证据仍仅在 systemd 上采集。
 
 公布任何数字都必须同时给出 Xray 版本、平台、配置、连接数、持续时间和产生该数字的 CI run；不能从 archive 大小推断 RSS，也不能把面板部署的内存当成 Xray-only 内存。
 

@@ -40,6 +40,7 @@ listening. See the [public lifecycle description](../../README.md#lifecycle).
 - Two backends mean two lifecycle gates in CI (the systemd and OpenRC integration
   jobs), which are the authority for service behaviour; unit tests stub the
   managers. The backend decision is centralized in `s5_svc <verb>`.
-- config-test-before-restart, plus the operation lock, plus the transaction
-  rollback copies together make a failed update leave the running
-  service and the published config untouched.
+- Config-test failures leave the healthy service and published configuration
+  untouched. Failures after publication restore the previous config and state
+  before restarting; if restoration fails, retain the transaction copies and
+  report the recovery directory rather than discarding the only backups.

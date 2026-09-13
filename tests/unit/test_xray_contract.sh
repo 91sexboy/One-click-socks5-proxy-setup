@@ -74,9 +74,7 @@ S5_ACCOUNT_UID=900
 S5_ACCOUNT_GID=900
 mkdir -p "$S5_UNITDIR"
 s5_write_unit >/dev/null 2>&1
-# S5_UNIT comes from the sourced socks5.sh; it is not a typo for S5_INIT.
-# shellcheck disable=SC2153
-S5_UNIT_SHA256=$(sha256sum "$S5_UNIT" | awk '{print $1}')
+S5_UNIT_SHA256=$(sha256sum "$S5_SERVICE_ARTIFACT" | awk '{print $1}')
 s5_state_write
 assert_file_exists "Xray state is written" "$S5_STATE"
 assert_mode "Xray state is root-only" 600 "$S5_STATE"
@@ -100,9 +98,7 @@ assert_file_exists "legacy state survives" "$S5_TEST_ROOT/var/lib/socks5-manager
 # The service unit has no credential-bearing argument and runs as the dedicated user.
 mkdir -p "$S5_UNITDIR"
 s5_write_unit >/dev/null 2>&1
-# S5_UNIT comes from the sourced socks5.sh; it is not a typo for S5_INIT.
-# shellcheck disable=SC2153
-unit=$(cat "$S5_UNIT")
+unit=$(cat "$S5_SERVICE_ARTIFACT")
 assert_contains "unit uses the dedicated user" 'User=xray-socks5' "$unit"
 assert_contains "unit invokes Xray run" 'ExecStart=' "$unit"
 assert_contains "unit uses explicit config" 'run -c' "$unit"

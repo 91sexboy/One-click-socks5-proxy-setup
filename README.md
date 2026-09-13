@@ -205,6 +205,15 @@ configuration error uses exit status 23, and systemd
 `RestartPreventExitStatus=23` keeps a configuration error out of an endless
 restart loop.
 
+If an update fails after publication, the script restores the previous config and
+state before restarting. If restoration itself fails, it reports the transaction
+backup directory and preserves the recovery copies rather than deleting them.
+A later update refuses a pending recovery directory instead of overwriting it;
+failed attempts do not clean up a previous invocation's recovery copies.
+Uninstall checks for unknown or unsafe entries in its private directories before
+stopping the service or removing managed files and accounts. Such entries are
+preserved, and removal can be retried after they have been reviewed and moved.
+
 ## Supported targets
 
 The platform check in `socks5.sh` accepts:
@@ -254,12 +263,23 @@ CI verifies:
   `RestartPreventExitStatus=23` guard that keeps a configuration error out of a
   restart loop.
 
-No memory budget is published. The memory job records raw evidence only: the
-Xray process `VmRSS`, the service's systemd `MemoryCurrent` and `MemoryPeak`,
-the cgroup peak reset before each stage, separate idle/1/32/128-connection
-peaks, startup time from systemd's monotonic timestamps, OOM counters and a
-restart count of zero. No `MemoryMax` is set, and this evidence is collected on
-systemd only.
+The concurrency gate synchronizes each cohort before traffic and before closing
+connections. The independent target must observe all 1/32/128 cohort members
+online during every client frame, with five frames per member; unrelated
+background tunnels do not count. Unsolicited server frames are checked for their
+payload and contiguous sequence, with a two-second no-progress limit throughout
+the exchange, including its final window. The CI launcher publishes readiness
+only after its listener check succeeds.
+
+No memory budget is published. The memory job records the Xray process `VmRSS`
+snapshot, cgroup current usage and independent idle/1/32/128-connection peaks.
+One persistent sampler keeps the same read/write `memory.peak` descriptor across
+each reset, connection establishment and sample. A released high-then-low
+workload checks the reset semantics on the actual runner kernel, whose version
+is recorded. systemd `MemoryCurrent` and lifetime `MemoryPeak` are reported
+separately, alongside OOM counters and a restart count of zero. The difference
+between systemd's monotonic state timestamps is **not listener readiness time**.
+No `MemoryMax` is set, and memory evidence is collected on systemd only.
 
 A figure will appear here only together with the Xray version, platform,
 configuration, connection count, duration and the CI run that produced it. RSS

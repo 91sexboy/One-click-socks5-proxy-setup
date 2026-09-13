@@ -1,47 +1,7 @@
 #!/bin/sh
-# Print non-secret Xray RSS and cgroup metrics for GitHub Actions.
+# Keep one Python process (and its read/write memory.peak fd) across every stage.
+# stdin protocol: reset LABEL -> LABEL_reset=ok; sample LABEL -> metrics and
+# LABEL_sample=ok; quit -> exit. Reset must be acknowledged before workload start.
 set -eu
-
-PID=${1:?usage: memory-sample.sh PID LABEL [CGROUP_DIR]}
-LABEL=${2:?usage: memory-sample.sh PID LABEL [CGROUP_DIR]}
-CGROUP=${3:-}
-
-require_number() {
-    case "${1:-}" in
-    '' | *[!0-9]*)
-        printf 'invalid %s: %s\n' "$2" "${1:-}" >&2
-        exit 1
-        ;;
-    esac
-}
-
-read_field() {
-    awk -v key="$2" '$1 == key {print $2; found = 1} END {exit found ? 0 : 1}' "$1"
-}
-
-rss=$(awk '/^VmRSS:/ {print $2}' "/proc/$PID/status" 2>/dev/null || printf '')
-require_number "$rss" VmRSS
-printf '%s_rss_kib=%s\n' "$LABEL" "$rss"
-
-[ -n "$CGROUP" ] || exit 0
-[ -d "$CGROUP" ] || { printf 'cgroup directory is missing: %s\n' "$CGROUP" >&2; exit 1; }
-
-if [ "$LABEL" = reset ]; then
-    [ -w "$CGROUP/memory.peak" ] || { printf 'memory.peak is not writable\n' >&2; exit 1; }
-    printf 0 >"$CGROUP/memory.peak" || { printf 'could not reset memory.peak\n' >&2; exit 1; }
-    exit 0
-fi
-
-current=$(cat "$CGROUP/memory.current")
-peak=$(cat "$CGROUP/memory.peak")
-require_number "$current" memory.current
-require_number "$peak" memory.peak
-printf '%s_cgroup_current_bytes=%s\n' "$LABEL" "$current"
-printf '%s_cgroup_peak_bytes=%s\n' "$LABEL" "$peak"
-
-oom=$(read_field "$CGROUP/memory.events" oom)
-oom_kill=$(read_field "$CGROUP/memory.events" oom_kill)
-require_number "$oom" 'memory.events oom'
-require_number "$oom_kill" 'memory.events oom_kill'
-printf '%s_cgroup_oom=%s\n' "$LABEL" "$oom"
-printf '%s_cgroup_oom_kill=%s\n' "$LABEL" "$oom_kill"
+[ "$#" -eq 2 ] || { printf 'usage: memory-sample.sh PID CGROUP_DIR\n' >&2; exit 2; }
+exec python3 "$(dirname "$0")/memory-sampler.py" "$1" "$2"

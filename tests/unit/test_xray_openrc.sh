@@ -19,7 +19,6 @@ S5_PORT=23456
 S5_LISTEN=127.0.0.1
 S5_INIT=openrc
 S5_OS_FAMILY=alpine
-S5_UNIT=$S5_INITSCRIPT
 
 # Platform detection must select the OpenRC adapter and reject old Alpine.
 s5_detect_platform
@@ -32,13 +31,14 @@ assert_ne "Alpine below 3.20 rejected" 0 "$T_STATUS"
 S5_OSRELEASE="$ROOT/tests/fixtures/os-release/alpine-3.20"
 s5_detect_platform
 
-# Only alpine/openrc and non-alpine/systemd are supported pairings. Chaining && and
+# Only alpine/openrc, debian/systemd and el/systemd are supported pairings.
+# Chaining && and
 # || in a single guard is left-associative, which silently rejected alpine/openrc
 # and made every Alpine update fail with no diagnostic.
 _obfamily=$S5_OS_FAMILY
 _obinit=$S5_INIT
 for _obcase in alpine:openrc:ok debian:systemd:ok el:systemd:ok \
-    alpine:systemd:no debian:openrc:no el:openrc:no; do
+    alpine:systemd:no debian:openrc:no el:openrc:no unknown:systemd:no :systemd:no; do
     S5_OS_FAMILY=${_obcase%%:*}
     _obrest=${_obcase#*:}
     S5_INIT=${_obrest%:*}
@@ -82,6 +82,19 @@ assert_contains "OpenRC drops privileges" 'command_user="xray-socks5:xray-socks5
 assert_contains "OpenRC uses supervisor" 'supervisor="supervise-daemon"' "$_openrc"
 assert_contains "OpenRC limits respawns" 'respawn_max=1' "$_openrc"
 assert_contains "OpenRC owns pidfile" 'pidfile="' "$_openrc"
+
+# Standalone writers must select their own destination, even after a different
+# backend was used in the same shell. The old alias retained the OpenRC path.
+S5_INIT=systemd
+s5_write_unit
+assert_file_exists "standalone systemd write uses the systemd path" \
+    "$S5_UNITDIR/$S5_PROJECT.service"
+assert_contains "switching backend preserves the existing OpenRC artifact" \
+    '#!/sbin/openrc-run' "$(cat "$S5_INITSCRIPT")"
+S5_INIT=openrc
+s5_write_unit
+assert_contains "switching back writes an OpenRC script" \
+    '#!/sbin/openrc-run' "$(cat "$S5_INITSCRIPT")"
 
 # A transient nonzero rc-service result is accepted only when the manager says
 # the service is actually starting; a failed/inactive service remains an error.

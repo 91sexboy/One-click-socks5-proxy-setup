@@ -4,6 +4,9 @@ set -u
 umask 077
 
 OUTDIR=${OUTDIR:?OUTDIR must be set}
+# Reused output must never release a consumer on a previous run's success, even
+# when this invocation fails before credential/architecture validation.
+rm -f "$OUTDIR/ready" "$OUTDIR/ready.tmp" "$OUTDIR/port" || exit 1
 PASSFILE=${PASSFILE:?PASSFILE must be set}
 PORT=${PORT:?PORT must be set}
 ARCH=${ARCH:-amd64}
@@ -51,6 +54,7 @@ XRAY_PID=''
 TARGET_PID=''
 cleanup() {
     trap - EXIT HUP INT TERM
+    rm -f "$OUTDIR/ready" "$OUTDIR/ready.tmp"
     if [ -n "$XRAY_PID" ]; then
         kill "$XRAY_PID" 2>/dev/null || true
         wait "$XRAY_PID" 2>/dev/null || true
@@ -61,7 +65,8 @@ cleanup() {
     fi
     rm -rf "$WORK"
 }
-trap cleanup EXIT HUP INT TERM
+trap cleanup EXIT
+trap 'exit 1' HUP INT TERM
 
 if ! curl -fsSL --proto '=https' --proto-redir '=https' --max-filesize $((SIZE + 1)) \
     -o "$WORK/$ASSET" "https://github.com/XTLS/Xray-core/releases/download/v26.3.27/$ASSET"; then
@@ -142,7 +147,6 @@ CONFIG
 "$ENGINE" run -c "$WORK/config.json" >"$WORK/xray.log" 2>&1 &
 XRAY_PID=$!
 printf '%s\n' "$XRAY_PID" >"$OUTDIR/xray.pid"
-printf '%s\n' "$PORT" >"$OUTDIR/port"
 printf '%s\n' "$WORK/config.json" >"$OUTDIR/config.path"
 
 ready=0
@@ -170,6 +174,13 @@ PY
     n=$((n + 1))
     sleep 1
 done
-[ "$ready" = 1 ] || fail 'Xray did not become ready within 30 seconds'
+if [ "$ready" != 1 ] || ! kill -0 "$XRAY_PID" 2>/dev/null; then
+    redact "$WORK/xray.log"
+    fail 'Xray did not become ready within 30 seconds'
+fi
+# PORT is startup input; ready is the only consumer release signal. Rename so a
+# reader sees either no marker or the complete port, never a partially written one.
+printf '%s\n' "$PORT" >"$OUTDIR/ready.tmp" || fail 'cannot stage readiness marker'
+mv -f "$OUTDIR/ready.tmp" "$OUTDIR/ready" || fail 'cannot publish readiness marker'
 printf 'xray ready pid=%s port=%s\n' "$XRAY_PID" "$PORT"
 wait "$XRAY_PID"
