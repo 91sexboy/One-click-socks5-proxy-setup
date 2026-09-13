@@ -282,6 +282,47 @@ jobs:
           docker run --rm --privileged -v "$PWD:/src" -w /src "${{ matrix.image }}" \
             sh /src/.github/scripts/alpine-lifecycle.sh
 
+  systemd-assertion-controls:
+    needs: xray-systemd
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        mutation: [fail, skip, unreachable, swallow]
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - name: Install runtime dependencies
+        run: sudo apt-get update && sudo apt-get install -y python3 curl unzip file iproute2
+      - name: Add the test target addresses
+        run: sudo sh .github/scripts/add-test-target-addresses.sh
+      - name: Exercise native assertion reachability and failure propagation
+        env:
+          ASSERTION_MUTATION: ${{ matrix.mutation }}
+        run: python3 .github/scripts/lifecycle-assert-control.py systemd "$ASSERTION_MUTATION"
+
+  openrc-assertion-controls:
+    needs: openrc-integration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["alpine:3.20", "alpine:3.24"]
+        mutation: [fail, skip, unreachable, swallow]
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - name: Exercise native assertion reachability and failure propagation
+        env:
+          ASSERTION_MUTATION: ${{ matrix.mutation }}
+          ALPINE_IMAGE: ${{ matrix.image }}
+        run: |
+          # Python does not reap orphaned OpenRC daemons when it becomes PID 1.
+          docker run --rm --init --privileged -e GITHUB_ACTIONS=true -e ASSERTION_MUTATION \
+            -v "$PWD:/src:ro" -w /src "$ALPINE_IMAGE" \
+            sh -c 'apk add --no-cache python3 >/dev/null &&
+              python3 .github/scripts/lifecycle-assert-control.py openrc "$ASSERTION_MUTATION"'
+
   memory-report:
     runs-on: ubuntu-24.04
     timeout-minutes: 30

@@ -29,10 +29,7 @@ test "$(stat -c "%U:%G %a" /var/lib/xray-socks5/state)" = "root:root 600"
 # the new identity in both the config and the state.
 python3 tests/protocol/terminal_install.py \
   "$work/answers.update" "$work/pass.update" 23456 0 >"$work/update.log"
-grep -q "ciuser2" /etc/xray-socks5/config.json
-grep -qE "^username[[:space:]]+ciuser2$" /var/lib/xray-socks5/state
-test ! -e /var/lib/xray-socks5/transaction
-test "$(stat -c "%U:%G %a" /etc/xray-socks5/config.json)" = "root:xray-socks5 640"
+sh .github/scripts/lifecycle-update-assert.sh
 rc-service xray-socks5 status
 pkgs_before=$(apk info | sort | sha256sum)
 sh socks5.sh status </dev/null >"$work/status.log"

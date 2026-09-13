@@ -113,10 +113,7 @@ printf 'lifecycle: audit-ok\n'
 sudo sh .github/scripts/run-socks5.sh install \
   "$work/answers.update" "$work/update.log" "$work/pass.update" "$work/pass"
 printf 'lifecycle: update-ok\n'
-sudo grep -q 'ciuser2' /etc/xray-socks5/config.json
-sudo grep -qE '^username[[:space:]]+ciuser2$' /var/lib/xray-socks5/state
-test ! -e /var/lib/xray-socks5/transaction
-test "$(sudo stat -c '%U:%G %a' /etc/xray-socks5/config.json)" = "root:xray-socks5 640"
+sudo sh .github/scripts/lifecycle-update-assert.sh
 sudo systemctl is-active --quiet xray-socks5.service
 sudo sh tests/protocol/post_install_audit.sh / "$work/pass.update" systemd
 printf 'lifecycle: update-audit-ok\n'

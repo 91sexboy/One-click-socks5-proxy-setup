@@ -334,6 +334,144 @@ test_uninstall_unknown() {
     done
 }
 
+t_txn_fault() {
+    if [ "$S5_LOCK_HELD" != 1 ] ||
+        [ "$(cat "$S5_LOCK_OWNER" 2>/dev/null)" != "$S5_LOCK_TOKEN" ]; then
+        printf 'unowned\n' >>"$S5_TEST_ROOT/txn.fault"
+    else
+        printf '%s\n' "$_txn_fault" >>"$S5_TEST_ROOT/txn.fault"
+    fi
+    sha256sum "$S5_CFG" | awk '{print $1}' >"$S5_TEST_ROOT/txn.config-at-fault"
+    return 1
+}
+
+t_txn_run() {
+    _txn_fault=$1
+    s5_precheck() { return 0; }
+    case "$_txn_fault" in
+    mkdir)
+        mkdir() {
+            if [ "${1:-}" = -m ] && [ "${3:-}" = "$S5_TXNDIR" ]; then
+                t_txn_fault
+            else
+                command mkdir "$@"
+            fi
+        }
+        ;;
+    copy-config|copy-state)
+        _txn_copy=$S5_TXNDIR/old.config.json
+        [ "$_txn_fault" != copy-state ] || _txn_copy=$S5_TXNDIR/old.state
+        cp() {
+            if [ "${2:-}" = "$_txn_copy" ]; then t_txn_fault; else command cp "$@"; fi
+        }
+        ;;
+    chmod)
+        chmod() {
+            if [ "${1:-}:${2:-}" = "0600:$S5_TXNDIR/old.config.json" ]; then
+                t_txn_fault
+            else
+                command chmod "$@"
+            fi
+        }
+        ;;
+    stop|start|restart)
+        # Delegate every other verb to the existing external fixture; do not
+        # copy its service-state implementation into another failure double.
+        systemctl() {
+            if [ "${1:-}" = "$_txn_fault" ]; then
+                t_txn_fault
+            else
+                "$S5_TEST_ROOT/bin/systemctl" "$@"
+            fi
+        }
+        if [ "$_txn_fault" = restart ]; then s5_verify_dataplane() { return 1; }; fi
+        ;;
+    wait) s5_wait_stopped() { t_txn_fault; } ;;
+    publish)
+        _txn_publish_failed=0
+        mv() {
+            _txn_last=''
+            for _txn_arg do _txn_last=$_txn_arg; done
+            if [ "$_txn_last" = "$S5_CFG" ] && [ "$_txn_publish_failed" = 0 ]; then
+                _txn_publish_failed=1
+                t_txn_fault
+            else
+                command mv "$@"
+            fi
+        }
+        ;;
+    dataplane) s5_verify_dataplane() { t_txn_fault; } ;;
+    state) s5_state_write() { t_txn_fault; } ;;
+    *) return 2 ;;
+    esac
+    s5_prompt_port() { S5_PORT=24500; return 0; }
+    s5_cmd_install
+}
+
+t_txn_case() {
+    _txn_fault=$1
+    t_xray_fixture 23456
+    t_xray_install
+    _txn_cfg=$(sha256sum "$S5_CFG" | awk '{print $1}')
+    _txn_state=$(sha256sum "$S5_STATE" | awk '{print $1}')
+    # The command owns its real lock and traps. Fault doubles cannot escape
+    # this invocation into fixture initialization or a later scenario.
+    ( t_txn_run "$_txn_fault" ) >"$S5_TEST_ROOT/txn.log" 2>&1
+    _txn_status=$?
+    assert_ne "$_txn_fault failure aborts command" 0 "$_txn_status"
+    assert_contains "$_txn_fault reaches its fault while owning the lock" "$_txn_fault" \
+        "$(cat "$S5_TEST_ROOT/txn.fault" 2>/dev/null)"
+    assert_not_contains "$_txn_fault never retries after losing lock ownership" unowned \
+        "$(cat "$S5_TEST_ROOT/txn.fault" 2>/dev/null)"
+    assert_eq "$_txn_fault preserves config" "$_txn_cfg" "$(sha256sum "$S5_CFG" | awk '{print $1}')"
+    assert_eq "$_txn_fault preserves state" "$_txn_state" "$(sha256sum "$S5_STATE" | awk '{print $1}')"
+    assert_mode "$_txn_fault leaves private config permissions" 640 "$S5_CFG"
+    assert_mode "$_txn_fault leaves private state permissions" 600 "$S5_STATE"
+    assert_file_absent "$_txn_fault releases lock" "$S5_LOCKDIR"
+    case "$_txn_fault" in
+    start|dataplane|state)
+        assert_ne "$_txn_fault occurs after candidate publication" "$_txn_cfg" \
+            "$(cat "$S5_TEST_ROOT/txn.config-at-fault" 2>/dev/null)"
+        ;;
+    *)
+        assert_eq "$_txn_fault observes the old published config" "$_txn_cfg" \
+            "$(cat "$S5_TEST_ROOT/txn.config-at-fault" 2>/dev/null)"
+        ;;
+    esac
+    case "$_txn_fault" in
+    restart)
+        assert_file_exists "restart failure retains config backup" "$S5_TXNDIR/old.config.json"
+        assert_file_exists "restart failure retains state backup" "$S5_TXNDIR/old.state"
+        assert_eq "config recovery copy retains original bytes" "$_txn_cfg" \
+            "$(sha256sum "$S5_TXNDIR/old.config.json" | awk '{print $1}')"
+        assert_eq "state recovery copy retains original bytes" "$_txn_state" \
+            "$(sha256sum "$S5_TXNDIR/old.state" | awk '{print $1}')"
+        assert_mode "config recovery copy remains private" 600 "$S5_TXNDIR/old.config.json"
+        assert_mode "state recovery copy remains private" 600 "$S5_TXNDIR/old.state"
+        ;;
+    *) assert_file_absent "$_txn_fault cleanup removes the owned transaction" "$S5_TXNDIR" ;;
+    esac
+    case "$_txn_fault" in
+    wait) assert_file_absent "failed stop observation does not claim a running service" "$S5_TEST_ROOT/svc_active" ;;
+    restart) : ;;
+    *) assert_eq "$_txn_fault leaves or restores the old listener" 23456 "$(cat "$S5_TEST_ROOT/svc_active")" ;;
+    esac
+}
+
+test_txn_mkdir_failure() { t_txn_case mkdir; }
+test_txn_copy_failure() {
+    t_txn_case copy-config
+    t_txn_case copy-state
+}
+test_txn_chmod_failure() { t_txn_case chmod; }
+test_stop_failure() { t_txn_case stop; }
+test_wait_stopped_failure() { t_txn_case wait; }
+test_publication_failure() { t_txn_case publish; }
+test_new_start_failure() { t_txn_case start; }
+test_dataplane_failure() { t_txn_case dataplane; }
+test_state_write_failure() { t_txn_case state; }
+test_rollback_restart_failure() { t_txn_case restart; }
+
 test_rollback_exit() {
     t_run python3 "$S5_REPO_ROOT/tests/lib/lock_reclaim.py" "$S5_REPO_ROOT/socks5.sh" \
         "${S5_TEST_SHELL:-sh}" rollback-exit
@@ -344,11 +482,11 @@ test_rollback_exit() {
 
 # Optional scenario arguments support isolated runs, permutation and repetition.
 if [ "$#" -eq 0 ]; then
-    set -- family update owned_port rejected_candidate listener_failure rejected_command publish_signal config_symlink uninstall_leftovers uninstall_residue verifier_cleanup restore_failure uninstall_unknown rollback_exit
+    set -- family update owned_port rejected_candidate listener_failure rejected_command publish_signal config_symlink uninstall_leftovers uninstall_residue verifier_cleanup txn_mkdir_failure txn_copy_failure txn_chmod_failure stop_failure wait_stopped_failure publication_failure new_start_failure dataplane_failure state_write_failure rollback_restart_failure restore_failure uninstall_unknown rollback_exit
 fi
 for scenario do
     case "$scenario" in
-    family|update|owned_port|rejected_candidate|listener_failure|rejected_command|publish_signal|config_symlink|uninstall_leftovers|uninstall_residue|verifier_cleanup|restore_failure|uninstall_unknown|rollback_exit)
+    family|update|owned_port|rejected_candidate|listener_failure|rejected_command|publish_signal|config_symlink|uninstall_leftovers|uninstall_residue|verifier_cleanup|txn_mkdir_failure|txn_copy_failure|txn_chmod_failure|stop_failure|wait_stopped_failure|publication_failure|new_start_failure|dataplane_failure|state_write_failure|rollback_restart_failure|restore_failure|uninstall_unknown|rollback_exit)
         "test_$scenario" ;;
     *) t_bad "unknown update scenario: $scenario" ;;
     esac

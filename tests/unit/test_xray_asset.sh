@@ -35,6 +35,10 @@ assert_eq "arm64 archive size" 19716427 "$S5_ASSET_SIZE"
 assert_eq "arm64 archive digest" \
     4d30283ae614e3057f730f67cd088a42be6fdf91f8639d82cb69e48cde80413c \
     "$S5_ASSET_SHA256"
+assert_eq "arm64 extracted xray size" 34209918 "$S5_ASSET_BINARY_SIZE"
+assert_eq "arm64 extracted xray digest" \
+    c2d20a7045250497083afea0d79db0672f6c89a25aaaf37c92de034d6b764b04 \
+    "$S5_ASSET_BINARY_SHA256"
 
 S5_ARCHNAME=riscv64
 t_run s5_asset_select
@@ -222,10 +226,7 @@ s5t_asset_reject device "an archive with a device member" members
 S5T_SIZE_OVERRIDE=1
 s5t_asset_reject good "an archive of an unexpected size" size
 S5T_SIZE_OVERRIDE=''
-# The mismatching values are deliberately not 64 hex characters. The pinned-digest
-# oracle in test_xray_docs.sh requires every 64-hex string in this file to be a
-# real pin, so a plausible-looking placeholder here would read as a mistyped pin.
-S5T_SHA_OVERRIDE=not-the-pinned-archive-digest
+S5T_SHA_OVERRIDE=0000000000000000000000000000000000000000000000000000000000000000
 s5t_asset_reject good "an archive with an unexpected digest" sha256
 S5T_SHA_OVERRIDE=''
 # The extracted binary's exact-size gate (distinct from its SHA-256, and checked
@@ -237,7 +238,7 @@ S5T_BIN_SIZE=999999
 s5t_asset_reject good "an archive whose xray member has an unexpected size" \
     binary-size
 S5T_BIN_SIZE=${S5T_META%% *}
-S5T_BIN_SHA256=not-the-pinned-binary-digest
+S5T_BIN_SHA256=1111111111111111111111111111111111111111111111111111111111111111
 s5t_asset_reject good "an archive whose xray member has an unexpected digest" \
     binary-sha256
 S5T_BIN_SHA256=${S5T_META##* }
