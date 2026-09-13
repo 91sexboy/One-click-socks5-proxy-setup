@@ -86,7 +86,7 @@ class ComparisonTests(unittest.TestCase):
         self.assertFalse(verdict["eligible"])
 
     def test_missing_or_failed_measurements_cannot_produce_a_verdict(self):
-        for fault in ("trial", "stage", "samples", "traffic", "oom", "restart", "nan"):
+        for fault in ("trial", "stage", "samples", "long-window", "extra-samples", "traffic", "oom", "restart", "nan"):
             with self.subTest(fault=fault):
                 trials = self.trials()
                 if fault == "trial":
@@ -95,6 +95,10 @@ class ComparisonTests(unittest.TestCase):
                     del trials[0]["stages"]["idle"]
                 elif fault == "samples":
                     trials[0]["stages"]["idle"]["observation_count"] = 1
+                elif fault == "long-window":
+                    trials[0]["stages"]["idle"]["seconds"] = 40
+                elif fault == "extra-samples":
+                    trials[0]["stages"]["idle"]["observation_count"] = 40
                 elif fault == "traffic":
                     trials[0]["stages"]["duplex"]["verified_bytes"] = 0
                 elif fault == "oom":
@@ -130,6 +134,24 @@ class ComparisonTests(unittest.TestCase):
             clock.now += duration + 2
         with self.assertRaises(TimeoutError):
             comparison.observe(Reader(), lambda: None, duration=3, clock=clock.time, wait=late_wait)
+        for location in ("check", "snapshot"):
+            with self.subTest(delayed=location):
+                clock.now = 0
+                def delay_last_read():
+                    if clock.now >= 3:
+                        clock.now += 2
+                def slow_check():
+                    if location == "check":
+                        delay_last_read()
+                class SlowReader(Reader):
+                    def snapshot(self):
+                        if location == "snapshot":
+                            delay_last_read()
+                        return super().snapshot()
+                with self.assertRaises(TimeoutError):
+                    comparison.observe(SlowReader(), slow_check, duration=3,
+                                       clock=clock.time, wait=clock.wait)
+
     def run_traffic(self, mode, corrupt=False, fail_connect=False):
         sys.path.insert(0, str(ROOT / "tests/protocol"))
         import duplex_target

@@ -303,7 +303,10 @@ def observe(reader, check, duration=WINDOW_SECONDS, interval=1, clock=time.monot
             raise TimeoutError("comparison missed its sampling cadence")
         check()
         values = reader.snapshot()
-        values["elapsed_seconds"] = clock() - start
+        sampled_at = clock()
+        if sampled_at - target >= interval:
+            raise TimeoutError("comparison observation exceeded its sampling interval")
+        values["elapsed_seconds"] = sampled_at - start
         if values["cgroup_oom"] or values["cgroup_oom_kill"]:
             raise RuntimeError("comparison observed an OOM event")
         observations.append(values)
@@ -326,7 +329,8 @@ def assess(trials, architecture):
                         "cgroup_peak_bytes", "cpu_usec", "verified_bytes", "oom", "oom_kill"):
                 if not math.isfinite(stage[key]) or stage[key] < 0:
                     raise ValueError("comparison metric is missing, negative or non-finite")
-            if (stage["seconds"] < WINDOW_SECONDS or stage["observation_count"] < WINDOW_SECONDS + 1
+            if (not WINDOW_SECONDS <= stage["seconds"] < WINDOW_SECONDS + 1
+                    or stage["observation_count"] != WINDOW_SECONDS + 1
                     or stage["oom"] != 0 or stage["oom_kill"] != 0):
                 raise ValueError("comparison observation window or OOM evidence failed")
             if name in ("duplex", "slow") and (stage["verified_bytes"] <= 0 or stage["cpu_usec"] <= 0):
