@@ -259,6 +259,8 @@ for _control in systemd-assertion-controls openrc-assertion-controls; do
             'needs: openrc-integration' "$_control_text"
         assert_contains "OpenRC controls cover both native versions" \
             'image: ["alpine:3.20", "alpine:3.24"]' "$_control_text"
+        assert_contains "OpenRC controls give orphaned daemons a reaping init" \
+            'docker run --rm --init --privileged' "$_control_text"
         ;;
     esac
 done

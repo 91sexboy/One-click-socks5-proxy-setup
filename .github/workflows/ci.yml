@@ -317,7 +317,8 @@ jobs:
           ASSERTION_MUTATION: ${{ matrix.mutation }}
           ALPINE_IMAGE: ${{ matrix.image }}
         run: |
-          docker run --rm --privileged -e GITHUB_ACTIONS=true -e ASSERTION_MUTATION \
+          # Python does not reap orphaned OpenRC daemons when it becomes PID 1.
+          docker run --rm --init --privileged -e GITHUB_ACTIONS=true -e ASSERTION_MUTATION \
             -v "$PWD:/src:ro" -w /src "$ALPINE_IMAGE" \
             sh -c 'apk add --no-cache python3 >/dev/null &&
               python3 .github/scripts/lifecycle-assert-control.py openrc "$ASSERTION_MUTATION"'
