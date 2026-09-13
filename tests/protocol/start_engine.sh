@@ -69,7 +69,7 @@ trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
 
 if ! curl -fsSL --proto '=https' --proto-redir '=https' --max-filesize $((SIZE + 1)) \
-    -o "$WORK/$ASSET" "https://github.com/XTLS/Xray-core/releases/download/v26.3.27/$ASSET"; then
+    -o "$WORK/$ASSET" "https://github.com/91sexboy/One-click-socks5-proxy-setup/releases/download/xray-v26.3.27/$ASSET"; then
     fail 'Xray archive download failed'
 fi
 archive_size=$(wc -c <"$WORK/$ASSET" | tr -d '[:space:]') || fail 'cannot measure Xray archive'

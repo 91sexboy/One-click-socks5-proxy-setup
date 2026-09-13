@@ -181,7 +181,7 @@ test_uninstall_leftovers() {
         >"$S5_TEST_ROOT/uninst.out" 2>"$S5_TEST_ROOT/uninst.err" &&
         T_STATUS=0 || T_STATUS=$?
     assert_eq "uninstall completes despite an interrupted update's leftovers" 0 "$T_STATUS"
-    assert_eq "the uninstall confirmation keeps the answer on its own line" 0 \
+    assert_eq "the redirected uninstall confirmation terminates its line" 1 \
         "$(wc -l <"$S5_TEST_ROOT/uninst.err" | tr -d '[:space:]')"
     assert_file_absent "uninstall removes the config directory" "$S5_SYSCONFDIR"
     assert_file_absent "uninstall removes the state directory" "$S5_STATEDIR"

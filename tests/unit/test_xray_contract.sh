@@ -287,29 +287,20 @@ assert_contains "openrc install requires its service manager" 'rc-service' "$_pc
 S5_OSRELEASE="$ROOT/tests/fixtures/os-release/debian-12"
 unset -f unzip
 
-# SPEC 2 asks the three confirmations the same way. All three catalog texts end in
-# a trailing space so the answer stays on the question's line, but uninstall
-# rendered its question through s5_msg_print -> s5_say, which terminates the line
-# and pushed the y/N onto the next one. The other two used a bare `s5_msg`, which
-# additionally discarded the non-zero status s5_msg returns for a key it cannot
-# render: the operator saw no prompt at all, and whatever already sat on stdin was
-# accepted as consent. Command substitution strips trailing newlines, so the shape
-# has to be asserted on a file rather than on a captured string.
+# Redirected prompts cannot rely on terminal echo to supply their line breaks.
 _d5ask=$S5_TEST_ROOT/d5.ask
 s5_msg_ask uninstall.confirm 2>"$_d5ask"
 assert_eq "the uninstall question renders" 0 "$?"
-assert_eq "the uninstall question does not terminate its line" 0 \
+assert_eq "the redirected uninstall question terminates its line" 1 \
     "$(wc -l <"$_d5ask" | tr -d '[:space:]')"
 assert_contains "the uninstall question is the catalog text" \
     'Remove the Xray mixed proxy' "$(cat "$_d5ask")"
 
-# These two already kept the answer on the line; they are here so a fix that
-# routes all three through one helper cannot regress the two that were right.
 printf 'y\n' | s5_confirm_install 2>"$_d5ask" >/dev/null
-assert_eq "the install question does not terminate its line" 0 \
+assert_eq "the redirected install question terminates its line" 1 \
     "$(wc -l <"$_d5ask" | tr -d '[:space:]')"
 printf 'y\n' | s5_confirm_update 2>"$_d5ask" >/dev/null
-assert_eq "the update question does not terminate its line" 0 \
+assert_eq "the redirected update question terminates its line" 1 \
     "$(wc -l <"$_d5ask" | tr -d '[:space:]')"
 
 # An unrenderable prompt must not be answered on the operator's behalf. The stub

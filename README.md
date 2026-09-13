@@ -37,7 +37,7 @@ The installer binds IPv4 `0.0.0.0` on the selected port and runs Xray under the 
 
 `x86_64` maps to `amd64`; `aarch64` maps to `arm64`. Other distribution IDs and architectures are rejected rather than assumed compatible.
 
-**Accepted does not mean lifecycle-tested.** CI exercises installation, configuration update, restart, crash recovery, protocol checks, and uninstall on **Ubuntu 24.04 amd64** and **Alpine 3.20 / 3.24 amd64**. Arm64 has asset and executable verification, not a full service-lifecycle job. Other accepted systems remain lifecycle-unverified.
+**Accepted does not mean lifecycle-tested.** CI exercises installation, configuration update, restart, crash recovery, protocol checks, and uninstall on **Ubuntu 24.04 amd64** and **Alpine 3.20 / 3.24 amd64**. Arm64 has asset and executable verification plus Ubuntu 24.04 memory comparisons, not a full service-lifecycle job. Other accepted systems remain lifecycle-unverified.
 
 ## Quick install
 
@@ -61,6 +61,10 @@ sh socks5.sh
 ```
 
 Without an argument, the script runs `install`.
+
+Xray `v26.3.27` is downloaded from [this repository's Release mirror](https://github.com/91sexboy/One-click-socks5-proxy-setup/releases/tag/xray-v26.3.27): unchanged official ZIPs, about **21.14 MB on amd64** or **19.72 MB on arm64**. Both archive and executable sizes and SHA-256 values are verified; there is no fallback to another download source.
+
+After installation and verification succeed, the installer removes its own downloaded ZIP and temporary extracted copy. The installed executable remains at `/usr/local/libexec/xray-socks5/xray` (about 36.58 MB on amd64 or 34.21 MB on arm64). It does not sweep old temporary directories or recovery backups; forced termination or power loss can leave temporary files.
 
 ### 3. Choose language and credentials
 
@@ -135,4 +139,4 @@ For service diagnostics, use `systemctl status xray-socks5.service` on systemd, 
 
 ## License
 
-[MIT](LICENSE).
+Installer and tests: [MIT](LICENSE). Mirrored Xray binaries retain their upstream MPL-2.0 license and third-party notices.

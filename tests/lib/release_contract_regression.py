@@ -34,7 +34,14 @@ def declarations(name, text):
                    r'(?:asset name|archive (?:size|digest)|extracted xray (?:size|digest)))"'
                    r'(?:[ \t]|\\\n)+(?P<value>[A-Za-z0-9_.-]+)')
         expected = 12
-    matches = list(re.finditer(pattern, text, re.MULTILINE))
+    start, end = 0, len(text)
+    if name == FILES[1]:
+        job = re.search(r'^  xray-assets:\n(.*?)(?=^  [a-z][a-z0-9-]*:|\Z)',
+                        text, re.MULTILINE | re.DOTALL)
+        if job is None:
+            raise AssertionError('release asset job is missing')
+        start, end = job.span(1)
+    matches = list(re.compile(pattern, re.MULTILINE).finditer(text, start, end))
     if len(matches) != expected:
         raise AssertionError(f'{name}: mutation inventory {len(matches)} != {expected}')
     return matches
@@ -100,13 +107,33 @@ def main():
                 raise AssertionError('workflow mutation anchor missing or duplicated')
             rejects(FILES[1], workflow.replace(literal, ''), 'missing ' + literal.split('=')[0])
             rejects(FILES[1], workflow.replace(literal, literal + 'invalid'), 'malformed tool/binding')
-        for name in FILES[1:3]:
+        mirror = 'https://github.com/91sexboy/One-click-socks5-proxy-setup/releases/download/'
+        upstream = 'https://github.com/XTLS/Xray-core/releases/download/v26.3.27/'
+        for name in FILES[:3]:
             text = originals[name]
-            url = 'https://github.com/XTLS/Xray-core/releases/download/v26.3.27/'
+            tag = 'xray-$S5_XRAY_VERSION' if name == FILES[0] else 'xray-v26.3.27/'
+            url = mirror + tag
             if text.count(url) != 1:
                 raise AssertionError('release URL mutation anchor missing or duplicated')
-            rejects(name, text.replace(url, url.replace('v26.3.27', 'v0.0.0')), 'wrong URL version')
+            rejects(name, text.replace(url, url.replace('xray-', 'other-')), 'wrong mirror tag')
+            rejects(name, text.replace(url, url.replace('91sexboy', 'unexpected-owner')), 'wrong repository')
+            rejects(name, text.replace(url, upstream), 'upstream distribution source')
+            rejects(name, text.replace(url, url.replace('https:', 'http:')), 'insecure distribution source')
             rejects(name, text.replace(url, ''), 'missing URL')
+            if name == FILES[0]:
+                line = 'S5_XRAY_BASE=' + url
+                rejects(name, text.replace(line, line + '\n' + line), 'duplicate distribution base')
+                anchor = '-o "$1" "$S5_XRAY_BASE/$S5_ASSET_NAME" || {'
+                if text.count(anchor) != 1:
+                    raise AssertionError('installer transport mutation anchor missing')
+                fallback = ('-o "$1" "$S5_XRAY_BASE/$S5_ASSET_NAME" || '
+                            'curl -fsSL "' + upstream + '$S5_ASSET_NAME" || {')
+                rejects(name, text.replace(anchor, fallback), 'transport failure triggers upstream fallback')
+            else:
+                variable = '$XRAY_ASSET' if name == FILES[1] else '$ASSET'
+                anchor = '"' + url + variable + '"'
+                fallback = anchor + ' || curl -fsSL "' + upstream + variable + '"'
+                rejects(name, text.replace(anchor, fallback), 'additional fallback URL')
 
         # Test callers through the real docs/asset paths too, not just imports.
         def run_test(name, expected):
