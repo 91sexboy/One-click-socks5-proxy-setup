@@ -64,6 +64,21 @@ MOCK
     done
     _port=$(cat "$WORK/port.$_behavior" 2>/dev/null)
     python3 "$VERIFY_PY" "$_port" "$WORK/pass" >"$WORK/out.$_behavior" 2>&1
+    _direct_status=$?
+    (
+        S5_LIB_ONLY=1
+        S5_TEST_MODE=1
+        S5_TEST_ROOT=$WORK
+        : >"$S5_TEST_ROOT/.s5-test-root"
+        export S5_LIB_ONLY S5_TEST_MODE S5_TEST_ROOT
+        # Production is selected dynamically for mutation checks.
+        # shellcheck source=/dev/null
+        . "$SRC"
+        s5_verify_protocols "$_port" "$WORK/pass"
+    ) >"$WORK/helper.$_behavior" 2>&1
+    assert_eq "$_behavior helper preserves Python exit status" "$_direct_status" "$?"
+    assert_eq "$_behavior helper preserves Python diagnostics" \
+        "$(cat "$WORK/out.$_behavior")" "$(cat "$WORK/helper.$_behavior")"
     kill "$_mockpid" 2>/dev/null || true
     wait "$_mockpid" 2>/dev/null || true
 }
@@ -79,5 +94,42 @@ assert_ne "the auth-method case produced a diagnostic" "" "$_diag_auth"
 assert_ne "two distinct failures produce distinct diagnostics" "$_diag_close" "$_diag_auth"
 assert_contains "a closed inbound names its reason" "closed" "$_diag_close"
 assert_contains "a rejected auth method names its reason" "auth method" "$_diag_auth"
+
+S5_TEST_MODE=1
+S5_TEST_ROOT=$WORK
+S5_LIB_ONLY=1
+: >"$S5_TEST_ROOT/.s5-test-root"
+export S5_TEST_MODE S5_TEST_ROOT S5_LIB_ONLY
+# Production is selected dynamically for mutation checks.
+# shellcheck source=/dev/null
+. "$SRC"
+S5_TEST_MODE=0
+S5_WORKDIR=$WORK
+S5_LANG=en
+S5_PORT=23456
+S5_USERNAME=alice
+S5_PASSWORD='Secret_123~x'
+s5_verify_protocols() {
+    assert_eq "wrapper passes the listener port" 23456 "$1"
+    assert_eq "credential file is registered before probing" "$2" "$S5_VERIFY_TEMP"
+    assert_mode "probe credentials remain private" 600 "$2"
+    cmp -s "$WORK/pass" "$2"
+    assert_eq "wrapper passes credentials through the file" 0 "$?"
+    _verifier_path=$2
+    return "$_wrapper_status"
+}
+for _wrapper_status in 0 17; do
+    s5_verify_dataplane >"$WORK/wrapper" 2>&1
+    _wrapper_result=$?
+    if [ "$_wrapper_status" = 0 ]; then
+        assert_eq "successful protocol probe is accepted" 0 "$_wrapper_result"
+        assert_eq "successful protocol probe has no error report" '' "$(cat "$WORK/wrapper")"
+    else
+        assert_eq "protocol failure is normalized to command failure" 1 "$_wrapper_result"
+        assert_eq "protocol failure is reported once" 1 "$(wc -l <"$WORK/wrapper" | tr -d ' ')"
+    fi
+    assert_file_absent "wrapper removes credentials after probing" "$_verifier_path"
+    assert_eq "wrapper clears credential ownership after probing" '' "$S5_VERIFY_TEMP"
+done
 
 t_summary

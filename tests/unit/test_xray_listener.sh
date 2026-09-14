@@ -65,6 +65,14 @@ printf '%s\n' 'CLOSE-WAIT 0 4096 0.0.0.0:23456 0.0.0.0:* users:(('"'"'xray'"'"',
 s5_listener_state
 assert_eq "non-listening state is unverified" 2 "$?"
 
+printf '\tLISTEN\t0  4096\t*:23456  0.0.0.0:* users:(("xray",pid=1234,fd=3))\n' >"$S5_TEST_ROOT/ss-output"
+s5_listener_state
+assert_eq "mixed whitespace preserves listener fields" 0 "$?"
+
+printf '%s\n' 'LISTEN 0' >"$S5_TEST_ROOT/ss-output"
+s5_listener_state
+assert_eq "short rows do not reuse the previous address" 1 "$?"
+
 printf '%s\n' 'ss failed' >"$S5_TEST_ROOT/ss-output"
 t_stub ss <<'SSFAIL'
 #!/bin/sh
