@@ -42,25 +42,26 @@ crash_pid=$(cat /run/openrc/options/xray-socks5/child_pid)
 test "$crash_pid" -gt 0
 kill -9 "$crash_pid"
 new_pid=0
-for n in $(seq 1 60); do
+crash_recovered() {
   new_pid=$(cat /run/openrc/options/xray-socks5/child_pid 2>/dev/null || printf 0)
-  if test "$new_pid" != "$crash_pid" && test "$new_pid" -gt 0; then break; fi
-  sleep 1
-done
+  test "$new_pid" != "$crash_pid" && test "$new_pid" -gt 0
+}
+# The assertions below remain authoritative after the final sleep.
+lifecycle_wait_until 60 1 crash_recovered || true
 test "$new_pid" != "$crash_pid"
 test "$new_pid" -gt 0
-for n in $(seq 1 60); do
-  ss -H -ltnp 2>/dev/null | grep -q "pid=$new_pid," && break
-  sleep 1
-done
+listener_recovered() {
+  ss -H -ltnp 2>/dev/null | grep -q "pid=$new_pid,"
+}
+lifecycle_wait_until 60 1 listener_recovered || true
 ss -H -ltnp | grep -q "pid=$new_pid,"
 cp /etc/xray-socks5/config.json "$work/good.json"
 printf "{broken\n" >/etc/xray-socks5/config.json
 rc-service xray-socks5 restart || true
-for n in $(seq 1 30); do
-  rc-service xray-socks5 status >/dev/null 2>&1 || break
-  sleep 1
-done
+service_stopped() {
+  if rc-service xray-socks5 status >/dev/null 2>&1; then return 1; fi
+}
+lifecycle_wait_until 30 1 service_stopped || true
 if rc-service xray-socks5 status >/dev/null 2>&1; then
   printf "a broken config left the service running\n" >&2
   exit 1
@@ -109,7 +110,7 @@ test "$(stat -c "%U:%G %a" /etc/xray-socks5/config.json)" = "root:xray-socks5 64
 rc-service xray-socks5 restart
 rc-service xray-socks5 status
 sh tests/protocol/post_install_audit.sh / "$work/pass.update" openrc
-# SPEC 10: credentials reach neither argv nor the service environment.
+# SPEC 7: credentials reach neither argv nor the service environment.
 live_pid=$(cat /run/openrc/options/xray-socks5/child_pid)
 if tr "\0" "\n" <"/proc/$live_pid/cmdline" | grep -qE "CISecret_123~x|CISecret_456~y"; then
   printf "credential appeared in argv\n" >&2
@@ -127,7 +128,7 @@ sh .github/scripts/add-test-target-addresses.sh
 python3 tests/protocol/duplex_target.py --host 0.0.0.0 --host6 :: \
   --ready-file "$work/target.port" \
   --count-file "$work/count" --report-file "$work/report" >"$work/target.log" 2>&1 &
-for n in $(seq 1 50); do test -s "$work/target.port" && break; sleep 0.2; done
+lifecycle_wait_until 50 0.2 test -s "$work/target.port" || true
 test -s "$work/target.port"
 PASSFILE="$work/pass.update" PORT=23456 TARGET_PORT="$(cat "$work/target.port")" \
   REPORT="$work/report" OUT="$work/probe" \
@@ -141,14 +142,9 @@ test ! -e /etc/init.d/xray-socks5
 test ! -e /run/xray-socks5.pid
 sh socks5.sh help </dev/null >"$work/help-after-uninstall.log"
 grep -q 'Usage: sh socks5.sh' "$work/help-after-uninstall.log"
-# set -e does not apply to a command a ! inverts, so `! grep -q secret log` did
-# not fail the gate when it found one. Only the last such line ever mattered, as
-# the script's exit status; a credential leaked into install.log went unreported.
-if grep -q "CISecret_123~x" "$work/install.log"; then
-    printf "a credential reached the install log\n" >&2
-    exit 1
-fi
-if grep -q "CISecret_456~y" "$work/update.log"; then
-    printf "a credential reached the update log\n" >&2
-    exit 1
-fi
+install_secret=$(sed -n '2p' "$work/pass")
+update_secret=$(sed -n '2p' "$work/pass.update")
+lifecycle_no_credential_in "$work/install.log" "$install_secret"
+lifecycle_no_credential_in "$work/status.log" "$update_secret"
+lifecycle_no_credential_in "$work/update.log" "$install_secret"
+lifecycle_no_credential_in "$work/update.log" "$update_secret"

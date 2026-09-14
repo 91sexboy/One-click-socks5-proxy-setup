@@ -176,11 +176,18 @@ test_uninstall_leftovers() {
     chmod 0600 "$S5_TXNDIR/old.config.json" "$S5_TXNDIR/old.state"
     : >"$S5_SYSCONFDIR/.s5new.leftover.json"
     printf 'y\n' >"$S5_TEST_ROOT/answers.uninstall"
+    mkdir -p "$S5_TEST_ROOT/etc/socks5-manager" "$S5_TEST_ROOT/var/lib/socks5-manager" "$S5_TEST_ROOT/usr/local/libexec/socks5-manager"
+    printf 'legacy config\n' >"$S5_TEST_ROOT/etc/socks5-manager/3proxy.cfg"
+    printf 'legacy state\n' >"$S5_TEST_ROOT/var/lib/socks5-manager/state"
+    printf 'legacy binary\n' >"$S5_TEST_ROOT/usr/local/libexec/socks5-manager/3proxy"
     # Split streams: merging the prompt with stdout hides its newline regression.
     s5_cmd_uninstall <"$S5_TEST_ROOT/answers.uninstall" \
         >"$S5_TEST_ROOT/uninst.out" 2>"$S5_TEST_ROOT/uninst.err" &&
         T_STATUS=0 || T_STATUS=$?
     assert_eq "uninstall completes despite an interrupted update's leftovers" 0 "$T_STATUS"
+    assert_eq "uninstall preserves the legacy config" 'legacy config' "$(cat "$S5_TEST_ROOT/etc/socks5-manager/3proxy.cfg")"
+    assert_eq "uninstall preserves the legacy state" 'legacy state' "$(cat "$S5_TEST_ROOT/var/lib/socks5-manager/state")"
+    assert_eq "uninstall preserves the legacy binary" 'legacy binary' "$(cat "$S5_TEST_ROOT/usr/local/libexec/socks5-manager/3proxy")"
     assert_eq "the redirected uninstall confirmation terminates its line" 1 \
         "$(wc -l <"$S5_TEST_ROOT/uninst.err" | tr -d '[:space:]')"
     assert_file_absent "uninstall removes the config directory" "$S5_SYSCONFDIR"
@@ -480,13 +487,42 @@ test_rollback_exit() {
         'rollback stops before releasing operation lock' "$T_OUT"
 }
 
+test_uninstall_messages() {
+    for _message_fault in account file; do
+        for _message_lang in en zh; do
+            t_xray_fixture 23456
+            t_xray_install
+            S5_LANG=$_message_lang
+            s5_precheck() { return 0; }
+            printf 'y\n' >"$S5_TEST_ROOT/answers.uninstall"
+            T_OUT=$( (
+                userdel() { return 1; }
+                rm() {
+                    if [ "$_message_fault" = file ] && [ "$*" = "-f $S5_SERVICE_ARTIFACT" ]; then return 1; fi
+                    command rm "$@"
+                }
+                s5_cmd_uninstall <"$S5_TEST_ROOT/answers.uninstall"
+            ) 2>&1) && T_STATUS=0 || T_STATUS=$?
+            assert_ne "uninstall reports $_message_fault failure in $S5_LANG" 0 "$T_STATUS"
+            case "$S5_LANG:$_message_fault" in
+            en:account) _message_expected='[!] could not remove service account: xray-socks5' ;;
+            zh:account) _message_expected='[!] 无法删除服务账户：xray-socks5。' ;;
+            en:file) _message_expected="[!] could not remove owned file: $S5_SERVICE_ARTIFACT" ;;
+            zh:file) _message_expected="[!] 无法删除自有文件：$S5_SERVICE_ARTIFACT。" ;;
+            esac
+            assert_contains "uninstall translates $_message_fault failure in $S5_LANG" "$_message_expected" "$T_OUT"
+            assert_file_absent "failed uninstall releases the operation lock" "$S5_LOCKDIR"
+        done
+    done
+}
+
 # Optional scenario arguments support isolated runs, permutation and repetition.
 if [ "$#" -eq 0 ]; then
-    set -- family update owned_port rejected_candidate listener_failure rejected_command publish_signal config_symlink uninstall_leftovers uninstall_residue verifier_cleanup txn_mkdir_failure txn_copy_failure txn_chmod_failure stop_failure wait_stopped_failure publication_failure new_start_failure dataplane_failure state_write_failure rollback_restart_failure restore_failure uninstall_unknown rollback_exit
+    set -- uninstall_messages family update owned_port rejected_candidate listener_failure rejected_command publish_signal config_symlink uninstall_leftovers uninstall_residue verifier_cleanup txn_mkdir_failure txn_copy_failure txn_chmod_failure stop_failure wait_stopped_failure publication_failure new_start_failure dataplane_failure state_write_failure rollback_restart_failure restore_failure uninstall_unknown rollback_exit
 fi
 for scenario do
     case "$scenario" in
-    family|update|owned_port|rejected_candidate|listener_failure|rejected_command|publish_signal|config_symlink|uninstall_leftovers|uninstall_residue|verifier_cleanup|txn_mkdir_failure|txn_copy_failure|txn_chmod_failure|stop_failure|wait_stopped_failure|publication_failure|new_start_failure|dataplane_failure|state_write_failure|rollback_restart_failure|restore_failure|uninstall_unknown|rollback_exit)
+    uninstall_messages|family|update|owned_port|rejected_candidate|listener_failure|rejected_command|publish_signal|config_symlink|uninstall_leftovers|uninstall_residue|verifier_cleanup|txn_mkdir_failure|txn_copy_failure|txn_chmod_failure|stop_failure|wait_stopped_failure|publication_failure|new_start_failure|dataplane_failure|state_write_failure|rollback_restart_failure|restore_failure|uninstall_unknown|rollback_exit)
         "test_$scenario" ;;
     *) t_bad "unknown update scenario: $scenario" ;;
     esac

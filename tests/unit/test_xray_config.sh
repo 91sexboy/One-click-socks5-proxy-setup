@@ -133,6 +133,7 @@ t_run s5_config_test "$S5_CFG"
 assert_ne "a rejected candidate fails" 0 "$T_STATUS"
 assert_contains "the engine reason reaches the operator" 'refusing config' "$T_OUT"
 assert_not_contains "the engine reason is redacted" 'Secret_123~x' "$T_OUT"
+assert_contains "the engine reason uses the standard redaction marker" '<REDACTED>' "$T_OUT"
 cat >"$S5_BIN" <<'XRAY'
 #!/bin/sh
 printf '%s\n' "$*" >>"$S5_TEST_ROOT/xray-calls"

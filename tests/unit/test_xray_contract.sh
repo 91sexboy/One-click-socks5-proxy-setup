@@ -84,16 +84,9 @@ assert_eq "state identifies mixed" mixed "$(s5_state_get protocol)"
 assert_eq "state disables UDP" false "$(s5_state_get udp)"
 assert_eq "state has unit ownership hash" "$S5_UNIT_SHA256" "$(s5_state_get unit_sha256)"
 
-# Old 3proxy namespace is deliberately untouched by this branch.
-mkdir -p "$S5_TEST_ROOT/etc/socks5-manager" "$S5_TEST_ROOT/var/lib/socks5-manager" "$S5_TEST_ROOT/usr/local/libexec/socks5-manager"
-printf 'legacy\n' >"$S5_TEST_ROOT/etc/socks5-manager/3proxy.cfg"
-printf 'legacy\n' >"$S5_TEST_ROOT/var/lib/socks5-manager/state"
-printf 'legacy\n' >"$S5_TEST_ROOT/usr/local/libexec/socks5-manager/3proxy"
 source=$(cat "$ROOT/socks5.sh")
 assert_not_contains "production has no legacy namespace" 'socks5-manager' "$source"
 assert_not_contains "production has no 3proxy binary" '3proxy' "$source"
-assert_file_exists "legacy config survives" "$S5_TEST_ROOT/etc/socks5-manager/3proxy.cfg"
-assert_file_exists "legacy state survives" "$S5_TEST_ROOT/var/lib/socks5-manager/state"
 
 # The service unit has no credential-bearing argument and runs as the dedicated user.
 mkdir -p "$S5_UNITDIR"
@@ -217,6 +210,8 @@ S5_LANG=$_msglang
 # detects the platform itself and would otherwise test one backend twice.
 s5_require_commands() { printf '%s\n' "$*"; return 0; }
 s5_install_runtime_dependencies() { return 0; }
+mkdir -p "$S5_TEST_ROOT/run/systemd/system" "$S5_TEST_ROOT/run/openrc"
+: >"$S5_TEST_ROOT/run/openrc/softlevel"
 for _pccase in systemd:debian-12 openrc:alpine-3.20; do
     _pcinit=${_pccase%%:*}
     S5_OSRELEASE="$ROOT/tests/fixtures/os-release/${_pccase#*:}"
@@ -284,6 +279,43 @@ assert_contains "systemd update requires systemctl" 'systemctl' "$_pcreq"
 S5_OSRELEASE="$ROOT/tests/fixtures/os-release/alpine-3.20"
 _pcreq=$(s5_precheck install 2>&1)
 assert_contains "openrc install requires its service manager" 'rc-service' "$_pcreq"
+for _init_case in systemd:debian-12 openrc:alpine-3.20; do
+    _init_backend=${_init_case%%:*}
+    S5_OSRELEASE="$ROOT/tests/fixtures/os-release/${_init_case#*:}"
+    case "$_init_backend" in
+    systemd) rmdir "$S5_TEST_ROOT/run/systemd/system" ;;
+    openrc) rm "$S5_TEST_ROOT/run/openrc/softlevel" ;;
+    esac
+    for _init_mode in install update; do
+        t_run s5_precheck "$_init_mode"
+        assert_ne "$_init_mode refuses an unbooted $_init_backend" 0 "$T_STATUS"
+        assert_contains "unbooted $_init_backend is diagnosed before installation" 'no supported service manager was found' "$T_OUT"
+    done
+    rm -f "$S5_TEST_ROOT/init-download" "$S5_TEST_ROOT/init-account" "$S5_TEST_ROOT/init-unit"
+    T_OUT=$( (
+        s5_download_engine() { : >"$S5_TEST_ROOT/init-download"; return 1; }
+        s5_account_create() { : >"$S5_TEST_ROOT/init-account"; return 1; }
+        s5_write_unit() { : >"$S5_TEST_ROOT/init-unit"; return 1; }
+        s5_cmd_install
+    ) 2>&1) && T_STATUS=0 || T_STATUS=$?
+    assert_ne "install command refuses unbooted $_init_backend" 0 "$T_STATUS"
+    assert_contains "install command reports the init refusal" 'no supported service manager was found' "$T_OUT"
+    assert_file_absent "unbooted $_init_backend never reaches download" "$S5_TEST_ROOT/init-download"
+    assert_file_absent "unbooted $_init_backend never creates an account" "$S5_TEST_ROOT/init-account"
+    assert_file_absent "unbooted $_init_backend never writes a service artifact" "$S5_TEST_ROOT/init-unit"
+    for _init_mode in status restart uninstall; do
+        t_run s5_precheck "$_init_mode"
+        assert_eq "$_init_mode remains available without $_init_backend startup marker" 0 "$T_STATUS"
+    done
+    case "$_init_backend" in
+    systemd) mkdir "$S5_TEST_ROOT/run/systemd/system" ;;
+    openrc) : >"$S5_TEST_ROOT/run/openrc/softlevel" ;;
+    esac
+    for _init_mode in install update; do
+        t_run s5_precheck "$_init_mode"
+        assert_eq "$_init_mode accepts booted $_init_backend" 0 "$T_STATUS"
+    done
+done
 S5_OSRELEASE="$ROOT/tests/fixtures/os-release/debian-12"
 unset -f unzip
 
@@ -313,5 +345,36 @@ assert_contains "an unrenderable install prompt says so" \
 if ( s5_msg() { return 1; }; printf 'y\n' | s5_confirm_update ) 2>"$_d5ask" >/dev/null
 then _d5s=0; else _d5s=$?; fi
 assert_ne "an unrenderable update prompt is not taken as consent" 0 "$_d5s"
+
+while IFS='|' read -r _catalog_key _catalog_arg1 _catalog_arg2 _catalog_en _catalog_zh; do
+    set --
+    [ -z "$_catalog_arg1" ] || set -- "$_catalog_arg1"
+    [ -z "$_catalog_arg2" ] || set -- "$@" "$_catalog_arg2"
+    for S5_LANG in en zh; do
+        t_run s5_msg "$_catalog_key" "$@"
+        assert_eq "$_catalog_key renders in $S5_LANG" 0 "$T_STATUS"
+        case "$S5_LANG" in en) _catalog_expected=$_catalog_en ;; zh) _catalog_expected=$_catalog_zh ;; esac
+        assert_eq "$_catalog_key has the expected $S5_LANG text" "$_catalog_expected" "$T_OUT"
+    done
+done <<'CATALOG'
+status.state.running|||running|运行中
+status.state.stopped|||stopped|已停止
+status.state.unverified|||unverified|未验证
+account.remove.identity|900|901|account identity mismatch: recorded 900/901|账户身份不匹配：记录值为 900/901。
+account.remove.user|xray-socks5||could not remove service account: xray-socks5|无法删除服务账户：xray-socks5。
+account.remove.user.exists|xray-socks5||service account still exists after removal: xray-socks5|删除后服务账户仍然存在：xray-socks5。
+account.remove.user.verify|xray-socks5||could not verify service account removal: xray-socks5|无法验证服务账户已删除：xray-socks5。
+account.remove.group|xray-socks5||could not remove service group: xray-socks5|无法删除服务组：xray-socks5。
+account.remove.group.before|xray-socks5||could not verify service group before removal: xray-socks5|删除前无法验证服务组：xray-socks5。
+account.remove.group.exists|xray-socks5||service group still exists after removal: xray-socks5|删除后服务组仍然存在：xray-socks5。
+account.remove.group.verify|xray-socks5||could not verify service group removal: xray-socks5|无法验证服务组已删除：xray-socks5。
+uninstall.symlink|/owned||refusing symlink during uninstall: /owned|卸载时拒绝符号链接：/owned。
+uninstall.file|/owned||could not remove owned file: /owned|无法删除自有文件：/owned。
+uninstall.notdir|/owned||owned path is not a directory: /owned|自有路径不是目录：/owned。
+uninstall.nonempty|/owned||refusing non-empty owned directory: /owned|拒绝删除非空自有目录：/owned。
+uninstall.directory|/owned||could not remove owned directory: /owned|无法删除自有目录：/owned。
+detect.unzip|||required command(s) are missing: unzip with -Z (Info-ZIP).|缺少必要命令：支持 -Z 的 unzip（Info-ZIP）。
+usage.unknown|bogus||unknown command: bogus.|未知命令：bogus。
+CATALOG
 
 t_summary

@@ -162,4 +162,10 @@ assert_eq "a writable preference is not trusted" 1 "$(t_prompt_count "$T_OUT")"
 assert_contains "a writable preference is not overwritten" '无法保存语言设置' "$T_OUT"
 assert_eq "an unsafe preference keeps its original contents" en "$(cat "$CLI_ROOT/etc/xray-socks5.lang")"
 
+cli '2
+' no-such-command
+assert_eq "an unknown command uses the usage exit status" 64 "$T_STATUS"
+assert_contains "an unknown command has its own diagnostic" 'unknown command: no-such-command.' "$T_OUT"
+assert_contains "an unknown command also prints usage" 'Usage: sh socks5.sh' "$T_OUT"
+
 t_summary

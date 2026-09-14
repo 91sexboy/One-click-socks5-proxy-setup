@@ -2,11 +2,13 @@
 """Run assertion reachability/error-propagation controls on disposable native CI hosts."""
 
 import argparse
+import base64
 import os
 from pathlib import Path
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 
 CHECKPOINT = 'lifecycle-control: update checkpoint'
@@ -89,6 +91,32 @@ def run_gate(gate, root, log, timeout=1200):
             raise
 
 
+def fixture_secrets(root, work):
+    subprocess.run(['sh', '-c', '. "$1"; lifecycle_write_fixtures "$2"',
+                    'lifecycle-fixtures', str(root / '.github/scripts/lifecycle-common.sh'), str(work)],
+                   check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15)
+    secrets = set()
+    for name in ('pass', 'pass.update'):
+        user, password = (work / name).read_text().splitlines()
+        if not user or not password:
+            raise ValueError('empty lifecycle credential fixture')
+        pair = user + ':' + password
+        secrets.update((password, pair, base64.b64encode(pair.encode()).decode()))
+    return sorted(secrets, key=len, reverse=True)
+
+
+def report_failure(log, secrets):
+    try:
+        output = log.read_text(errors='replace')
+    except OSError:
+        print('lifecycle-control: diagnostic log unavailable', file=sys.stderr)
+        return
+    for secret in secrets:
+        output = output.replace(secret, '<REDACTED>')
+    summary = '\n'.join(output.splitlines()[-40:])[-8000:]
+    print('lifecycle-control: diagnostic summary\n' + summary, file=sys.stderr)
+
+
 def native_control(root, backend, mode):
     if os.environ.get('GITHUB_ACTIONS') != 'true':
         raise ValueError('native lifecycle controls run only in disposable GitHub Actions environments')
@@ -107,20 +135,28 @@ done
         checkout = work / 'repo'
         checkout.mkdir()
         gate = prepare(root, checkout, backend, mode)
+        secrets = fixture_secrets(checkout, work)
         log = work / 'gate.log'
         try:
-            status = run_gate(gate, checkout, log)
-            output = log.read_text(errors='replace')
-            verify(mode, status, output)
+            try:
+                status = run_gate(gate, checkout, log)
+                output = log.read_text(errors='replace')
+                verify(mode, status, output)
+            except BaseException:
+                report_failure(log, secrets)
+                raise
         finally:
             if backend == 'openrc' and Path('/var/lib/xray-socks5/state').exists():
-                # A forced assertion failure happens after successful update,
-                # before the normal gate reaches uninstall.
-                with (work / 'cleanup.log').open('wb') as cleanup:
-                    subprocess.run(['sh', str(checkout / 'socks5.sh'), 'uninstall'],
-                                   input=b'y\n', stdout=cleanup, stderr=subprocess.STDOUT,
-                                   timeout=60, check=True)
-        # Do not publish captured gate output: it can contain terminal credentials.
+                # Forced failures stop after update but before the gate's uninstall.
+                cleanup_log = work / 'cleanup.log'
+                try:
+                    with cleanup_log.open('wb') as cleanup:
+                        subprocess.run(['sh', str(checkout / 'socks5.sh'), 'uninstall'],
+                                       input=b'y\n', stdout=cleanup, stderr=subprocess.STDOUT,
+                                       timeout=60, check=True)
+                except BaseException:
+                    report_failure(cleanup_log, secrets)
+                    raise
         print(f'lifecycle-control: backend={backend} mode={mode} evidence=ok status={status}')
 
 

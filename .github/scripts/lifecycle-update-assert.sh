@@ -7,9 +7,10 @@ set -eu
     printf '%s\n' 'lifecycle update assertions require root' >&2
     exit 1
 }
-_cfg=/etc/xray-socks5/config.json
-_state=/var/lib/xray-socks5/state
-_txn=/var/lib/xray-socks5/transaction
+ROOT=${1:-/}
+_cfg=$ROOT/etc/xray-socks5/config.json
+_state=$ROOT/var/lib/xray-socks5/state
+_txn=$ROOT/var/lib/xray-socks5/transaction
 printf '%s\n' 'lifecycle-update-assert: reached'
 
 if [ ! -f "$_cfg" ] || [ -L "$_cfg" ]; then

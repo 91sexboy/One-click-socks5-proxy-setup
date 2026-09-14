@@ -63,11 +63,12 @@ restarts_before=$(systemctl show xray-socks5.service -p NRestarts --value)
 crash_pid=$(systemctl show xray-socks5.service -p MainPID --value)
 test "$crash_pid" -gt 0
 sudo kill -9 "$crash_pid"
-for n in $(seq 1 60); do
+crash_recovered() {
   new_pid=$(systemctl show xray-socks5.service -p MainPID --value)
-  if test "$new_pid" != "$crash_pid" && test "$new_pid" -gt 0; then break; fi
-  sleep 1
-done
+  test "$new_pid" != "$crash_pid" && test "$new_pid" -gt 0
+}
+# The assertions below also observe changes during the final sleep.
+lifecycle_wait_until 60 1 crash_recovered || true
 sudo systemctl is-active --quiet xray-socks5.service
 test "$(systemctl show xray-socks5.service -p MainPID --value)" != "$crash_pid"
 test "$(systemctl show xray-socks5.service -p NRestarts --value)" -gt "$restarts_before"
@@ -79,10 +80,10 @@ PY
 sudo cp /etc/xray-socks5/config.json "$work/good.json"
 printf '{broken\n' | sudo tee /etc/xray-socks5/config.json >/dev/null
 sudo systemctl restart xray-socks5.service || true
-for n in $(seq 1 30); do
-  sudo systemctl is-active --quiet xray-socks5.service || break
-  sleep 1
-done
+service_stopped() {
+  if sudo systemctl is-active --quiet xray-socks5.service; then return 1; fi
+}
+lifecycle_wait_until 30 1 service_stopped || true
 # set -e does not apply to a command a ! inverts, so `! systemctl is-active` did
 # not fail the gate when the broken config left the service running: the check
 # below was dead, and SPEC 5's guarantee was unproven on this backend.
@@ -100,7 +101,7 @@ sudo systemctl restart xray-socks5.service
 sudo systemctl is-active --quiet xray-socks5.service
 python3 tests/protocol/duplex_target.py --host 0.0.0.0 --host6 :: --ready-file "$work/target.port" --count-file "$work/count" --report-file "$work/report" >"$work/target.log" 2>&1 &
 target_pid=$!
-for n in $(seq 1 50); do test -s "$work/target.port" && break; sleep 0.1; done
+lifecycle_wait_until 50 0.1 test -s "$work/target.port" || true
 target_port=$(cat "$work/target.port")
 PASSFILE="$work/pass" PORT=23456 TARGET_PORT="$target_port" \
   REPORT="$work/report" OUT="$work/probe" \
@@ -130,21 +131,9 @@ test ! -e /var/lib/xray-socks5
 test ! -e /usr/local/libexec/xray-socks5
 sudo sh -c 'sh socks5.sh help </dev/null >"$1"' sh "$work/help-after-uninstall.log"
 sudo grep -q 'Usage: sh socks5.sh' "$work/help-after-uninstall.log"
-no_credential_in() {
-  # A status other than 1 is a broken check rather than a clean log, and the
-  # inline form exited 1 with no output, so a leak and an unreadable file looked
-  # the same in the job log.
-  _ncst=0
-  sudo grep -q "$2" "$1" || _ncst=$?
-  if [ "$_ncst" = 0 ]; then
-    printf 'a credential reached %s\n' "$1" >&2
-    exit 1
-  fi
-  if [ "$_ncst" != 1 ]; then
-    printf 'the credential check on %s failed with status %s\n' "$1" "$_ncst" >&2
-    exit 1
-  fi
-}
-no_credential_in "$work/install.log" 'CISecret_123~x'
-no_credential_in "$work/status.log" 'CISecret_123~x'
-no_credential_in "$work/update.log" 'CISecret_456~y'
+install_secret=$(sed -n '2p' "$work/pass")
+update_secret=$(sed -n '2p' "$work/pass.update")
+lifecycle_no_credential_in "$work/install.log" "$install_secret" sudo
+lifecycle_no_credential_in "$work/status.log" "$install_secret" sudo
+lifecycle_no_credential_in "$work/update.log" "$install_secret" sudo
+lifecycle_no_credential_in "$work/update.log" "$update_secret" sudo

@@ -213,4 +213,32 @@ t_run python3 "$ROOT/tests/protocol/test_terminal_install.py"
 assert_eq "the terminal probe preserves diagnostics without leaking credentials" 0 "$T_STATUS"
 if [ "$T_STATUS" -ne 0 ]; then printf '%s\n' "$T_OUT" >&2; fi
 
+. "$ROOT/tests/lib/xray-fixture.sh"
+t_xray_fixture 23456
+t_xray_install
+s5_precheck() { return 0; }
+for _status_case in running stopped unverified; do
+    systemctl() {
+        if [ "$1" = is-active ]; then
+            case "$_status_case" in running) return 0 ;; stopped) return 3 ;; *) return 1 ;; esac
+        fi
+        "$S5_TEST_ROOT/bin/systemctl" "$@"
+    }
+    case "$_status_case" in running) _status_zh=运行中 ;; stopped) _status_zh=已停止 ;; *) _status_zh=未验证 ;; esac
+    for S5_LANG in en zh; do
+        t_run s5_cmd_status
+        assert_eq "status reports $_status_case in $S5_LANG" 0 "$T_STATUS"
+        if [ "$S5_LANG" = zh ]; then
+            assert_contains "Chinese status names its service state" "服务：$_status_zh；" "$T_OUT"
+            for _status_en in running stopped unverified; do
+                assert_not_contains "Chinese status has no English state word" "$_status_en" "$T_OUT"
+            done
+        else
+            assert_contains "English status keeps its original line" \
+                "service: $_status_case; port: 23456; username: alice; protocol: mixed (SOCKS5 + HTTP); auth: password; UDP: disabled" "$T_OUT"
+        fi
+        assert_file_absent "status releases the operation lock" "$S5_LOCKDIR"
+    done
+done
+
 t_summary

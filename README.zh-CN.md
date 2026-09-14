@@ -137,6 +137,8 @@ S5_SERVER_IPV4=203.0.113.10 sh socks5.sh show
 
 服务诊断可使用 systemd 的 `systemctl status xray-socks5.service`，或 OpenRC 的 `rc-service xray-socks5 status`。分享诊断输出前，请先移除敏感信息。
 
+**开发者说明：** 代码和测试注释中的 `SPEC N` 指维护者的私有验收规格；公开契约以本 README 和[架构决策](docs/adr/)为准。
+
 ## 许可证
 
 安装器和测试采用 [MIT](LICENSE)；镜像的 Xray 程序保留上游 MPL-2.0 许可证和第三方声明。

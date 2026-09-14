@@ -1,100 +1,195 @@
 #!/usr/bin/env python3
-"""Check every call in tests/protocol against the callee's signature.
-
-`python3 -m py_compile` accepts a call with the wrong number of arguments, so a
-signature change that misses one caller stays green until the job that runs it
-gets there. The memory gate pays for that late: `hold_connections.py` is reached
-only after an apt-get, a 21 MB download and a real root install, so a stale call
-there costs a whole run to discover.
-
-Calls are matched two ways: bare `f(...)` against the same file, and
-`module.f(...)` against the module imported under that name from this directory.
-"""
+"""Statically check resolvable calls in protocol probes and CI Python helpers."""
 
 import ast
-import os
+import inspect
+from pathlib import Path
 import sys
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+sys.dont_write_bytecode = True
+ROOT = Path(__file__).resolve().parents[2]
 
 
-def signatures(tree):
-    """Map each top-level function name to (min_args, max_args, takes_varargs)."""
+def signature(node, bound=False):
+    spec = node.args
+    positional = spec.posonlyargs + spec.args
+    defaults = [inspect.Parameter.empty] * (len(positional) - len(spec.defaults)) + [None] * len(spec.defaults)
+    parameters = []
+    for index, (argument, default) in enumerate(zip(positional, defaults)):
+        kind = inspect.Parameter.POSITIONAL_ONLY if index < len(spec.posonlyargs) else inspect.Parameter.POSITIONAL_OR_KEYWORD
+        parameters.append(inspect.Parameter(argument.arg, kind, default=default))
+    if bound:
+        parameters = parameters[1:]
+    if spec.vararg:
+        parameters.append(inspect.Parameter(spec.vararg.arg, inspect.Parameter.VAR_POSITIONAL))
+    for argument, default in zip(spec.kwonlyargs, spec.kw_defaults):
+        parameters.append(inspect.Parameter(argument.arg, inspect.Parameter.KEYWORD_ONLY,
+                                            default=inspect.Parameter.empty if default is None else None))
+    if spec.kwarg:
+        parameters.append(inspect.Parameter(spec.kwarg.arg, inspect.Parameter.VAR_KEYWORD))
+    return inspect.Signature(parameters)
+
+
+def signatures(tree, module):
     found = {}
     for node in tree.body:
-        if not isinstance(node, ast.FunctionDef):
-            continue
-        spec = node.args
-        names = [arg.arg for arg in getattr(spec, "posonlyargs", []) + spec.args]
-        required = len(names) - len(spec.defaults)
-        found[node.name] = (required, len(names), spec.vararg is not None)
+        function = node
+        bound = False
+        if isinstance(node, ast.ClassDef):
+            function = next((child for child in node.body
+                             if isinstance(child, ast.FunctionDef) and child.name == "__init__"), None)
+            bound = True
+        if isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            found[node.name] = [(module.stem + "." + node.name, signature(function, bound))]
     return found
 
 
-def module_aliases(tree, known):
-    """Map the local name of each sibling module import to its module name."""
-    aliases = {}
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                if alias.name in known:
-                    aliases[alias.asname or alias.name] = alias.name
-    return aliases
+class Calls(ast.NodeVisitor):
+    def __init__(self, path, tables):
+        self.path = path
+        self.tables = tables
+        self.names = {**tables[path], "__file__": path, "str": "str"}
+        self.import_paths = [path.parent, ROOT / "tests/protocol", ROOT / ".github/scripts"]
+        self.checked = 0
+        self.expanded = 0
+        self.problems = []
 
+    def imported(self, name):
+        for directory in self.import_paths:
+            path = directory / (name + ".py")
+            if path in self.tables:
+                return self.tables[path]
+        return name
 
-def callee(node, own, aliases, tables):
-    """Resolve a Call node to (label, signature) or None when out of scope."""
-    if isinstance(node.func, ast.Name) and node.func.id in own:
-        return node.func.id, own[node.func.id]
-    if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
-        module = aliases.get(node.func.value.id)
-        if module and node.func.attr in tables[module]:
-            label = "%s.%s" % (module, node.func.attr)
-            return label, tables[module][node.func.attr]
-    return None
+    def resolve(self, node):
+        if isinstance(node, ast.Name):
+            return self.names.get(node.id)
+        if isinstance(node, ast.Constant) and isinstance(node.value, (str, int)):
+            return node.value
+        if isinstance(node, ast.IfExp):
+            left, right = self.resolve(node.body), self.resolve(node.orelse)
+            if isinstance(left, list) and isinstance(right, list):
+                return left + right
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+            left, right = self.resolve(node.left), self.resolve(node.right)
+            if isinstance(left, Path) and isinstance(right, str):
+                return left / right
+        if isinstance(node, ast.Subscript):
+            value, index = self.resolve(node.value), self.resolve(node.slice)
+            if isinstance(value, tuple) and isinstance(index, int) and 0 <= index < len(value):
+                return value[index]
+        if isinstance(node, ast.Attribute):
+            value = self.resolve(node.value)
+            if isinstance(value, dict):
+                return value.get(node.attr)
+            if isinstance(value, Path):
+                if node.attr == "parent":
+                    return value.parent
+                if node.attr == "parents":
+                    return tuple(value.parents)
+            if isinstance(value, str):
+                return value + "." + node.attr
+        if isinstance(node, ast.Call):
+            target = self.resolve(node.func)
+            arguments = [self.resolve(argument) for argument in node.args]
+            if target == "pathlib.Path" and len(arguments) == 1 and isinstance(arguments[0], (str, Path)):
+                return Path(arguments[0])
+            if target == "str" and len(arguments) == 1 and isinstance(arguments[0], Path):
+                return str(arguments[0])
+            if target == "importlib.util.spec_from_file_location" and len(arguments) >= 2:
+                path = arguments[1]
+                if isinstance(path, (str, Path)):
+                    return self.tables.get(Path(path))
+            if target == "importlib.util.module_from_spec" and len(arguments) == 1:
+                return arguments[0]
+            if isinstance(node.func, ast.Attribute):
+                value = self.resolve(node.func.value)
+                if isinstance(value, Path):
+                    if node.func.attr == "resolve" and not arguments:
+                        return value.resolve()
+                    if node.func.attr == "with_name" and len(arguments) == 1 and isinstance(arguments[0], str):
+                        return value.with_name(arguments[0])
+        return None
+
+    def visit_Import(self, node):
+        for alias in node.names:
+            self.names[alias.asname or alias.name.split(".")[0]] = self.imported(alias.name if alias.asname else alias.name.split(".")[0])
+
+    def visit_ImportFrom(self, node):
+        module = self.imported(node.module or "")
+        for alias in node.names:
+            self.names[alias.asname or alias.name] = module.get(alias.name) if isinstance(module, dict) else module + "." + alias.name
+
+    def visit_Assign(self, node):
+        self.visit(node.value)
+        value = self.resolve(node.value)
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                self.names[target.id] = value
+            else:
+                for name in ast.walk(target):
+                    if isinstance(name, ast.Name) and isinstance(name.ctx, ast.Store):
+                        self.names.pop(name.id, None)
+
+    def visit_FunctionDef(self, node):
+        self.names[node.name] = [(self.path.stem + "." + node.name, signature(node))]
+        outer = self.names
+        self.names = outer.copy()
+        for argument in node.args.posonlyargs + node.args.args + node.args.kwonlyargs:
+            self.names.pop(argument.arg, None)
+        for argument in (node.args.vararg, node.args.kwarg):
+            if argument:
+                self.names.pop(argument.arg, None)
+        for statement in node.body:
+            self.visit(statement)
+        self.names = outer
+
+    visit_AsyncFunctionDef = visit_FunctionDef
+
+    def visit_ClassDef(self, node):
+        outer = self.names
+        self.names = outer.copy()
+        for statement in node.body:
+            self.visit(statement)
+        self.names = outer
+
+    def visit_Call(self, node):
+        candidates = self.resolve(node.func)
+        if candidates == "sys.path.insert" and len(node.args) == 2:
+            index, directory = (self.resolve(argument) for argument in node.args)
+            if isinstance(index, int) and isinstance(directory, (str, Path)):
+                self.import_paths.insert(index, Path(directory))
+        if isinstance(candidates, list):
+            if any(isinstance(argument, ast.Starred) for argument in node.args) or any(keyword.arg is None for keyword in node.keywords):
+                self.expanded += 1
+            else:
+                self.checked += 1
+                for label, contract in candidates:
+                    try:
+                        contract.bind(*[None for argument in node.args],
+                                      **{keyword.arg: None for keyword in node.keywords})
+                    except TypeError as error:
+                        self.problems.append(f"{self.path.relative_to(ROOT)}:{node.lineno}: {label}: {error}")
+        self.generic_visit(node)
 
 
 def main():
-    sources = sorted(
-        name[:-3] for name in os.listdir(HERE)
-        if name.endswith(".py") and name != os.path.basename(__file__)
-    )
-    trees = {}
-    tables = {}
-    for module in sources:
-        with open(os.path.join(HERE, module + ".py"), encoding="utf-8") as handle:
-            trees[module] = ast.parse(handle.read())
-        tables[module] = signatures(trees[module])
-
+    sources = sorted(path for directory in (ROOT / "tests/protocol", ROOT / ".github/scripts")
+                     for path in directory.glob("*.py") if path != Path(__file__).resolve())
+    trees = {path: ast.parse(path.read_text(encoding="utf-8"), filename=str(path)) for path in sources}
+    tables = {path: signatures(tree, path) for path, tree in trees.items()}
+    checked = expanded = 0
     problems = []
-    checked = 0
-    for module in sources:
-        tree = trees[module]
-        aliases = module_aliases(tree, set(sources))
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            resolved = callee(node, tables[module], aliases, tables)
-            if resolved is None:
-                continue
-            label, (low, high, varargs) = resolved
-            checked += 1
-            supplied = len(node.args) + len(node.keywords)
-            if varargs and supplied >= low:
-                continue
-            if low <= supplied <= high:
-                continue
-            problems.append(
-                "%s.py:%d: %s takes %d-%d arguments but %d were given"
-                % (module, node.lineno, label, low, high, supplied)
-            )
-
-    print("arity: %d call sites checked across %d modules" % (checked, len(sources)))
-    if problems:
-        for problem in problems:
-            print(problem, file=sys.stderr)
-        return 1
-    return 0
+    for path, tree in trees.items():
+        calls = Calls(path, tables)
+        calls.visit(tree)
+        checked += calls.checked
+        expanded += calls.expanded
+        problems.extend(calls.problems)
+    print(f"arity: {checked} call sites checked across {len(sources)} modules; {expanded} calls with unpacking not statically checked")
+    for problem in problems:
+        print(problem, file=sys.stderr)
+    return int(bool(problems))
 
 
 if __name__ == "__main__":

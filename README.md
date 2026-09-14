@@ -137,6 +137,8 @@ Replace the example address with your own. This changes **only the displayed lin
 
 For service diagnostics, use `systemctl status xray-socks5.service` on systemd, or `rc-service xray-socks5 status` on OpenRC. Redact sensitive data before sharing diagnostic output.
 
+**For contributors:** `SPEC N` in code and test comments refers to the maintainer's private acceptance specification; the public contract is this README and the [architecture decisions](docs/adr/).
+
 ## License
 
 Installer and tests: [MIT](LICENSE). Mirrored Xray binaries retain their upstream MPL-2.0 license and third-party notices.

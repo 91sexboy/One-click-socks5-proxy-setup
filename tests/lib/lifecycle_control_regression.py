@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 """Nonprivileged tests of native-control preparation and verdicts, not native evidence."""
 
+import base64
+import contextlib
 import importlib.util
+import io
 import itertools
 import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from unittest.mock import patch
 
 sys.dont_write_bytecode = True
 
@@ -97,6 +101,52 @@ def main():
                 checks += 1
             else:
                 raise AssertionError('control accepted repeated checkpoints')
+
+        credentials = work / 'credentials'
+        credentials.mkdir()
+        common = root / '.github/scripts/lifecycle-common.sh'
+        subprocess.run(['sh', '-c', '. "$1"; lifecycle_write_fixtures "$2"',
+                        'fixture', str(common), str(credentials)], check=True)
+        tokens = []
+        for name in ('pass', 'pass.update'):
+            user, secret = (credentials / name).read_text().splitlines()
+            pair = user + ':' + secret
+            tokens.extend((secret, pair, base64.b64encode(pair.encode()).decode()))
+        (scripts / 'lifecycle-common.sh').write_text(common.read_text())
+        real_run = subprocess.run
+
+        def safe_subprocess(arguments, **kwargs):
+            if arguments[0] == 'sh' and arguments[3] == 'lifecycle-fixtures':
+                return real_run(arguments, **kwargs)
+            return subprocess.CompletedProcess(arguments, 0)
+
+        for fault in ('verdict', 'timeout'):
+            def failing_gate(_gate, _root, log):
+                log.write_text('old diagnostic\n' * 100 + 'x' * 9000 + '\n' +
+                               '\n'.join(tokens) + '\nuseful failure reason\n')
+                if fault == 'timeout':
+                    raise subprocess.TimeoutExpired('synthetic-gate', 1)
+                return 1
+
+            diagnostic = io.StringIO()
+            with patch.dict(os.environ, {'GITHUB_ACTIONS': 'true'}), \
+                    patch.object(control.subprocess, 'run', side_effect=safe_subprocess), \
+                    patch.object(control, 'run_gate', side_effect=failing_gate), \
+                    contextlib.redirect_stderr(diagnostic):
+                try:
+                    control.native_control(source, 'systemd', 'healthy')
+                except (ValueError, subprocess.TimeoutExpired):
+                    pass
+                else:
+                    raise AssertionError('a broken native control passed')
+            text = diagnostic.getvalue()
+            if 'useful failure reason' not in text or '<REDACTED>' not in text:
+                raise AssertionError('failed control discarded its diagnostic summary')
+            if any(token in text for token in tokens):
+                raise AssertionError('failed control leaked a credential generation')
+            if len(text.splitlines()) > 41 or len(text) > 8200:
+                raise AssertionError('failed control emitted an unbounded diagnostic')
+            checks += 1
 
         sleeper = work / 'sleeper.sh'
         sleeper.write_text('printf "%s\\n" "$$" > sleeper.pid\nexec sleep 30\n')
