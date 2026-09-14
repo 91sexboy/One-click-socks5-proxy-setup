@@ -58,17 +58,15 @@ S5_LANG=en
 # the values themselves, so a failure here cannot publish the password.
 S5T_PROMPT_SHELL=${S5_TEST_SHELL:-sh}
 export S5T_PROMPT_SHELL
-t_stub prompt-shell <<'SHELL'
+t_stub 'prompt shell' <<'SHELL'
 #!/bin/sh
 printf '%s\n' "$S5T_PROMPT_SHELL" >"$S5_TEST_ROOT/prompt-shell-used"
 # A configured interpreter can contain multiple words, such as busybox sh.
 # shellcheck disable=SC2086
 exec $S5T_PROMPT_SHELL "$@"
 SHELL
-S5_TEST_SHELL=$S5_TEST_ROOT/bin/prompt-shell
-# Split the selected interpreter command, including a BusyBox applet argument.
-# shellcheck disable=SC2086
-t_run ${S5_TEST_SHELL:-sh} -c '. "$1"; S5_LANG=en; S5_PORT_PROBE="$2"; export S5_PORT_PROBE; s5_prompt_port; s5_prompt_username; s5_prompt_password; s5_valid_port "$S5_PORT" && s5_valid_username "$S5_USERNAME" && s5_valid_password "$S5_PASSWORD" && printf generated' sh "$ROOT/socks5.sh" "$S5_PORT_PROBE" <"$S5_TEST_ROOT/values"
+S5_TEST_SHELL="$S5_TEST_ROOT/bin/prompt shell"
+t_run "$S5_TEST_SHELL" -c '. "$1"; S5_LANG=en; S5_PORT_PROBE="$2"; export S5_PORT_PROBE; s5_prompt_port; s5_prompt_username; s5_prompt_password; s5_valid_port "$S5_PORT" && s5_valid_username "$S5_USERNAME" && s5_valid_password "$S5_PASSWORD" && printf generated' sh "$ROOT/socks5.sh" "$S5_PORT_PROBE" <"$S5_TEST_ROOT/values"
 S5_TEST_SHELL=$S5T_PROMPT_SHELL
 assert_file_exists "blank prompts run through the configured interpreter" "$S5_TEST_ROOT/prompt-shell-used"
 assert_eq "prompt interpreter matches the selected shell" "$S5T_PROMPT_SHELL" "$(cat "$S5_TEST_ROOT/prompt-shell-used" 2>/dev/null)"
