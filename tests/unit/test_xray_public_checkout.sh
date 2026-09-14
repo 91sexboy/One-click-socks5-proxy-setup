@@ -1,4 +1,5 @@
 #!/bin/sh
+# Public checkout contracts without private maintenance documents.
 
 S5T_NAME=test_xray_public_checkout
 . "${S5_REPO_ROOT}/tests/lib/assert.sh"
@@ -21,6 +22,7 @@ done
 
 # Exercise the real document checks without letting local-only files satisfy them.
 SHELL_UNDER_TEST=${S5_TEST_SHELL:-sh}
+# Split multiword shell commands such as busybox sh.
 # shellcheck disable=SC2086
 t_run env S5_REPO_ROOT="$snapshot" S5_SRC="$snapshot/socks5.sh" \
     $SHELL_UNDER_TEST "$snapshot/tests/unit/test_xray_docs.sh"

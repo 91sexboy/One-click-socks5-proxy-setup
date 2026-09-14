@@ -5,12 +5,7 @@ S5T_NAME=test_xray_detect
 . "${S5_REPO_ROOT}/tests/lib/assert.sh"
 ROOT=${S5_REPO_ROOT}
 t_mktestroot
-S5_LIB_ONLY=1
-S5_ASSUME_ROOT=1
-S5_SKIP_OWNERSHIP=1
-export S5_LIB_ONLY S5_ASSUME_ROOT S5_SKIP_OWNERSHIP
-# shellcheck disable=SC1091
-. "$ROOT/socks5.sh"
+t_source_production ''
 S5_LANG=en
 
 # Each row is a fixture, an architecture, and either the expected

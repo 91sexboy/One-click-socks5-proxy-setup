@@ -5,12 +5,7 @@ S5T_NAME=test_xray_config
 . "${S5_REPO_ROOT}/tests/lib/assert.sh"
 
 t_mktestroot
-S5_LIB_ONLY=1
-S5_ASSUME_ROOT=1
-S5_SKIP_OWNERSHIP=1
-export S5_LIB_ONLY S5_ASSUME_ROOT S5_SKIP_OWNERSHIP
-# shellcheck source=/dev/null
-. "${S5_REPO_ROOT}/socks5.sh"
+t_source_production ''
 
 S5_LANG=en
 S5_PORT=23456
@@ -109,7 +104,7 @@ XRAY
 chmod 0755 "$S5_BIN"
 if s5_config_test "$S5_CFG"; then t_ok; else t_bad "config-test wrapper succeeds"; fi
 assert_contains "config-test uses run -test -c" \
-    'run -test -c /tmp' "$(cat "$S5_TEST_ROOT/xray-calls")"
+    "run -test -c $S5_CFG" "$(cat "$S5_TEST_ROOT/xray-calls")"
 
 # The production writer gives Xray's format detector a .json candidate path.
 S5_CONFIG_TEST_STATUS=0

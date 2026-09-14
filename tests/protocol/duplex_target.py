@@ -107,6 +107,7 @@ def serve_connection(sock, count_path, report_path):
     global FRAMES
     sock.settimeout(1.0)
     cohort = None
+    sender_stop = threading.Event()
     try:
         first = read_exact(sock, 6)
         length = struct.unpack("!I", first[2:6])[0]
@@ -126,7 +127,6 @@ def serve_connection(sock, count_path, report_path):
                 cohort["members"][str(cid)] = 0
                 cohort["active"] += 1
                 cohort["peak"] = max(cohort["peak"], cohort["active"])
-        sender_stop = threading.Event()
         writer = FrameWriter(sock)
 
         def send_server_frames():
@@ -163,10 +163,7 @@ def serve_connection(sock, count_path, report_path):
     except (EOFError, OSError, ValueError):
         return
     finally:
-        try:
-            sender_stop.set()
-        except UnboundLocalError:
-            pass
+        sender_stop.set()
         sock.close()
         if cohort is not None:
             with COUNT_LOCK:

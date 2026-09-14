@@ -5,12 +5,7 @@ S5T_NAME=test_xray_asset
 . "${S5_REPO_ROOT}/tests/lib/assert.sh"
 ROOT=${S5_REPO_ROOT}
 t_mktestroot
-S5_LIB_ONLY=1
-S5_ASSUME_ROOT=1
-S5_SKIP_OWNERSHIP=1
-export S5_LIB_ONLY S5_ASSUME_ROOT S5_SKIP_OWNERSHIP
-# shellcheck source=/dev/null
-. "$ROOT/socks5.sh"
+t_source_production ''
 
 assert_eq "Xray release is stable v26.3.27" v26.3.27 "$S5_XRAY_VERSION"
 assert_eq "Xray release commit is pinned" \
@@ -80,87 +75,9 @@ S5_LANG=en
 S5_ARCHNAME=amd64
 S5T_ASSETS=$S5_TEST_ROOT/assets
 mkdir -p "$S5T_ASSETS"
-S5T_SIZE_OVERRIDE=''
-S5T_SHA_OVERRIDE=''
-S5T_BIN_SIZE=''
-S5T_BIN_SHA256=''
-cat >"$S5T_ASSETS/mkasset.py" <<'MKASSET'
-import hashlib
-import struct
-import sys
-import warnings
-import zipfile
-
-# One fixture repeats a member name on purpose, which zipfile reports as a
-# UserWarning on stderr.
-warnings.filterwarnings('ignore')
-
-REG = 0o100644
-EXE = 0o100755
-LNK = 0o120777
-DEV = 0o020666
-
-
-def stub_xray():
-    # 64 bytes is all file(1) needs to report an x86-64 ELF executable, which is
-    # what the installer's architecture check reads. Nothing here is runnable.
-    h = bytearray(64)
-    h[0:7] = b'\x7fELF\x02\x01\x01'
-    struct.pack_into('<HHI', h, 16, 2, 0x3E, 1)
-    struct.pack_into('<H', h, 52, 64)
-    return bytes(h)
-
-
-XRAY = stub_xray()
-DATA = [
-    ('geoip.dat', b'synthetic-geoip\n'),
-    ('geosite.dat', b'synthetic-geosite\n'),
-    ('LICENSE', b'synthetic-license\n'),
-    ('README.md', b'synthetic-readme\n'),
-]
-
-
-def members(case):
-    good = [('xray', XRAY, EXE)] + [(n, d, REG) for n, d in DATA]
-    if case == 'good':
-        return good
-    if case == 'noxray':
-        return good[1:]
-    if case == 'duplicate':
-        return [good[0]] + good
-    if case == 'extra':
-        return good + [('install.sh', b'synthetic-extra\n', REG)]
-    if case == 'subdir':
-        return [('bin/xray', XRAY, EXE)] + good[1:]
-    if case == 'traversal':
-        return good + [('../../etc/cron.d/synthetic', b'synthetic-cron\n', REG)]
-    if case == 'symlink':
-        return [('xray', b'/etc/passwd', LNK)] + good[1:]
-    if case == 'device':
-        return [good[0], ('geoip.dat', b'', DEV)] + good[2:]
-    raise SystemExit('unknown case: ' + case)
-
-
-def main():
-    out = sys.argv[1]
-    for case in sys.argv[2:]:
-        with zipfile.ZipFile('%s/%s.zip' % (out, case), 'w') as zf:
-            for name, data, mode in members(case):
-                info = zipfile.ZipInfo(name, date_time=(2026, 1, 1, 0, 0, 0))
-                info.external_attr = mode << 16
-                info.compress_type = zipfile.ZIP_DEFLATED
-                zf.writestr(info, data)
-    sys.stdout.write('%d %s\n' % (len(XRAY), hashlib.sha256(XRAY).hexdigest()))
-
-
-main()
-MKASSET
-
-S5T_META=$(python3 "$S5T_ASSETS/mkasset.py" "$S5T_ASSETS" \
+S5T_META=$(python3 "$ROOT/tests/lib/mkasset.py" "$S5T_ASSETS" \
     good noxray duplicate extra subdir traversal symlink device) || S5T_META=''
 assert_ne "the crafted archives were built" '' "$S5T_META"
-S5T_BIN_SIZE=${S5T_META%% *}
-S5T_BIN_SHA256=${S5T_META##* }
 
 # BusyBox ships an unzip without -Z, and the member listing the installer reads
 # comes from -Z1. Without it no member is inspected at all, so refusing to run is
@@ -170,19 +87,8 @@ if ! unzip -Z1 "$S5T_ASSETS/good.zip" >/dev/null 2>&1; then
     t_summary
 fi
 
-# ShellCheck reads call order statically, so redefining the selector at the top
-# level would report the two pinned calls above as calls to a function defined
-# later. Installing it from a function keeps it out of that analysis.
-s5t_use_fixture_selector() {
-    s5_asset_select() {
-        S5_ASSET_NAME=Xray-linux-64.zip
-        S5_ASSET_SIZE=${S5T_SIZE_OVERRIDE:-$(wc -c <"$S5_TEST_ASSET_PATH" | tr -d '[:space:]')}
-        S5_ASSET_SHA256=${S5T_SHA_OVERRIDE:-$(sha256sum "$S5_TEST_ASSET_PATH" | awk '{print $1}')}
-        S5_ASSET_BINARY_SIZE=$S5T_BIN_SIZE
-        S5_ASSET_BINARY_SHA256=$S5T_BIN_SHA256
-    }
-}
-s5t_use_fixture_selector
+. "$ROOT/tests/lib/xray-fixture.sh"
+t_use_asset_fixture "$S5T_ASSETS/asset-xray" archive
 
 # s5t_asset_run <case>: drive the real download path against one crafted archive.
 s5t_asset_run() {
@@ -210,7 +116,7 @@ assert_eq "a well-formed archive is accepted" 0 "$T_STATUS"
 assert_eq "an accepted archive reports nothing" '' "$T_OUT"
 assert_file_exists "an accepted archive installs xray" "$S5_BIN"
 assert_eq "the installed xray is the verified member" "$S5T_BIN_SHA256" \
-    "$(sha256sum "$S5_BIN" | awk '{print $1}')"
+    "$(t_sha256 "$S5_BIN")"
 assert_mode "the installed xray is executable" 755 "$S5_BIN"
 
 s5t_asset_reject noxray "an archive with no xray member" members

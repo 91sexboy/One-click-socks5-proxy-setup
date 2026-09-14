@@ -7,10 +7,7 @@ S5T_NAME=test_xray_install
 
 test_install() {
     t_xray_fixture 23456
-    mkdir -p "$S5_TEST_ROOT/etc/socks5-manager" "$S5_TEST_ROOT/var/lib/socks5-manager" "$S5_TEST_ROOT/usr/local/libexec/socks5-manager"
-    printf 'legacy config\n' >"$S5_TEST_ROOT/etc/socks5-manager/3proxy.cfg"
-    printf 'legacy state\n' >"$S5_TEST_ROOT/var/lib/socks5-manager/state"
-    printf 'legacy binary\n' >"$S5_TEST_ROOT/usr/local/libexec/socks5-manager/3proxy"
+    t_legacy_fixture
     t_xray_install
     assert_eq "install preserves the legacy config" 'legacy config' "$(cat "$S5_TEST_ROOT/etc/socks5-manager/3proxy.cfg")"
     assert_eq "install preserves the legacy state" 'legacy state' "$(cat "$S5_TEST_ROOT/var/lib/socks5-manager/state")"
@@ -145,35 +142,12 @@ test_locks() {
     assert_file_absent "the reclaimed lock is released cleanly" "$S5_LOCKDIR"
 }
 
-t_download_fixture() {
+s5t_download_fixture() {
     t_xray_fixture 23456 real-download
-    python3 - "$S5_TEST_ROOT" <<'PY'
-from pathlib import Path
-import struct
-import sys
-import zipfile
-
-root = Path(sys.argv[1])
-binary = bytearray(64)
-binary[:7] = b'\x7fELF\x02\x01\x01'
-struct.pack_into('<HHI', binary, 16, 2, 0x3E, 1)
-struct.pack_into('<H', binary, 52, 64)
-(root / 'asset-xray').write_bytes(binary)
-with zipfile.ZipFile(root / 'asset.zip', 'w') as archive:
-    for name in ('xray', 'geoip.dat', 'geosite.dat', 'LICENSE', 'README.md'):
-        info = zipfile.ZipInfo(name)
-        info.external_attr = (0o100755 if name == 'xray' else 0o100644) << 16
-        archive.writestr(info, binary if name == 'xray' else b'synthetic\n')
-PY
-    S5_TEST_ASSET_PATH=$S5_TEST_ROOT/asset.zip
+    python3 "$S5_REPO_ROOT/tests/lib/mkasset.py" "$S5_TEST_ROOT" good >/dev/null || return 1
+    S5_TEST_ASSET_PATH=$S5_TEST_ROOT/good.zip
     export S5_TEST_ASSET_PATH
-    s5_asset_select() {
-        S5_ASSET_NAME=Xray-linux-64.zip
-        S5_ASSET_SIZE=$(wc -c <"$S5_TEST_ASSET_PATH" | tr -d '[:space:]')
-        S5_ASSET_SHA256=$(sha256sum "$S5_TEST_ASSET_PATH" | awk '{print $1}')
-        S5_ASSET_BINARY_SIZE=$(wc -c <"$S5_TEST_ROOT/asset-xray" | tr -d '[:space:]')
-        S5_ASSET_BINARY_SHA256=$(sha256sum "$S5_TEST_ROOT/asset-xray" | awk '{print $1}')
-    }
+    t_use_asset_fixture "$S5_TEST_ROOT/asset-xray" archive
     s5_asset_select
     s5_precheck() { return 0; }
     s5_tmp_base() { printf '%s\n' "$S5_TEST_ROOT"; }
@@ -182,7 +156,7 @@ PY
     printf 'foreign download\n' >"$S5_TEST_ROOT/xray-socks5-download.foreign/asset.zip"
 }
 
-t_download_run() {
+s5t_download_run() {
     _tdfault=${1:-none}
     if [ "$_tdfault" = remove-zh ]; then S5_LANG=zh; fi
     case "$_tdfault" in
@@ -233,12 +207,12 @@ t_download_run() {
 }
 
 test_download_cleanup() {
-    t_download_fixture
+    s5t_download_fixture
     if ! unzip -Z1 "$S5_TEST_ASSET_PATH" >/dev/null 2>&1; then
         t_skip "command-level download cleanup" "requires Info-ZIP unzip with -Z"
         return
     fi
-    t_run t_download_run
+    t_run s5t_download_run
     assert_eq "command-level installation with verified archive succeeds" 0 "$T_STATUS"
     _tdpath=$(cat "$S5_TEST_ROOT/download.path")
     assert_file_absent "successful install removes its downloaded archive" "$_tdpath/Xray-linux-64.zip"
@@ -259,21 +233,21 @@ test_download_cleanup() {
     assert_file_exists "cleanup preserves unrelated recovery evidence" "$S5_TEST_ROOT/unrelated/transaction/old.config.json"
     assert_not_contains "command output contains no password" "$S5_PASSWORD" "$T_OUT"
     t_xray_assert_healthy
-    t_run t_download_run
+    t_run s5t_download_run
     assert_eq "configuration update without a download workdir still succeeds" 0 "$T_STATUS"
     assert_eq "configuration update keeps the workdir reference empty" '' "$(cat "$S5_TEST_ROOT/download.retained")"
     assert_file_exists "configuration update leaves the foreign download alone" "$S5_TEST_ROOT/xray-socks5-download.foreign/asset.zip"
     t_xray_assert_healthy
 }
 
-t_download_fault_case() {
+s5t_download_fault_case() {
     _tdcase=$1
-    t_download_fixture
+    s5t_download_fixture
     if ! unzip -Z1 "$S5_TEST_ASSET_PATH" >/dev/null 2>&1; then
         t_skip "command-level download $_tdcase" "requires Info-ZIP unzip with -Z"
         return
     fi
-    t_run t_download_run "$_tdcase"
+    t_run s5t_download_run "$_tdcase"
     case "$_tdcase" in
     signal) assert_eq "download-stage signal propagates its signal status" 143 "$T_STATUS" ;;
     *) assert_eq "$_tdcase failure remains nonzero" 1 "$T_STATUS" ;;
@@ -324,22 +298,88 @@ t_download_fault_case() {
     esac
 }
 
-test_download_remove_failure() { t_download_fault_case remove; }
-test_download_remove_zh() { t_download_fault_case remove-zh; }
-test_download_release_failure() { t_download_fault_case release; }
-test_download_candidate_failure() { t_download_fault_case candidate; }
-test_download_candidate_remove_failure() { t_download_fault_case candidate-remove; }
-test_download_signal() { t_download_fault_case signal; }
+test_download_remove_failure() { s5t_download_fault_case remove; }
+test_download_remove_zh() { s5t_download_fault_case remove-zh; }
+test_download_release_failure() { s5t_download_fault_case release; }
+test_download_candidate_failure() { s5t_download_fault_case candidate; }
+test_download_candidate_remove_failure() { s5t_download_fault_case candidate-remove; }
+test_download_signal() { s5t_download_fault_case signal; }
 
-# Optional scenario arguments support isolated runs, permutation and repetition.
+test_account_creation_failure() {
+    for _acfamily in debian alpine; do
+        for _acfailure in 0 1; do
+            t_xray_fixture 23456
+            S5_OS_FAMILY=$_acfamily
+            : >"$S5_TEST_ROOT/fail-useradd"
+            if [ "$_acfailure" = 1 ]; then : >"$S5_TEST_ROOT/fail-groupdel"; fi
+            s5_account_create >"$S5_TEST_ROOT/account.log" 2>&1
+            assert_eq "$_acfamily rejects failed account creation" 1 "$?"
+            assert_eq "$_acfamily records no uncreated user" 0 "$S5_CREATED_USER"
+            assert_eq "$_acfamily retains group ownership only while cleanup is incomplete" "$_acfailure" "$S5_CREATED_GROUP"
+            case "$_acfamily" in
+            debian) _actranscript='groupadd -r xray-socks5
+useradd -r -g xray-socks5 -M -d /nonexistent -s /usr/sbin/nologin xray-socks5
+groupdel xray-socks5' ;;
+            alpine) _actranscript='addgroup -S xray-socks5
+adduser -S -D -H -h /nonexistent -G xray-socks5 -s /sbin/nologin xray-socks5
+delgroup xray-socks5' ;;
+            esac
+            assert_eq "$_acfamily failure preserves account command ordering and arguments" \
+                "$_actranscript" "$(cat "$S5_TEST_ROOT/account-transcript")"
+            if [ "$_acfailure" = 1 ]; then
+                assert_file_exists "$_acfamily failed cleanup leaves its owned group" "$S5_TEST_ROOT/group-exists"
+                rm "$S5_TEST_ROOT/fail-groupdel"
+                s5_cleanup
+                assert_file_absent "$_acfamily cleanup retries the owned group" "$S5_TEST_ROOT/group-exists"
+            else
+                assert_file_absent "$_acfamily successful cleanup removes its group" "$S5_TEST_ROOT/group-exists"
+            fi
+        done
+    done
+}
+
+test_account_lifecycle() {
+    for _acfamily in debian alpine; do
+        t_xray_fixture 23456
+        S5_OS_FAMILY=$_acfamily
+        s5_account_create
+        assert_eq "$_acfamily creates its dedicated account" 0 "$?"
+        assert_eq "$_acfamily records the created user" 1 "$S5_CREATED_USER"
+        assert_eq "$_acfamily records the created group" 1 "$S5_CREATED_GROUP"
+        s5_account_remove
+        assert_eq "$_acfamily removes its dedicated account" 0 "$?"
+        assert_eq "$_acfamily clears user ownership after removal" 0 "$S5_CREATED_USER"
+        assert_eq "$_acfamily clears group ownership after removal" 0 "$S5_CREATED_GROUP"
+        case "$_acfamily" in
+        debian) _actranscript='groupadd -r xray-socks5
+useradd -r -g xray-socks5 -M -d /nonexistent -s /usr/sbin/nologin xray-socks5
+userdel xray-socks5
+groupdel xray-socks5' ;;
+        alpine) _actranscript='addgroup -S xray-socks5
+adduser -S -D -H -h /nonexistent -G xray-socks5 -s /sbin/nologin xray-socks5
+deluser xray-socks5
+delgroup xray-socks5' ;;
+        esac
+        assert_eq "$_acfamily lifecycle preserves account command ordering and arguments" \
+            "$_actranscript" "$(cat "$S5_TEST_ROOT/account-transcript")"
+    done
+}
+
+SCENARIOS='account_creation_failure account_lifecycle install config_corrupt binary_corrupt unit_corrupt account_corrupt cleanup_temps openrc_runtime locks download_cleanup download_remove_failure download_remove_zh download_release_failure download_candidate_failure download_candidate_remove_failure download_signal'
 if [ "$#" -eq 0 ]; then
-    set -- install config_corrupt binary_corrupt unit_corrupt account_corrupt cleanup_temps openrc_runtime locks download_cleanup download_remove_failure download_remove_zh download_release_failure download_candidate_failure download_candidate_remove_failure download_signal
+    # Expand the fixed scenario words into the default argument list.
+    # shellcheck disable=SC2086
+    set -- $SCENARIOS
 fi
 for scenario do
-    case "$scenario" in
-    install|config_corrupt|binary_corrupt|unit_corrupt|account_corrupt|cleanup_temps|openrc_runtime|locks|download_cleanup|download_remove_failure|download_remove_zh|download_release_failure|download_candidate_failure|download_candidate_remove_failure|download_signal)
-        "test_$scenario" ;;
-    *) t_bad "unknown install scenario: $scenario" ;;
-    esac
+    _scenario_known=0
+    for _scenario_name in $SCENARIOS; do
+        if [ "$scenario" = "$_scenario_name" ]; then _scenario_known=1; break; fi
+    done
+    if [ "$_scenario_known" = 1 ]; then
+        "test_$scenario"
+    else
+        t_bad "unknown install scenario: $scenario"
+    fi
 done
 t_summary

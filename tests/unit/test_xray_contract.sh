@@ -5,12 +5,26 @@ S5T_NAME=test_xray_contract
 . "${S5_REPO_ROOT}/tests/lib/assert.sh"
 ROOT=${S5_REPO_ROOT}
 t_mktestroot
-S5_LIB_ONLY=1
-S5_ASSUME_ROOT=1
-S5_SKIP_OWNERSHIP=1
-export S5_LIB_ONLY S5_ASSUME_ROOT S5_SKIP_OWNERSHIP
-# shellcheck source=/dev/null
-. "$ROOT/socks5.sh"
+t_run python3 - "$ROOT/socks5.sh" "$ROOT/tests/run.sh" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+source, runner = (Path(path).read_text() for path in sys.argv[1:])
+reads = set(re.findall(r'\$\{?(S5_[A-Z0-9_]+)', source))
+initialized = set(re.findall(r'^\s*(S5_[A-Z0-9_]+)=', source, re.M))
+guard = source.split('s5_guard_environment() {', 1)[1].split('\n}', 1)[0]
+guarded = set(re.findall(r'\$\{?(S5_[A-Z0-9_]+)', guard))
+expected = (reads - initialized - {'S5_SERVER_IPV4'}) | guarded
+actual = set(re.findall(r'-u (S5_[A-Z0-9_]+)', runner))
+if actual != expected:
+    raise AssertionError('runner test environment mismatch: missing=' +
+                         ','.join(sorted(expected - actual)) + ' extra=' +
+                         ','.join(sorted(actual - expected)))
+PY
+assert_eq "runner clears exactly the production test environment" 0 "$T_STATUS"
+if [ "$T_STATUS" -ne 0 ]; then printf '%s\n' "$T_OUT" >&2; fi
+t_source_production ''
 
 S5_LANG=en
 S5_PORT_PROBE="$S5_TEST_ROOT/portprobe"
@@ -36,14 +50,26 @@ assert_eq "language 2 sets en" en "$S5_LANG"
 S5_PORT=''
 S5_USERNAME=''
 S5_PASSWORD=''
-s5env_answers_placeholder=''
 printf '\n\n\n' >"$S5_TEST_ROOT/values"
 S5_LANG=en
 # A blank answer to each prompt has to reach generation and produce a value the
 # validators accept. Asserting only the exit status let a prompt return 0 having
 # generated nothing. The subshell reports whether the three values validate, never
 # the values themselves, so a failure here cannot publish the password.
-t_run sh -c '. "$1"; S5_LANG=en; S5_PORT_PROBE="$2"; export S5_PORT_PROBE; s5_prompt_port; s5_prompt_username; s5_prompt_password; s5_valid_port "$S5_PORT" && s5_valid_username "$S5_USERNAME" && s5_valid_password "$S5_PASSWORD" && printf generated' sh "$ROOT/socks5.sh" "$S5_PORT_PROBE" <"$S5_TEST_ROOT/values"
+S5T_PROMPT_SHELL=${S5_TEST_SHELL:-sh}
+export S5T_PROMPT_SHELL
+t_stub 'prompt shell' <<'SHELL'
+#!/bin/sh
+printf '%s\n' "$S5T_PROMPT_SHELL" >"$S5_TEST_ROOT/prompt-shell-used"
+# A configured interpreter can contain multiple words, such as busybox sh.
+# shellcheck disable=SC2086
+exec $S5T_PROMPT_SHELL "$@"
+SHELL
+S5_TEST_SHELL="$S5_TEST_ROOT/bin/prompt shell"
+t_run "$S5_TEST_SHELL" -c '. "$1"; S5_LANG=en; S5_PORT_PROBE="$2"; export S5_PORT_PROBE; s5_prompt_port; s5_prompt_username; s5_prompt_password; s5_valid_port "$S5_PORT" && s5_valid_username "$S5_USERNAME" && s5_valid_password "$S5_PASSWORD" && printf generated' sh "$ROOT/socks5.sh" "$S5_PORT_PROBE" <"$S5_TEST_ROOT/values"
+S5_TEST_SHELL=$S5T_PROMPT_SHELL
+assert_file_exists "blank prompts run through the configured interpreter" "$S5_TEST_ROOT/prompt-shell-used"
+assert_eq "prompt interpreter matches the selected shell" "$S5T_PROMPT_SHELL" "$(cat "$S5_TEST_ROOT/prompt-shell-used" 2>/dev/null)"
 assert_eq "empty value stream reaches random generation" 0 "$T_STATUS"
 assert_contains "each generated value satisfies its own validator" \
     generated "$T_OUT"
@@ -66,7 +92,7 @@ S5_LISTEN=127.0.0.1
 mkdir -p "$S5_SYSCONFDIR" "$S5_STATEDIR"
 config=$(s5_config_render)
 printf '%s\n' "$config" >"$S5_CFG"
-S5_CONFIG_SHA256=$(sha256sum "$S5_CFG" | awk '{print $1}')
+S5_CONFIG_SHA256=$(t_sha256 "$S5_CFG")
 S5_ARCHNAME=amd64
 s5_asset_select
 S5_INIT=systemd
@@ -74,7 +100,7 @@ S5_ACCOUNT_UID=900
 S5_ACCOUNT_GID=900
 mkdir -p "$S5_UNITDIR"
 s5_write_unit >/dev/null 2>&1
-S5_UNIT_SHA256=$(sha256sum "$S5_SERVICE_ARTIFACT" | awk '{print $1}')
+S5_UNIT_SHA256=$(t_sha256 "$S5_SERVICE_ARTIFACT")
 s5_state_write
 assert_file_exists "Xray state is written" "$S5_STATE"
 assert_mode "Xray state is root-only" 600 "$S5_STATE"
@@ -320,31 +346,31 @@ S5_OSRELEASE="$ROOT/tests/fixtures/os-release/debian-12"
 unset -f unzip
 
 # Redirected prompts cannot rely on terminal echo to supply their line breaks.
-_d5ask=$S5_TEST_ROOT/d5.ask
-s5_msg_ask uninstall.confirm 2>"$_d5ask"
+_prompt_output=$S5_TEST_ROOT/prompt.out
+s5_msg_ask uninstall.confirm 2>"$_prompt_output"
 assert_eq "the uninstall question renders" 0 "$?"
 assert_eq "the redirected uninstall question terminates its line" 1 \
-    "$(wc -l <"$_d5ask" | tr -d '[:space:]')"
+    "$(wc -l <"$_prompt_output" | tr -d '[:space:]')"
 assert_contains "the uninstall question is the catalog text" \
-    'Remove the Xray mixed proxy' "$(cat "$_d5ask")"
+    'Remove the Xray mixed proxy' "$(cat "$_prompt_output")"
 
-printf 'y\n' | s5_confirm_install 2>"$_d5ask" >/dev/null
+printf 'y\n' | s5_confirm_install 2>"$_prompt_output" >/dev/null
 assert_eq "the redirected install question terminates its line" 1 \
-    "$(wc -l <"$_d5ask" | tr -d '[:space:]')"
-printf 'y\n' | s5_confirm_update 2>"$_d5ask" >/dev/null
+    "$(wc -l <"$_prompt_output" | tr -d '[:space:]')"
+printf 'y\n' | s5_confirm_update 2>"$_prompt_output" >/dev/null
 assert_eq "the redirected update question terminates its line" 1 \
-    "$(wc -l <"$_d5ask" | tr -d '[:space:]')"
+    "$(wc -l <"$_prompt_output" | tr -d '[:space:]')"
 
 # An unrenderable prompt must not be answered on the operator's behalf. The stub
 # lives in a subshell so the real catalog survives for anything after this.
-if ( s5_msg() { return 1; }; printf 'y\n' | s5_confirm_install ) 2>"$_d5ask" >/dev/null
-then _d5s=0; else _d5s=$?; fi
-assert_ne "an unrenderable install prompt is not taken as consent" 0 "$_d5s"
+if ( s5_msg() { return 1; }; printf 'y\n' | s5_confirm_install ) 2>"$_prompt_output" >/dev/null
+then _prompt_status=0; else _prompt_status=$?; fi
+assert_ne "an unrenderable install prompt is not taken as consent" 0 "$_prompt_status"
 assert_contains "an unrenderable install prompt says so" \
-    'cannot render message' "$(cat "$_d5ask")"
-if ( s5_msg() { return 1; }; printf 'y\n' | s5_confirm_update ) 2>"$_d5ask" >/dev/null
-then _d5s=0; else _d5s=$?; fi
-assert_ne "an unrenderable update prompt is not taken as consent" 0 "$_d5s"
+    'cannot render message' "$(cat "$_prompt_output")"
+if ( s5_msg() { return 1; }; printf 'y\n' | s5_confirm_update ) 2>"$_prompt_output" >/dev/null
+then _prompt_status=0; else _prompt_status=$?; fi
+assert_ne "an unrenderable update prompt is not taken as consent" 0 "$_prompt_status"
 
 while IFS='|' read -r _catalog_key _catalog_arg1 _catalog_arg2 _catalog_en _catalog_zh; do
     set --
@@ -376,5 +402,39 @@ uninstall.directory|/owned||could not remove owned directory: /owned|无法删�
 detect.unzip|||required command(s) are missing: unzip with -Z (Info-ZIP).|缺少必要命令：支持 -Z 的 unzip（Info-ZIP）。
 usage.unknown|bogus||unknown command: bogus.|未知命令：bogus。
 CATALOG
+
+S5_LANG=en
+while IFS='|' read -r _confirm_mode _confirm_answer _confirm_status; do
+    printf '%s\n' "$_confirm_answer" >"$S5_TEST_ROOT/confirm.answer"
+    t_run "s5_confirm_$_confirm_mode" <"$S5_TEST_ROOT/confirm.answer"
+    assert_eq "$_confirm_mode accepts exactly its documented confirmation answers" "$_confirm_status" "$T_STATUS"
+    if [ "$_confirm_status" = 1 ]; then
+        assert_contains "$_confirm_mode reports a declined answer" 'operation cancelled.' "$T_OUT"
+    else
+        assert_not_contains "$_confirm_mode never calls an accepted answer cancelled" 'operation cancelled.' "$T_OUT"
+    fi
+done <<'CONFIRM'
+install||0
+install|y|0
+install|Y|0
+install|yes|0
+install|YES|0
+install|Yes|0
+install|n|1
+install|true|1
+install| y|1
+update||1
+update|y|0
+update|Y|0
+update|yes|1
+update|YES|1
+update|Yes|1
+update|n|1
+CONFIRM
+for _confirm_mode in install update; do
+    t_run "s5_confirm_$_confirm_mode" </dev/null
+    assert_eq "$_confirm_mode rejects confirmation EOF" 1 "$T_STATUS"
+    assert_not_contains "$_confirm_mode distinguishes EOF from declining" 'operation cancelled.' "$T_OUT"
+done
 
 t_summary

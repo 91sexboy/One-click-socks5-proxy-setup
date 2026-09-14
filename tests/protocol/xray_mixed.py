@@ -16,6 +16,10 @@ import time
 
 ERROR = 2
 FRAME_MAGIC = b"X5"
+FRAME_HELLO = ord("H")
+FRAME_CLIENT = ord("C")
+FRAME_SERVER = ord("S")
+FRAME_ECHO = ord("E")
 # The boundary probe's connection id. Kept clear of the data-plane tunnels, which
 # use 1-4 and 1000 upwards, so a frame from either is attributable.
 BOUNDARY_CID = 176
@@ -123,19 +127,30 @@ def http_authority(endpoint):
     return "%s:%d" % (endpoint.host, endpoint.port)
 
 
+def socks5_negotiate(sock, deadline):
+    sock.sendall(b"\x05\x01\x02")
+    # A separate reply budget starts after the request, not before a slow send.
+    if deadline is None:
+        deadline = time.monotonic() + 5
+    return read_exact(sock, 2, deadline) == b"\x05\x02"
+
+
+def socks5_authenticate(sock, creds, deadline):
+    user = creds.user.encode("ascii")
+    password = creds.password.encode("ascii")
+    sock.sendall(b"\x01" + bytes([len(user)]) + user + bytes([len(password)]) + password)
+    if deadline is None:
+        deadline = time.monotonic() + 5
+    return read_exact(sock, 2, deadline) == b"\x01\x00"
+
+
 def socks5_connect(proxy, target, creds, atyp="ipv4"):
     sock = connect(proxy)
     try:
         deadline = time.monotonic() + 10
-        sock.sendall(b"\x05\x01\x02")
-        reply = read_exact(sock, 2, deadline)
-        if reply != b"\x05\x02":
+        if not socks5_negotiate(sock, deadline):
             fail("SOCKS5 did not select username/password authentication")
-        ub = creds.user.encode("ascii")
-        pb = creds.password.encode("ascii")
-        sock.sendall(b"\x01" + bytes([len(ub)]) + ub + bytes([len(pb)]) + pb)
-        auth = read_exact(sock, 2, deadline)
-        if auth != b"\x01\x00":
+        if not socks5_authenticate(sock, creds, deadline):
             fail("SOCKS5 credentials were rejected")
         sock.sendall(b"\x05\x01\x00" + socks5_target_address(atyp, target.host) + struct.pack("!H", target.port))
         head = read_exact(sock, 4, deadline)
@@ -156,28 +171,26 @@ def socks5_connect(proxy, target, creds, atyp="ipv4"):
         raise
 
 
+def http_connect_request(target, creds, *, keep_alive=False):
+    token = base64.b64encode((creds.user + ":" + creds.password).encode("ascii")).decode("ascii")
+    authority = http_authority(target)
+    request = (
+        "CONNECT %s HTTP/1.1\r\nHost: %s\r\nProxy-Authorization: Basic %s\r\n"
+        % (authority, authority, token)
+    )
+    if keep_alive:
+        request += "Connection: keep-alive\r\n"
+    return (request + "\r\n").encode("ascii")
+
+
 def http_connect(proxy, target, creds):
     sock = connect(proxy)
     try:
-        token = base64.b64encode((creds.user + ":" + creds.password).encode("ascii")).decode("ascii")
-        authority = http_authority(target)
-        request = (
-            "CONNECT %s HTTP/1.1\r\n"
-            "Host: %s\r\n"
-            "Proxy-Authorization: Basic %s\r\n"
-            "Connection: keep-alive\r\n\r\n"
-        ) % (authority, authority, token)
-        sock.sendall(request.encode("ascii"))
+        sock.sendall(http_connect_request(target, creds, keep_alive=True))
         deadline = time.monotonic() + 10
         response = bytearray()
         while b"\r\n\r\n" not in response:
-            if time.monotonic() >= deadline:
-                fail("HTTP CONNECT response deadline expired")
-            sock.settimeout(max(0.05, deadline - time.monotonic()))
-            chunk = sock.recv(4096)
-            if not chunk:
-                fail("HTTP proxy closed before CONNECT response")
-            response.extend(chunk)
+            response.extend(recv_bounded(sock, 4096, deadline))
             if len(response) > 16384:
                 fail("HTTP CONNECT response is too large")
         line = bytes(response).split(b"\r\n", 1)[0]
@@ -192,15 +205,9 @@ def http_connect(proxy, target, creds):
 def socks5_wrong_auth(proxy, creds):
     sock = connect(proxy)
     try:
-        sock.sendall(b"\x05\x01\x02")
-        reply = read_exact(sock, 2, time.monotonic() + 5)
-        if reply != b"\x05\x02":
+        if not socks5_negotiate(sock, None):
             return True
-        ub = creds.user.encode("ascii")
-        pb = creds.password.encode("ascii")
-        sock.sendall(b"\x01" + bytes([len(ub)]) + ub + bytes([len(pb)]) + pb)
-        reply = read_exact(sock, 2, time.monotonic() + 5)
-        return reply != b"\x01\x00"
+        return not socks5_authenticate(sock, creds, None)
     except (ConnectionError, OSError, PeerClosed):
         return True
     finally:
@@ -223,13 +230,9 @@ def socks5_reject_command(proxy, target, creds, command):
     sock = connect(proxy)
     try:
         deadline = time.monotonic() + 8
-        sock.sendall(b"\x05\x01\x02")
-        if read_exact(sock, 2, deadline) != b"\x05\x02":
+        if not socks5_negotiate(sock, deadline):
             return True
-        ub = creds.user.encode("ascii")
-        pb = creds.password.encode("ascii")
-        sock.sendall(b"\x01" + bytes([len(ub)]) + ub + bytes([len(pb)]) + pb)
-        if read_exact(sock, 2, deadline) != b"\x01\x00":
+        if not socks5_authenticate(sock, creds, deadline):
             return True
         sock.sendall(b"\x05" + bytes([command, 0, 1]) + socket.inet_aton(target.host) + struct.pack("!H", target.port))
         reply = read_exact(sock, 4, deadline)
@@ -260,13 +263,7 @@ def http_wrong_auth(proxy, target, creds, timeout=8):
     sock = connect(proxy)
     try:
         deadline = time.monotonic() + timeout
-        authority = http_authority(target)
-        token = base64.b64encode((creds.user + ":" + creds.password).encode("ascii")).decode("ascii")
-        request = (
-            "CONNECT %s HTTP/1.1\r\nHost: %s\r\n"
-            "Proxy-Authorization: Basic %s\r\n\r\n"
-        ) % (authority, authority, token)
-        sock.sendall(request.encode("ascii"))
+        sock.sendall(http_connect_request(target, creds))
         response = bytearray()
         while b"\r\n" not in response:
             response.extend(recv_bounded(sock, 4096, deadline))
@@ -278,6 +275,10 @@ def http_wrong_auth(proxy, target, creds, timeout=8):
         return True
     finally:
         sock.close()
+
+
+def new_nonce():
+    return os.urandom(8)
 
 
 def make_frame(kind, cid, seq, nonce, payload):
@@ -298,7 +299,7 @@ def read_frame(sock, deadline):
 
 def validate_server_frame(frame, cid, nonce, expected_seq):
     kind, ids, frame_nonce, payload = frame
-    if kind != ord("S") or ids[0] != cid or frame_nonce != nonce:
+    if kind != FRAME_SERVER or ids[0] != cid or frame_nonce != nonce:
         fail("unsolicited frame identity mismatch")
     if ids[1] != expected_seq:
         fail("unsolicited frame sequence mismatch")
@@ -331,11 +332,11 @@ def exchange(sock, cid, nonce, count=4, idle=False, spacing=0.0, server_seq=0):
             return False
         frame = read_frame(sock, last_server + progress_window)
         kind, ids, frame_nonce, frame_payload = frame
-        if kind == ord("S"):
+        if kind == FRAME_SERVER:
             validate_server_frame(frame, cid, nonce, server_seq)
             server_seq += 1
             last_server = time.monotonic()
-        elif kind == ord("E"):
+        elif kind == FRAME_ECHO:
             if expected_echo is None or ids != (cid, expected_echo[0]) or frame_nonce != nonce:
                 fail("target echo identity or sequence mismatch")
             if frame_payload != expected_echo[1]:
@@ -359,7 +360,7 @@ def exchange(sock, cid, nonce, count=4, idle=False, spacing=0.0, server_seq=0):
             if seq and spacing:
                 drain_for(spacing)
             payload = ("client-%d-%d" % (cid, seq)).encode("ascii")
-        sock.sendall(make_frame(ord("C"), cid, seq, nonce, payload))
+        sock.sendall(make_frame(FRAME_CLIENT, cid, seq, nonce, payload))
         with STATS_LOCK:
             STATS["client_frames"] += 1
         deadline = time.monotonic() + 8
@@ -380,9 +381,9 @@ def tunnel_once(protocol, proxy, target, creds, cid, atyp="ipv4"):
         sock = socks5_connect(proxy, target, creds, atyp)
     else:
         sock = http_connect(proxy, target, creds)
-    nonce = struct.pack("!Q", cid * 104729 + 17)
+    nonce = new_nonce()
     try:
-        sock.sendall(make_frame(ord("H"), cid, 0, nonce, b"hello"))
+        sock.sendall(make_frame(FRAME_HELLO, cid, 0, nonce, b"hello"))
         exchange(sock, cid, nonce, count=4, idle=True)
     finally:
         sock.close()
@@ -405,9 +406,9 @@ def longlived_tunnel(proxy, target, creds, cid, frames=24, spacing=0.5):
     totals still reconcile in run_xray_mixed.sh.
     """
     sock = socks5_connect(proxy, target, creds, "ipv4")
-    nonce = struct.pack("!Q", cid * 104729 + 17)
+    nonce = new_nonce()
     try:
-        sock.sendall(make_frame(ord("H"), cid, 0, nonce, b"hello"))
+        sock.sendall(make_frame(FRAME_HELLO, cid, 0, nonce, b"hello"))
         exchange(sock, cid, nonce, count=frames, spacing=spacing)
     finally:
         sock.close()
@@ -428,12 +429,12 @@ def concurrency(protocol, proxy, target, creds, count, timeout=15):
             if barrier.broken:
                 fail("cohort aborted before connection establishment")
             cid = 1000 + index
-            nonce = struct.pack("!Q", cid * 104729 + 17)
+            nonce = new_nonce()
             if protocol == "socks5":
                 sock = socks5_connect(proxy, target, creds)
             else:
                 sock = http_connect(proxy, target, creds)
-            sock.sendall(make_frame(ord("H"), cid, 0, nonce,
+            sock.sendall(make_frame(FRAME_HELLO, cid, 0, nonce,
                                     ("cohort-%d" % count).encode("ascii")))
             validate_server_frame(read_frame(sock, time.monotonic() + 8), cid, nonce, 0)
             barrier.wait()
@@ -475,9 +476,9 @@ def direct_control(endpoint):
              % (endpoint.host, type(exc).__name__))
     try:
         deadline = time.monotonic() + 8
-        nonce = struct.pack("!Q", BOUNDARY_CID * 104729 + 29)
-        sock.sendall(make_frame(ord("H"), BOUNDARY_CID, 0, nonce, b"hello"))
-        sock.sendall(make_frame(ord("C"), BOUNDARY_CID, 0, nonce, b"control"))
+        nonce = new_nonce()
+        sock.sendall(make_frame(FRAME_HELLO, BOUNDARY_CID, 0, nonce, b"hello"))
+        sock.sendall(make_frame(FRAME_CLIENT, BOUNDARY_CID, 0, nonce, b"control"))
         with STATS_LOCK:
             STATS["control_tunnels"] += 1
             STATS["control_frames"] += 1
@@ -486,11 +487,11 @@ def direct_control(endpoint):
             kind, ids, frame_nonce, payload = read_frame(sock, deadline)
             if ids[0] != BOUNDARY_CID or frame_nonce != nonce:
                 fail("control frame identity mismatch")
-            if kind == ord("E"):
+            if kind == FRAME_ECHO:
                 if payload != b"control":
                     fail("control echo payload mismatch")
                 return
-            if kind != ord("S"):
+            if kind != FRAME_SERVER:
                 fail("control connection sent an unexpected frame type")
     finally:
         sock.close()
@@ -517,13 +518,9 @@ def socks5_denied_destination(proxy, target, creds, timeout=8, atyp="ipv4"):
     sock = connect(proxy)
     try:
         deadline = time.monotonic() + timeout
-        sock.sendall(b"\x05\x01\x02")
-        if read_exact(sock, 2, deadline) != b"\x05\x02":
+        if not socks5_negotiate(sock, deadline):
             return True
-        ub = creds.user.encode("ascii")
-        pb = creds.password.encode("ascii")
-        sock.sendall(b"\x01" + bytes([len(ub)]) + ub + bytes([len(pb)]) + pb)
-        if read_exact(sock, 2, deadline) != b"\x01\x00":
+        if not socks5_authenticate(sock, creds, deadline):
             fail("SOCKS5 rejected correct credentials on the boundary probe")
         sock.sendall(
             b"\x05\x01\x00"
@@ -541,9 +538,9 @@ def socks5_denied_destination(proxy, target, creds, timeout=8, atyp="ipv4"):
             read_exact(sock, 18, deadline)
         else:
             fail("SOCKS5 returned an unknown address type on the boundary probe")
-        nonce = struct.pack("!Q", BOUNDARY_CID * 104729 + 17)
-        sock.sendall(make_frame(ord("H"), BOUNDARY_CID, 0, nonce, b"hello"))
-        sock.sendall(make_frame(ord("C"), BOUNDARY_CID, 0, nonce, b"probe"))
+        nonce = new_nonce()
+        sock.sendall(make_frame(FRAME_HELLO, BOUNDARY_CID, 0, nonce, b"hello"))
+        sock.sendall(make_frame(FRAME_CLIENT, BOUNDARY_CID, 0, nonce, b"probe"))
         try:
             recv_bounded(sock, 1, deadline)
         except (PeerClosed, ProbeTimeout):
@@ -598,62 +595,61 @@ def main():
     # changes only timing, not what is counted; and a connection that survives the
     # 128-way burst alongside it is a stronger sustained-tunnel proof, not a weaker
     # one. Its marker is not printed until result() has re-raised any failure.
-    longlived_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-    longlived = longlived_pool.submit(longlived_tunnel, proxy, target, creds, 500)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as longlived_pool:
+        longlived = longlived_pool.submit(longlived_tunnel, proxy, target, creds, 500)
 
-    # SPEC 6 records the IPv4-literal, hostname and IPv6 target paths
-    # separately. IPv6 is conditional on the host having the target address, so an
-    # environment without it reports unavailable rather than silently passing.
-    tunnel_once("socks5", proxy, target, creds, 1, "ipv4")
-    print("mixed_target_ipv4=ok")
-    tunnel_once("http", proxy, target, creds, 2)
-    print("mixed_http_connect=ok")
-    tunnel_once("socks5", proxy, Endpoint(args.target_hostname, args.target_port), creds, 3, "hostname")
-    print("mixed_target_hostname=ok")
-    if ipv6_target_available(args.target_ipv6):
-        tunnel_once("socks5", proxy, Endpoint(args.target_ipv6, args.target_port), creds, 4, "ipv6")
-        print("mixed_target_ipv6=ok")
-    else:
-        print("mixed_target_ipv6=unavailable")
-    # SPEC 3 and 7: the destination boundary. The controls come first: they reach
-    # the denied endpoint, by address and by name, without the proxy, so a refusal
-    # below is attributable to the boundary and not to a dead listener or a name
-    # nothing can resolve.
-    denied = Endpoint(args.denied_host, args.target_port)
-    denied_by_name = Endpoint(args.denied_hostname, args.target_port)
-    direct_control(denied)
-    direct_control(denied_by_name)
-    print("mixed_denied_control=ok")
-    if not socks5_denied_destination(proxy, denied, creds):
-        fail("mixed proxy reached a destination inside the boundary")
-    print("mixed_denied_destination=ok")
-    # The literal case above cannot tell IPIfNonMatch from the default AsIs. This
-    # one can: the request carries a name, so only a proxy that resolves it before
-    # routing sees an address inside the boundary at all.
-    if not socks5_denied_destination(proxy, denied_by_name, creds, atyp="hostname"):
-        fail("mixed proxy reached a hostname resolving inside the boundary")
-    print("mixed_denied_hostname=ok")
-    if not socks5_wrong_auth(proxy, bad_creds):
-        fail("SOCKS5 accepted incorrect credentials")
-    if not http_wrong_auth(proxy, target, bad_creds):
-        fail("HTTP proxy accepted incorrect credentials")
-    if not socks5_noauth(proxy):
-        fail("mixed proxy accepted unauthenticated SOCKS5")
-    if not socks4_rejected(proxy, target, creds, False):
-        fail("mixed proxy accepted SOCKS4")
-    if not socks4_rejected(proxy, target, creds, True):
-        fail("mixed proxy accepted SOCKS4a")
-    if not socks5_reject_command(proxy, target, creds, 2):
-        fail("mixed proxy accepted BIND")
-    if not socks5_reject_command(proxy, target, creds, 3):
-        fail("mixed proxy accepted UDP ASSOCIATE with udp=false")
-    for count in (1, 32, 128):
-        concurrency("socks5", proxy, target, creds, count)
-        print("mixed_concurrency_%d=ok" % count)
-    # Join the long-lived tunnel started at the top; result() re-raises anything
-    # it hit, so the marker follows only a genuinely completed sustained tunnel.
-    longlived.result(timeout=60)
-    longlived_pool.shutdown()
+        # SPEC 6 records the IPv4-literal, hostname and IPv6 target paths
+        # separately. IPv6 is conditional on the host having the target address, so an
+        # environment without it reports unavailable rather than silently passing.
+        tunnel_once("socks5", proxy, target, creds, 1, "ipv4")
+        print("mixed_target_ipv4=ok")
+        tunnel_once("http", proxy, target, creds, 2)
+        print("mixed_http_connect=ok")
+        tunnel_once("socks5", proxy, Endpoint(args.target_hostname, args.target_port), creds, 3, "hostname")
+        print("mixed_target_hostname=ok")
+        if ipv6_target_available(args.target_ipv6):
+            tunnel_once("socks5", proxy, Endpoint(args.target_ipv6, args.target_port), creds, 4, "ipv6")
+            print("mixed_target_ipv6=ok")
+        else:
+            print("mixed_target_ipv6=unavailable")
+        # SPEC 3 and 7: the destination boundary. The controls come first: they reach
+        # the denied endpoint, by address and by name, without the proxy, so a refusal
+        # below is attributable to the boundary and not to a dead listener or a name
+        # nothing can resolve.
+        denied = Endpoint(args.denied_host, args.target_port)
+        denied_by_name = Endpoint(args.denied_hostname, args.target_port)
+        direct_control(denied)
+        direct_control(denied_by_name)
+        print("mixed_denied_control=ok")
+        if not socks5_denied_destination(proxy, denied, creds):
+            fail("mixed proxy reached a destination inside the boundary")
+        print("mixed_denied_destination=ok")
+        # The literal case above cannot tell IPIfNonMatch from the default AsIs. This
+        # one can: the request carries a name, so only a proxy that resolves it before
+        # routing sees an address inside the boundary at all.
+        if not socks5_denied_destination(proxy, denied_by_name, creds, atyp="hostname"):
+            fail("mixed proxy reached a hostname resolving inside the boundary")
+        print("mixed_denied_hostname=ok")
+        if not socks5_wrong_auth(proxy, bad_creds):
+            fail("SOCKS5 accepted incorrect credentials")
+        if not http_wrong_auth(proxy, target, bad_creds):
+            fail("HTTP proxy accepted incorrect credentials")
+        if not socks5_noauth(proxy):
+            fail("mixed proxy accepted unauthenticated SOCKS5")
+        if not socks4_rejected(proxy, target, creds, False):
+            fail("mixed proxy accepted SOCKS4")
+        if not socks4_rejected(proxy, target, creds, True):
+            fail("mixed proxy accepted SOCKS4a")
+        if not socks5_reject_command(proxy, target, creds, 2):
+            fail("mixed proxy accepted BIND")
+        if not socks5_reject_command(proxy, target, creds, 3):
+            fail("mixed proxy accepted UDP ASSOCIATE with udp=false")
+        for count in (1, 32, 128):
+            concurrency("socks5", proxy, target, creds, count)
+            print("mixed_concurrency_%d=ok" % count)
+        # Join the long-lived tunnel started at the top; result() re-raises anything
+        # it hit, so the marker follows only a genuinely completed sustained tunnel.
+        longlived.result(timeout=60)
     print("mixed_longlived=ok")
     print("mixed_protocol=ok")
     if args.stats_file:

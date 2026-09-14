@@ -8,18 +8,17 @@ still while the sampler reads the cgroup.
 
 import argparse
 import signal
-import struct
 import sys
-import time
+import threading
 
+from duplex_target import write_text
 import xray_mixed
 
-STOP = False
+STOP = threading.Event()
 
 
 def stop(signum, frame_info):
-    global STOP
-    STOP = True
+    STOP.set()
 
 
 def main():
@@ -43,15 +42,12 @@ def main():
     try:
         for index in range(args.count):
             sock = xray_mixed.socks5_connect(proxy, target, creds, "ipv4")
-            cid = 5000 + index
-            nonce = struct.pack("!Q", cid * 104729 + 17)
-            sock.sendall(xray_mixed.make_frame(ord("H"), cid, 0, nonce, b"hello"))
             socks.append(sock)
-        with open(args.ready_file, "w", encoding="ascii") as handle:
-            handle.write("%d\n" % len(socks))
-        deadline = time.monotonic() + args.max_seconds
-        while not STOP and time.monotonic() < deadline:
-            time.sleep(0.2)
+            cid = 5000 + index
+            nonce = xray_mixed.new_nonce()
+            sock.sendall(xray_mixed.make_frame(xray_mixed.FRAME_HELLO, cid, 0, nonce, b"hello"))
+        write_text(args.ready_file, "%d\n" % len(socks))
+        STOP.wait(args.max_seconds)
     finally:
         for sock in socks:
             try:

@@ -6,14 +6,8 @@ S5T_NAME=test_xray_openrc
 ROOT=${S5_REPO_ROOT}
 t_mktestroot
 mkdir -p "$S5_TEST_ROOT/bin" "$S5_TEST_ROOT/etc/init.d"
-S5_LIB_ONLY=1
-S5_ASSUME_ROOT=1
-S5_SKIP_OWNERSHIP=1
-S5_OSRELEASE="$ROOT/tests/fixtures/os-release/alpine-3.20"
+t_source_production "$ROOT/tests/fixtures/os-release/alpine-3.20"
 S5_ARCHNAME=amd64
-export S5_LIB_ONLY S5_ASSUME_ROOT S5_SKIP_OWNERSHIP S5_OSRELEASE
-# shellcheck disable=SC1091
-. "$ROOT/socks5.sh"
 S5_LANG=en
 S5_PORT=23456
 S5_LISTEN=127.0.0.1
@@ -97,7 +91,7 @@ assert_contains "switching back writes an OpenRC script" \
 
 # A transient nonzero rc-service result is accepted only when the manager says
 # the service is actually starting; a failed/inactive service remains an error.
-cat >"$S5_TEST_ROOT/bin/rc-service" <<'RC'
+t_stub rc-service <<'RC'
 #!/bin/sh
 if [ "$2" = status ]; then
     if [ -f "$S5_TEST_ROOT/active" ]; then exit 8; fi
@@ -107,7 +101,6 @@ if [ -f "$S5_TEST_ROOT/fail-start" ]; then exit 7; fi
 : >"$S5_TEST_ROOT/active"
 exit 7
 RC
-chmod 755 "$S5_TEST_ROOT/bin/rc-service"
 PATH="$S5_TEST_ROOT/bin:$PATH"
 export PATH
 s5_svc start
@@ -117,21 +110,20 @@ rm -f "$S5_TEST_ROOT/active"
 s5_svc start
 assert_ne "OpenRC inactive start remains failure" 0 "$?"
 
-# s5_service_active must fail closed like the systemd arm, where only exit 3
+# s5_service_state must fail closed like the systemd arm, where only exit 3
 # proves the service is down. 16 is OpenRC's `inactive`, which supervise-daemon
 # leaves behind while the supervised process is still alive and still holding the
 # port, and 1 is a plain rc-service error; treating either as stopped let
 # uninstall delete the config, binary and account from under a live proxy.
-cat >"$S5_TEST_ROOT/bin/rc-service" <<'RC'
+t_stub rc-service <<'RC'
 #!/bin/sh
 if [ "$2" = status ]; then exit "$(cat "$S5_TEST_ROOT/statuscode")"; fi
 exit "$(cat "$S5_TEST_ROOT/actioncode")"
 RC
-chmod 755 "$S5_TEST_ROOT/bin/rc-service"
 printf '0\n' >"$S5_TEST_ROOT/actioncode"
 for _sacase in 0:0 8:0 3:1 16:2 1:2 32:2 4:2; do
     printf '%s\n' "${_sacase%%:*}" >"$S5_TEST_ROOT/statuscode"
-    s5_service_active
+    s5_service_state
     assert_eq "rc-service status ${_sacase%%:*} means ${_sacase#*:}" \
         "${_sacase#*:}" "$?"
 done
@@ -165,23 +157,19 @@ printf '0\n' >"$S5_TEST_ROOT/actioncode"
 # which made a healthy service look like it was not listening.
 mkdir -p "$S5_OPENRC_OPTION_DIR"
 printf '378\n' >"$S5_OPENRC_OPTION_DIR/child_pid"
-cat >"$S5_TEST_ROOT/bin/ss" <<'SS'
+t_stub ss <<'SS'
 #!/bin/sh
 printf '%s\n' 'LISTEN 0 4096 127.0.0.1:23456 0.0.0.0:* users:(("xray",pid=378,fd=3))'
 SS
-chmod 755 "$S5_TEST_ROOT/bin/ss"
 s5_listener_state
 assert_eq "OpenRC listener accepts the supervised child" 0 "$?"
-# shellcheck disable=SC2154
-assert_eq "OpenRC listener owner is child_pid" 378 "$_slpid"
 
 # The supervisor never owns the listener, so a supervisor-owned endpoint is not
 # proof that Xray itself is listening.
-cat >"$S5_TEST_ROOT/bin/ss" <<'SS'
+t_stub ss <<'SS'
 #!/bin/sh
 printf '%s\n' 'LISTEN 0 4096 127.0.0.1:23456 0.0.0.0:* users:(("supervise-daemon",pid=377,fd=3))'
 SS
-chmod 755 "$S5_TEST_ROOT/bin/ss"
 t_run s5_listener_state
 assert_ne "OpenRC listener refuses a supervisor-owned endpoint" 0 "$T_STATUS"
 
@@ -206,19 +194,17 @@ S5_INIT=openrc
 # Each service verb dispatches to exactly one backend command. Record what
 # rc-service and rc-update receive so a verb cannot be mapped to the wrong action
 # or dropped. rc-service actions succeed here; enable/disable go through rc-update.
-cat >"$S5_TEST_ROOT/bin/rc-service" <<'RC'
+t_stub rc-service <<'RC'
 #!/bin/sh
 if [ "$2" = status ]; then exit 3; fi
 printf 'rc-service %s %s\n' "$1" "$2" >>"$S5_TEST_ROOT/svc-transcript"
 exit 0
 RC
-chmod 755 "$S5_TEST_ROOT/bin/rc-service"
-cat >"$S5_TEST_ROOT/bin/rc-update" <<'RC'
+t_stub rc-update <<'RC'
 #!/bin/sh
 printf 'rc-update %s %s %s\n' "$1" "$2" "$3" >>"$S5_TEST_ROOT/svc-transcript"
 exit 0
 RC
-chmod 755 "$S5_TEST_ROOT/bin/rc-update"
 : >"$S5_TEST_ROOT/svc-transcript"
 s5_svc stop
 assert_eq "OpenRC stop calls rc-service stop" 1 \

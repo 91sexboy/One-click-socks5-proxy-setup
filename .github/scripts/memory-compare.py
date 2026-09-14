@@ -173,15 +173,15 @@ class TunnelLoad:
                     raise TimeoutError("comparison tunnel setup exceeded its deadline")
                 connect = xray_mixed.socks5_connect if index % 2 == 0 else xray_mixed.http_connect
                 sock = connect(self.proxy, self.target, self.credentials)
-                session = {"socket": sock, "cid": 100000 + index, "nonce": os.urandom(8),
+                session = {"socket": sock, "cid": 100000 + index, "nonce": xray_mixed.new_nonce(),
                            "server_seq": 0, "sequence": 1, "frames": 0, "verified_bytes": 0,
                            "latencies": [0] * len(self.latency_bounds)}
                 self.sessions.append(session)
                 sock.settimeout(5)
                 if self.mode == "slow":
                     sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 32768)
-                sock.sendall(xray_mixed.make_frame(ord("H"), session["cid"], 0, session["nonce"], b"memory"))
-                sock.sendall(xray_mixed.make_frame(ord("C"), session["cid"], 0, session["nonce"], b"ready"))
+                sock.sendall(xray_mixed.make_frame(xray_mixed.FRAME_HELLO, session["cid"], 0, session["nonce"], b"memory"))
+                sock.sendall(xray_mixed.make_frame(xray_mixed.FRAME_CLIENT, session["cid"], 0, session["nonce"], b"ready"))
                 self._echo(session, 0, b"ready")
             return self
         except BaseException:
@@ -199,7 +199,7 @@ class TunnelLoad:
         self.started = time.monotonic()
         self.go.set()
 
-    def _server(self, session, frame):
+    def _validate_server_frame(self, session, frame):
         xray_mixed.validate_server_frame(frame, session["cid"], session["nonce"], session["server_seq"])
         session["server_seq"] += 1
 
@@ -208,9 +208,9 @@ class TunnelLoad:
         while True:
             frame = xray_mixed.read_frame(session["socket"], deadline)
             kind, ids, nonce, echoed = frame
-            if kind == ord("S"):
-                self._server(session, frame)
-            elif kind == ord("E") and ids == (session["cid"], sequence) and nonce == session["nonce"] and echoed == payload:
+            if kind == xray_mixed.FRAME_SERVER:
+                self._validate_server_frame(session, frame)
+            elif kind == xray_mixed.FRAME_ECHO and ids == (session["cid"], sequence) and nonce == session["nonce"] and echoed == payload:
                 return
             else:
                 raise RuntimeError("comparison echo frame failed identity, sequence or payload verification")
@@ -221,14 +221,14 @@ class TunnelLoad:
             self.go.wait()
             while not self.stop.is_set():
                 if self.mode == "held":
-                    self._server(session, xray_mixed.read_frame(session["socket"], time.monotonic() + 5))
+                    self._validate_server_frame(session, xray_mixed.read_frame(session["socket"], time.monotonic() + 5))
                     continue
                 sequence = session["sequence"]
                 sent = []
                 for index in range(8):
                     sent.append(time.monotonic())
                     session["socket"].sendall(xray_mixed.make_frame(
-                        ord("C"), session["cid"], sequence + index, session["nonce"], self.payload))
+                        xray_mixed.FRAME_CLIENT, session["cid"], sequence + index, session["nonce"], self.payload))
                 if self.mode == "slow":
                     self.stop.wait(0.05)
                 for index, started in enumerate(sent):

@@ -38,8 +38,9 @@ for f in "$UNIT_DIR"/*.sh; do
     # multi-word command such as `busybox sh`, which must split into words.
     # shellcheck disable=SC2086
     if out=$(env -u S5_TEST_MODE -u S5_TEST_ROOT -u S5_LIB_ONLY \
-        -u S5_TEST_ASSET_SHA256 -u S5_TEST_ASSET_SIZE \
-        -u S5_PROC_NET_TCP -u S5_PROC_NET_TCP6 \
+        -u S5_ASSUME_ROOT -u S5_SKIP_OWNERSHIP -u S5_PORT_PROBE \
+        -u S5_LISTENER_PROBE -u S5_TEST_ASSET_PATH -u S5_TEST_ADDR_PATH \
+        -u S5_OSRELEASE -u S5_LISTEN -u S5_PROTOCOL_VERIFY \
         S5_SRC="$ROOT/socks5.sh" S5_REPO_ROOT="$ROOT" \
         $SHELL_UNDER_TEST "$f" 2>&1); then
         st=0

@@ -1,4 +1,5 @@
 #!/bin/sh
+# Independent release-pin mutations and fixture compatibility.
 
 S5T_NAME=test_xray_release_contract
 . "${S5_REPO_ROOT}/tests/lib/assert.sh"

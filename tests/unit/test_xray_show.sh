@@ -1,22 +1,11 @@
 #!/bin/sh
-# The credential card: address resolution, and the terminal-only guard.
-#
-# show had no coverage anywhere. Its only host source was
-# ${S5_SERVER_IPV4:-SERVER_IPV4} and nothing in the branch ever set that
-# variable, so every card printed a URI with a literal SERVER_IPV4 in it and no
-# hint that it was a placeholder.
+# Credential cards, status localization and restart diagnostics.
 
 S5T_NAME=test_xray_show
 . "${S5_REPO_ROOT}/tests/lib/assert.sh"
 ROOT=${S5_REPO_ROOT}
 t_mktestroot
-S5_LIB_ONLY=1
-S5_ASSUME_ROOT=1
-S5_SKIP_OWNERSHIP=1
-S5_OSRELEASE="$ROOT/tests/fixtures/os-release/debian-12"
-export S5_LIB_ONLY S5_ASSUME_ROOT S5_SKIP_OWNERSHIP S5_OSRELEASE
-# shellcheck source=/dev/null
-. "$ROOT/socks5.sh"
+t_source_production "$ROOT/tests/fixtures/os-release/debian-12"
 
 S5_LANG=en
 S5_PORT=23456
@@ -49,6 +38,7 @@ S5_TEST_ADDR_PATH=$S5_TEST_ROOT/body
 
 # s5t_body <printf-format>: write one exact response body and read it back.
 s5t_body() {
+    # Interpret the fixture's deliberate escape sequences as bytes.
     # shellcheck disable=SC2059
     printf "$1" >"$S5_TEST_ADDR_PATH"
     s5_read_public_ipv4

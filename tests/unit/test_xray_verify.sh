@@ -10,11 +10,12 @@
 # different ways. The two diagnostics must differ and each must name its own reason.
 
 S5T_NAME=test_xray_verify
-# shellcheck disable=SC1091
+# shellcheck source=/dev/null
 . "${S5_REPO_ROOT}/tests/lib/assert.sh"
 
 SRC=${S5_SRC:-${S5_REPO_ROOT}/socks5.sh}
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/s5verify.XXXXXX") || { printf 'cannot create workdir\n' >&2; exit 1; }
+# Capture the owned scratch directory before any test can change WORK.
 # shellcheck disable=SC2064
 trap "rm -rf \"$WORK\"" EXIT HUP INT TERM
 
@@ -33,7 +34,7 @@ assert_contains "the verifier python was extracted" \
 # verifier's first exact() read returns empty -> RuntimeError("closed"). "authmethod"
 # answers with an unacceptable method -> RuntimeError("auth method"). Two distinct
 # RuntimeError reasons that the old diagnostic rendered identically.
-run_case() {
+s5t_run_case() {
     _behavior=$1
     python3 - "$_behavior" >"$WORK/port.$_behavior" 2>>"$WORK/mock.log" <<'MOCK' &
 import socket, sys, threading
@@ -67,8 +68,8 @@ MOCK
     wait "$_mockpid" 2>/dev/null || true
 }
 
-run_case close
-run_case authmethod
+s5t_run_case close
+s5t_run_case authmethod
 
 _diag_close=$(grep 'data-plane verification failed' "$WORK/out.close" || true)
 _diag_auth=$(grep 'data-plane verification failed' "$WORK/out.authmethod" || true)
