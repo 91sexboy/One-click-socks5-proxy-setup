@@ -26,29 +26,20 @@ deterministic in both directions and never deadlocks.
 
 import json
 import os
-import shutil
 import socket
 import struct
 import sys
 import tempfile
 import threading
 import time
+import unittest
 
+sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import duplex_target  # noqa: E402
+from selftest_support import TapTestCase, run_tests
 
 GAP = 0.25
-FAILURES = []
-CHECKS = []
-
-
-def check(label, ok):
-    CHECKS.append(label)
-    if ok:
-        print("ok - %s" % label)
-    else:
-        print("not ok - %s" % label)
-        FAILURES.append(label)
 
 
 class GappedSocket:
@@ -195,7 +186,7 @@ def read_frames(sock, expected, deadline):
     return frames, None
 
 
-def frame_writer_checks():
+def frame_writer_checks(check):
     reader, writer_sock = socket.socketpair()
     try:
         writer = duplex_target.FrameWriter(GappedSocket(writer_sock, 0.05))
@@ -225,7 +216,7 @@ def frame_writer_checks():
         writer_sock.close()
 
 
-def text_writer_checks(scratch):
+def text_writer_checks(check, scratch):
     path = os.path.join(scratch, "shared")
     # The gapped writer takes the shorter text, so a flush that lands on the other
     # writer's bytes leaves a tail behind and the splice is visible in the file.
@@ -248,7 +239,7 @@ def text_writer_checks(scratch):
         print("# file holds %r" % ((written or "")[:64],))
 
 
-def metrics_writer_checks(scratch):
+def metrics_writer_checks(check, scratch):
     duplex_target.ACCEPTED = 7
     duplex_target.FRAMES = 11
     del duplex_target.FAMILIES[:]
@@ -291,7 +282,7 @@ def metrics_writer_checks(scratch):
     check("write_metrics runs with the count lock already held", not holder.is_alive())
 
 
-def connection_cleanup_checks():
+def connection_cleanup_checks(check):
     for label, request in (("EOF", b""), ("invalid magic", b"XX" + struct.pack("!I", 17) + b"H" + b"\0" * 16),
                            ("non-hello", b"X5" + struct.pack("!I", 17) + b"C" + b"\0" * 16)):
         server, client = socket.socketpair()
@@ -306,18 +297,24 @@ def connection_cleanup_checks():
             client.close()
 
 
-def main():
-    connection_cleanup_checks()
-    frame_writer_checks()
-    scratch = tempfile.mkdtemp(prefix="s5target.")
-    try:
-        text_writer_checks(scratch)
-        metrics_writer_checks(scratch)
-    finally:
-        shutil.rmtree(scratch, ignore_errors=True)
+class TargetTests(TapTestCase):
+    def test_connection_cleanup(self):
+        connection_cleanup_checks(self.check)
 
-    print("TESTS %d %d" % (len(CHECKS) - len(FAILURES), len(FAILURES)))
-    return 1 if FAILURES else 0
+    def test_frame_writer(self):
+        frame_writer_checks(self.check)
+
+    def test_text_writer(self):
+        with tempfile.TemporaryDirectory(prefix="s5target.") as scratch:
+            text_writer_checks(self.check, scratch)
+
+    def test_metrics_writer(self):
+        with tempfile.TemporaryDirectory(prefix="s5target.") as scratch:
+            metrics_writer_checks(self.check, scratch)
+
+
+def main():
+    return run_tests(unittest.defaultTestLoader.loadTestsFromTestCase(TargetTests))
 
 
 if __name__ == "__main__":

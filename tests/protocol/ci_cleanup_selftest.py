@@ -9,11 +9,14 @@ import subprocess
 import sys
 import tempfile
 import time
+import unittest
 
-
-ROOT = Path(sys.argv[1])
+sys.dont_write_bytecode = True
+ROOT = Path(__file__).resolve().parents[2]
 SHELL = shlex.split(os.environ.get("S5_TEST_SHELL", "sh"))
 HELPER = ROOT / ".github/scripts/lifecycle-target.sh"
+SCENARIOS = ("normal", "error", "TERM", "HUP", "INT", "exited", "unstarted", "stubborn", "repeated",
+             "namespace_failure", "namespace_primary_error", "removal_failure")
 
 
 def eventually(predicate, message, timeout=8):
@@ -25,7 +28,7 @@ def eventually(predicate, message, timeout=8):
     raise AssertionError(message)
 
 
-def check(mode):
+def check_cleanup(case, mode):
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         work = root / "work"
@@ -49,8 +52,7 @@ while True: time.sleep(0.05)
 . "$1"
 work=$2
 mode=$3
-# Replace only the external privileged namespace teardown. All target stopping,
-# waits, trap handling and workdir removal come from the real gate helper.
+# Replace only privileged namespace teardown, keeping actual child and workdir cleanup.
 lifecycle_cleanup_namespace() {
     case "$mode" in namespace_failure | namespace_primary_error) return 23 ;; esac
 }
@@ -76,7 +78,7 @@ esac
             if mode != "unstarted":
                 eventually(lambda: (root / "ready").exists() or proc.poll() is not None,
                            "target never started")
-                assert (root / "ready").exists(), "cleanup driver failed before target startup"
+                case.assertTrue((root / "ready").exists(), "cleanup driver failed before target startup")
                 pid, port = map(int, (root / "ready").read_text().split())
                 if mode in ("TERM", "HUP", "INT"):
                     eventually(lambda: (root / "driver-ready").exists(), "driver not ready")
@@ -84,16 +86,16 @@ esac
             stdout, stderr = proc.communicate(timeout=8)
             expected = {"error": 37, "unstarted": 19, "TERM": 143, "HUP": 129, "INT": 130,
                         "namespace_failure": 23, "namespace_primary_error": 37, "removal_failure": 29}.get(mode, 0)
-            assert proc.returncode == expected, f"{mode}: cleanup status {proc.returncode}, expected {expected}"
-            assert work.exists() == (mode == "removal_failure"), f"{mode}: unexpected final workdir state"
+            case.assertEqual(proc.returncode, expected, f"{mode}: unexpected cleanup status")
+            case.assertEqual(work.exists(), mode == "removal_failure", f"{mode}: unexpected final workdir state")
             if mode in ("namespace_failure", "namespace_primary_error", "removal_failure"):
-                assert b"cleanup failed" in stderr, f"{mode}: cleanup failure was not diagnosed"
+                case.assertIn(b"cleanup failed", stderr, f"{mode}: cleanup failure was not diagnosed")
             if pid:
-                assert not Path(f"/proc/{pid}").exists(), f"{mode}: target remains alive or unreaped"
+                case.assertFalse(Path(f"/proc/{pid}").exists(), f"{mode}: target remains alive or unreaped")
                 with socket.socket() as probe:
-                    assert probe.connect_ex(("127.0.0.1", port)) != 0, f"{mode}: target listener remains"
+                    case.assertNotEqual(probe.connect_ex(("127.0.0.1", port)), 0, f"{mode}: target listener remains")
                 if mode != "stubborn":
-                    assert (root / "stopped-before-removal").read_text() == "True", "workdir removed before stop"
+                    case.assertEqual((root / "stopped-before-removal").read_text(), "True", "workdir removed before stop")
         finally:
             if proc.poll() is None:
                 proc.kill()
@@ -105,13 +107,28 @@ esac
             proc.communicate(timeout=3)
 
 
-unrelated = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
-try:
-    for scenario in ("normal", "error", "TERM", "HUP", "INT", "exited", "unstarted", "stubborn", "repeated",
-                     "namespace_failure", "namespace_primary_error", "removal_failure"):
-        check(scenario)
-        assert unrelated.poll() is None, "cleanup killed an unrelated process"
-finally:
-    unrelated.terminate()
-    unrelated.wait(timeout=3)
-print("lifecycle owned-child cleanup: 12 scenarios passed; unrelated process preserved")
+class CleanupTests(unittest.TestCase):
+    def test_owned_child_lifecycle(self):
+        unrelated = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        try:
+            for scenario in SCENARIOS:
+                with self.subTest(scenario=scenario):
+                    check_cleanup(self, scenario)
+                    self.assertIsNone(unrelated.poll(), "cleanup killed an unrelated process")
+        finally:
+            unrelated.terminate()
+            unrelated.wait(timeout=3)
+
+
+def main():
+    global HELPER
+    if len(sys.argv) > 1:
+        HELPER = Path(sys.argv[1]) / ".github/scripts/lifecycle-target.sh"
+    result = unittest.TextTestRunner().run(unittest.defaultTestLoader.loadTestsFromTestCase(CleanupTests))
+    if result.wasSuccessful():
+        print("lifecycle owned-child cleanup: %d scenarios passed; unrelated process preserved" % len(SCENARIOS))
+    return int(not result.wasSuccessful())
+
+
+if __name__ == "__main__":
+    sys.exit(main())

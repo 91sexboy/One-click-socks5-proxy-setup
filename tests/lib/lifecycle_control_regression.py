@@ -11,13 +11,13 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import unittest
 from unittest.mock import patch
 
 sys.dont_write_bytecode = True
 
 
-def main():
-    root = Path(sys.argv[1]).resolve()
+def run_regressions(root):
     spec = importlib.util.spec_from_file_location(
         'lifecycle_control', root / '.github/scripts/lifecycle-assert-control.py')
     control = importlib.util.module_from_spec(spec)
@@ -165,5 +165,19 @@ def main():
     print(f'lifecycle control regressions: {checks} checks passed (no native lifecycle run)')
 
 
+class LifecycleControlTests(unittest.TestCase):
+    root = Path(__file__).resolve().parents[2]
+
+    def test_lifecycle_control_mutations(self):
+        run_regressions(self.root)
+
+
+def main():
+    if len(sys.argv) > 1:
+        LifecycleControlTests.root = Path(sys.argv[1]).resolve()
+    result = unittest.TextTestRunner().run(unittest.defaultTestLoader.loadTestsFromTestCase(LifecycleControlTests))
+    return int(not result.wasSuccessful())
+
+
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

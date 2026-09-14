@@ -41,7 +41,7 @@ sed 's/^        with self\._lock:$/        if True:/' \
     "$ROOT/tests/protocol/duplex_target.py" >"$_ttdir/duplex_target.py"
 assert_contains "the unlocked copy dropped the lock" 'if True:' \
     "$(cat "$_ttdir/duplex_target.py")"
-cp "$ROOT/tests/protocol/target_selftest.py" "$_ttdir/target_selftest.py"
+cp "$ROOT/tests/protocol/target_selftest.py" "$ROOT/tests/protocol/selftest_support.py" "$_ttdir/"
 t_run python3 "$_ttdir/target_selftest.py"
 assert_ne "an unlocked frame writer fails the self-test" 0 "$T_STATUS"
 
@@ -54,7 +54,7 @@ sed 's/^    with COUNT_LOCK:$/    if True:/' \
     "$ROOT/tests/protocol/duplex_target.py" >"$_ttdir/duplex_target.py"
 assert_contains "the unlocked-metrics copy dropped the lock" 'if True:' \
     "$(cat "$_ttdir/duplex_target.py")"
-cp "$ROOT/tests/protocol/target_selftest.py" "$_ttdir/target_selftest.py"
+cp "$ROOT/tests/protocol/target_selftest.py" "$ROOT/tests/protocol/selftest_support.py" "$_ttdir/"
 t_run python3 "$_ttdir/target_selftest.py"
 assert_ne "an unlocked metrics write fails the self-test" 0 "$T_STATUS"
 assert_contains "the unlocked metrics write lets the second writer in" \
@@ -67,7 +67,7 @@ sed 's/^    tmp = .*$/    tmp = path + ".tmp"/' \
     "$ROOT/tests/protocol/duplex_target.py" >"$_ttdir/duplex_target.py"
 assert_contains "the shared-temporary copy names one temporary" 'tmp = path + ".tmp"' \
     "$(cat "$_ttdir/duplex_target.py")"
-cp "$ROOT/tests/protocol/target_selftest.py" "$_ttdir/target_selftest.py"
+cp "$ROOT/tests/protocol/target_selftest.py" "$ROOT/tests/protocol/selftest_support.py" "$_ttdir/"
 t_run python3 "$_ttdir/target_selftest.py"
 assert_ne "a shared temporary fails the self-test" 0 "$T_STATUS"
 assert_contains "the shared temporary splices the file" \

@@ -3,12 +3,10 @@
 
 import os
 from pathlib import Path
-import pty
 import secrets
 import select
 import shlex
 import shutil
-import signal
 import subprocess
 import sys
 import tempfile
@@ -17,6 +15,7 @@ import unittest
 
 sys.dont_write_bytecode = True
 import terminal_install
+from selftest_support import PtySession, kill_process_group
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -138,36 +137,30 @@ printf 'answers-accepted\\n'
 
     def test_terminal_waits_for_enter_at_each_prompt(self):
         for language, prompts in self.prompts.items():
-            with self.subTest(language=language):
-                master, slave = pty.openpty()
+            with self.subTest(language=language), PtySession() as terminal:
                 process = None
                 try:
                     process = subprocess.Popen(self.command(language), env=self.environment,
-                                               stdin=slave, stdout=slave, stderr=slave,
+                                               stdin=terminal.slave, stdout=terminal.slave, stderr=terminal.slave,
                                                start_new_session=True)
-                    os.close(slave)
-                    slave = None
+                    terminal.close_slave()
                     for index, (prompt, answer) in enumerate(zip(prompts, self.answers)):
                         expected = (("\r\n" if index else "") + prompt).encode()
-                        output = self.read_until(master, prompt.encode())
+                        output = self.read_until(terminal.master, prompt.encode())
                         self.assertTrue(output == expected, "prompt order or terminal line layout changed")
-                        self.assertFalse(select.select([master], [], [], 0.1)[0],
+                        self.assertFalse(select.select([terminal.master], [], [], 0.1)[0],
                                          "advanced before receiving an answer")
-                        os.write(master, answer.encode())
-                        echo = self.read_until(master, answer.encode())
+                        os.write(terminal.master, answer.encode())
+                        echo = self.read_until(terminal.master, answer.encode())
                         self.assertTrue(echo == answer.encode(), "unexpected output while typing")
-                        self.assertFalse(select.select([master], [], [], 0.1)[0],
+                        self.assertFalse(select.select([terminal.master], [], [], 0.1)[0],
                                          "advanced before Enter")
-                        os.write(master, b"\n")
-                    self.read_until(master, b"answers-accepted")
+                        os.write(terminal.master, b"\n")
+                    self.read_until(terminal.master, b"answers-accepted")
                     self.assertEqual(process.wait(timeout=5), 0)
                 finally:
                     if process is not None and process.poll() is None:
-                        os.killpg(process.pid, signal.SIGKILL)
-                        process.wait()
-                    if slave is not None:
-                        os.close(slave)
-                    os.close(master)
+                        kill_process_group(process)
 
     def test_redirected_answers_keep_prompts_on_separate_lines(self):
         for language, prompts in self.prompts.items():
@@ -194,27 +187,23 @@ printf 'answers-accepted\\n'
                                 "file-fed terminal prompts ran together or exposed input")
 
     def test_terminal_input_with_redirected_prompts_keeps_separate_lines(self):
-        master, slave = pty.openpty()
-        process = None
-        try:
-            process = subprocess.Popen(self.command("en"), env=self.environment,
-                                       stdin=slave, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                       start_new_session=True)
-            os.close(slave)
-            slave = None
-            os.write(master, ("\n".join(self.answers) + "\n").encode())
-            output, prompts = process.communicate(timeout=5)
-            self.assertEqual(process.returncode, 0)
-            self.assertEqual(output, b"answers-accepted\n")
-            self.assertTrue(prompts == ("\n".join(self.prompts["en"]) + "\n").encode(),
-                            "redirected prompts relied on uncaptured input echo")
-        finally:
-            if process is not None and process.poll() is None:
-                os.killpg(process.pid, signal.SIGKILL)
-                process.communicate()
-            if slave is not None:
-                os.close(slave)
-            os.close(master)
+        with PtySession() as terminal:
+            process = None
+            try:
+                process = subprocess.Popen(self.command("en"), env=self.environment,
+                                           stdin=terminal.slave, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                           start_new_session=True)
+                terminal.close_slave()
+                os.write(terminal.master, ("\n".join(self.answers) + "\n").encode())
+                output, prompts = process.communicate(timeout=5)
+                self.assertEqual(process.returncode, 0)
+                self.assertEqual(output, b"answers-accepted\n")
+                self.assertTrue(prompts == ("\n".join(self.prompts["en"]) + "\n").encode(),
+                                "redirected prompts relied on uncaptured input echo")
+            finally:
+                if process is not None and process.poll() is None:
+                    kill_process_group(process)
+                    process.communicate()
 
     def test_invalid_answers_retry_without_exposing_input(self):
         answers = ["y", "bad-port", "23456", "!", "prompt_user", "short", self.answers[-1]]

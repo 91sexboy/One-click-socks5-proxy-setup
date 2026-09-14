@@ -3,13 +3,15 @@
 
 import errno
 import os
-import pty
 import select
 import signal
 import subprocess
 import sys
 import tempfile
 import time
+
+sys.dont_write_bytecode = True
+from selftest_support import PtySession, kill_process_group
 
 
 class TerminalFailure(Exception):
@@ -19,60 +21,54 @@ class TerminalFailure(Exception):
 
 
 def capture_terminal(command, answers, timeout=600):
-    master, slave = pty.openpty()
     process = None
     output = bytearray()
     deadline = time.monotonic() + timeout
     try:
-        with open(answers, "rb") as source:
-            environment = dict(os.environ, S5_SERVER_IPV4="192.0.2.1")
-            # Answers stay on a file, not the terminal, so terminal echo cannot
-            # manufacture the credential card this probe is supposed to verify.
-            process = subprocess.Popen(
-                command, stdin=source, stdout=slave, stderr=slave,
-                env=environment, start_new_session=True,
-            )
-        os.close(slave)
-        slave = None
-        while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise TerminalFailure("terminal install timed out")
-            ready, _, _ = select.select([master], [], [], min(remaining, 1))
-            if not ready:
-                continue
+        with PtySession() as terminal:
+            with open(answers, "rb") as source:
+                environment = dict(os.environ, S5_SERVER_IPV4="192.0.2.1")
+                # File-fed answers cannot manufacture a credential card through terminal echo.
+                process = subprocess.Popen(
+                    command, stdin=source, stdout=terminal.slave, stderr=terminal.slave,
+                    env=environment, start_new_session=True,
+                )
+            terminal.close_slave()
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TerminalFailure("terminal install timed out")
+                ready, _, _ = select.select([terminal.master], [], [], min(remaining, 1))
+                if not ready:
+                    continue
+                try:
+                    chunk = os.read(terminal.master, 65536)
+                except OSError as error:
+                    if error.errno != errno.EIO:
+                        raise
+                    break
+                if not chunk:
+                    break
+                output.extend(chunk)
+                if len(output) > 8 * 1024 * 1024:
+                    raise TerminalFailure("terminal install exceeded the output limit")
             try:
-                chunk = os.read(master, 65536)
-            except OSError as error:
-                if error.errno != errno.EIO:
-                    raise
-                break
-            if not chunk:
-                break
-            output.extend(chunk)
-            if len(output) > 8 * 1024 * 1024:
-                raise TerminalFailure("terminal install exceeded the output limit")
-        try:
-            status = process.wait(timeout=max(0.1, deadline - time.monotonic()))
-        except subprocess.TimeoutExpired:
-            raise TerminalFailure("terminal install timed out") from None
-        if status != 0:
-            raise TerminalFailure("terminal install exited with status %d" % status)
-        return bytes(output)
+                status = process.wait(timeout=max(0.1, deadline - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                raise TerminalFailure("terminal install timed out") from None
+            if status != 0:
+                raise TerminalFailure("terminal install exited with status %d" % status)
+            return bytes(output)
     except TerminalFailure as error:
         error.output = bytes(output)
         raise
     finally:
-        if slave is not None:
-            os.close(slave)
-        os.close(master)
         if process is not None and process.poll() is None:
             os.killpg(process.pid, signal.SIGTERM)
             try:
                 process.wait(timeout=5)
             except subprocess.TimeoutExpired:
-                os.killpg(process.pid, signal.SIGKILL)
-                process.wait()
+                kill_process_group(process)
 
 
 def verify_card(output, username, password, port, prompts):

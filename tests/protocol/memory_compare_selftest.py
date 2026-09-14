@@ -15,7 +15,9 @@ import unittest
 from unittest import mock
 
 sys.dont_write_bytecode = True
-ROOT = Path(sys.argv.pop(1)).resolve()
+ROOT = Path(__file__).resolve().parents[2]
+if __name__ == "__main__" and len(sys.argv) > 1 and not sys.argv[1].startswith("-"):
+    ROOT = Path(sys.argv.pop(1)).resolve()
 spec = importlib.util.spec_from_file_location("memory_compare", ROOT / ".github/scripts/memory-compare.py")
 comparison = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(comparison)
