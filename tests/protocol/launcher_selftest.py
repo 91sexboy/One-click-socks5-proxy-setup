@@ -12,6 +12,10 @@ import subprocess
 import sys
 import tempfile
 import time
+import unittest
+
+sys.dont_write_bytecode = True
+from selftest_support import TapTestCase, kill_process_group, run_tests
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tests/lib"))
@@ -139,18 +143,35 @@ elif name == "sleep":
                 try:
                     process.wait(timeout=5)
                 except subprocess.TimeoutExpired:
-                    os.killpg(process.pid, signal.SIGKILL)
-                    process.wait(timeout=2)
+                    kill_process_group(process)
                     raise AssertionError("launcher fixture cleanup did not finish")
-                # Catch leaked fixture engines without leaving them on failure.
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
+                # Catch leaked fixture engines even if their parent exited.
+                kill_process_group(process)
         log = log_path.read_text(encoding="ascii")
         if secret in log:
             raise AssertionError("launcher diagnostics leaked the fixture credential")
         return early, published, removed, not (out / "ready").exists(), log
+
+
+class LauncherTests(TapTestCase):
+    shell = ["sh"]
+    marker = "ready"
+
+    def test_healthy_listener(self):
+        early, published, _, cleaned, _ = scenario(self.shell, self.marker, "healthy")
+        self.check("delayed listener never releases the protocol consumer early", not early)
+        self.check("healthy listener publishes the consumer marker after binding", published)
+        self.check("launcher shutdown removes its readiness marker", cleaned)
+
+    def test_failed_launchers(self):
+        for mode in ("exit", "never"):
+            early, published, removed, _, log = scenario(self.shell, self.marker, mode, stale=True)
+            self.check(mode + " cannot leave stale or false readiness", not early and not published and removed)
+            self.check(mode + " has useful startup diagnostics", "before" in log or "did not become ready" in log)
+
+    def test_preflight_failure(self):
+        _, _, removed, _, _ = scenario(self.shell, self.marker, "exit", stale=True, invalid_pass=True)
+        self.check("preflight failure clears stale output before validation", removed)
 
 
 def main():
@@ -160,32 +181,11 @@ def main():
     parser.add_argument("--launcher", type=Path, default=LAUNCHER)
     args = parser.parse_args()
     LAUNCHER = args.launcher
-    shell = shlex.split(args.shell)
-    # Follow the actual CI consumer so the original early /port publication is a
-    # reproducible red, and a consumer left on /port cannot silently pass later.
+    LauncherTests.shell = shlex.split(args.shell)
+    # Follow the real consumer so an early /port publication still fails.
     workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-    marker = re.search(r'test -s "\$root/out/([^"/]+)"', workflow).group(1)
-    failures = 0
-    checks = 0
-
-    def check(label, ok):
-        nonlocal failures, checks
-        checks += 1
-        print(("ok" if ok else "not ok") + " - " + label)
-        failures += not ok
-
-    early, published, _, cleaned, _ = scenario(shell, marker, "healthy")
-    check("delayed listener never releases the protocol consumer early", not early)
-    check("healthy listener publishes the consumer marker after binding", published)
-    check("launcher shutdown removes its readiness marker", cleaned)
-    for mode in ("exit", "never"):
-        early, published, removed, _, log = scenario(shell, marker, mode, stale=True)
-        check(mode + " cannot leave stale or false readiness", not early and not published and removed)
-        check(mode + " has useful startup diagnostics", "before" in log or "did not become ready" in log)
-    _, _, removed, _, _ = scenario(shell, marker, "exit", stale=True, invalid_pass=True)
-    check("preflight failure clears stale output before validation", removed)
-    print("TESTS %d %d" % (checks - failures, failures))
-    return int(bool(failures))
+    LauncherTests.marker = re.search(r'test -s "\$root/out/([^"/]+)"', workflow).group(1)
+    return run_tests(unittest.defaultTestLoader.loadTestsFromTestCase(LauncherTests))
 
 
 if __name__ == "__main__":

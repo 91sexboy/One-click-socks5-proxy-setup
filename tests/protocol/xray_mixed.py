@@ -568,6 +568,53 @@ def ipv6_target_available(address):
     return True
 
 
+def data_plane_cases(proxy, target, creds, args):
+    tunnel_once("socks5", proxy, target, creds, 1, "ipv4")
+    print("mixed_target_ipv4=ok")
+    tunnel_once("http", proxy, target, creds, 2)
+    print("mixed_http_connect=ok")
+    tunnel_once("socks5", proxy, Endpoint(args.target_hostname, args.target_port), creds, 3, "hostname")
+    print("mixed_target_hostname=ok")
+    if ipv6_target_available(args.target_ipv6):
+        tunnel_once("socks5", proxy, Endpoint(args.target_ipv6, args.target_port), creds, 4, "ipv6")
+        print("mixed_target_ipv6=ok")
+    else:
+        print("mixed_target_ipv6=unavailable")
+
+
+def boundary_cases(proxy, creds, args):
+    denied = Endpoint(args.denied_host, args.target_port)
+    denied_by_name = Endpoint(args.denied_hostname, args.target_port)
+    # Direct controls distinguish a blocked destination from an unavailable target.
+    direct_control(denied)
+    direct_control(denied_by_name)
+    print("mixed_denied_control=ok")
+    if not socks5_denied_destination(proxy, denied, creds):
+        fail("mixed proxy reached a destination inside the boundary")
+    print("mixed_denied_destination=ok")
+    # A hostname distinguishes resolve-before-routing from an AsIs routing policy.
+    if not socks5_denied_destination(proxy, denied_by_name, creds, atyp="hostname"):
+        fail("mixed proxy reached a hostname resolving inside the boundary")
+    print("mixed_denied_hostname=ok")
+
+
+def negative_cases(proxy, target, creds, bad_creds):
+    if not socks5_wrong_auth(proxy, bad_creds):
+        fail("SOCKS5 accepted incorrect credentials")
+    if not http_wrong_auth(proxy, target, bad_creds):
+        fail("HTTP proxy accepted incorrect credentials")
+    if not socks5_noauth(proxy):
+        fail("mixed proxy accepted unauthenticated SOCKS5")
+    if not socks4_rejected(proxy, target, creds, False):
+        fail("mixed proxy accepted SOCKS4")
+    if not socks4_rejected(proxy, target, creds, True):
+        fail("mixed proxy accepted SOCKS4a")
+    if not socks5_reject_command(proxy, target, creds, 2):
+        fail("mixed proxy accepted BIND")
+    if not socks5_reject_command(proxy, target, creds, 3):
+        fail("mixed proxy accepted UDP ASSOCIATE with udp=false")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="127.0.0.1")
@@ -598,52 +645,9 @@ def main():
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as longlived_pool:
         longlived = longlived_pool.submit(longlived_tunnel, proxy, target, creds, 500)
 
-        # SPEC 6 records the IPv4-literal, hostname and IPv6 target paths
-        # separately. IPv6 is conditional on the host having the target address, so an
-        # environment without it reports unavailable rather than silently passing.
-        tunnel_once("socks5", proxy, target, creds, 1, "ipv4")
-        print("mixed_target_ipv4=ok")
-        tunnel_once("http", proxy, target, creds, 2)
-        print("mixed_http_connect=ok")
-        tunnel_once("socks5", proxy, Endpoint(args.target_hostname, args.target_port), creds, 3, "hostname")
-        print("mixed_target_hostname=ok")
-        if ipv6_target_available(args.target_ipv6):
-            tunnel_once("socks5", proxy, Endpoint(args.target_ipv6, args.target_port), creds, 4, "ipv6")
-            print("mixed_target_ipv6=ok")
-        else:
-            print("mixed_target_ipv6=unavailable")
-        # SPEC 3 and 7: the destination boundary. The controls come first: they reach
-        # the denied endpoint, by address and by name, without the proxy, so a refusal
-        # below is attributable to the boundary and not to a dead listener or a name
-        # nothing can resolve.
-        denied = Endpoint(args.denied_host, args.target_port)
-        denied_by_name = Endpoint(args.denied_hostname, args.target_port)
-        direct_control(denied)
-        direct_control(denied_by_name)
-        print("mixed_denied_control=ok")
-        if not socks5_denied_destination(proxy, denied, creds):
-            fail("mixed proxy reached a destination inside the boundary")
-        print("mixed_denied_destination=ok")
-        # The literal case above cannot tell IPIfNonMatch from the default AsIs. This
-        # one can: the request carries a name, so only a proxy that resolves it before
-        # routing sees an address inside the boundary at all.
-        if not socks5_denied_destination(proxy, denied_by_name, creds, atyp="hostname"):
-            fail("mixed proxy reached a hostname resolving inside the boundary")
-        print("mixed_denied_hostname=ok")
-        if not socks5_wrong_auth(proxy, bad_creds):
-            fail("SOCKS5 accepted incorrect credentials")
-        if not http_wrong_auth(proxy, target, bad_creds):
-            fail("HTTP proxy accepted incorrect credentials")
-        if not socks5_noauth(proxy):
-            fail("mixed proxy accepted unauthenticated SOCKS5")
-        if not socks4_rejected(proxy, target, creds, False):
-            fail("mixed proxy accepted SOCKS4")
-        if not socks4_rejected(proxy, target, creds, True):
-            fail("mixed proxy accepted SOCKS4a")
-        if not socks5_reject_command(proxy, target, creds, 2):
-            fail("mixed proxy accepted BIND")
-        if not socks5_reject_command(proxy, target, creds, 3):
-            fail("mixed proxy accepted UDP ASSOCIATE with udp=false")
+        data_plane_cases(proxy, target, creds, args)
+        boundary_cases(proxy, creds, args)
+        negative_cases(proxy, target, creds, bad_creds)
         for count in (1, 32, 128):
             concurrency("socks5", proxy, target, creds, count)
             print("mixed_concurrency_%d=ok" % count)

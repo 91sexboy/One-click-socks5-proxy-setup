@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import unittest
 
 sys.dont_write_bytecode = True
 import release_contract as contract
@@ -47,15 +48,14 @@ def declarations(name, text):
     return matches
 
 
-def main():
-    source = Path(sys.argv[1]).resolve()
+def run_regressions(source):
     shell = os.environ.get('S5_TEST_SHELL', 'sh')
     checked = 0
     with tempfile.TemporaryDirectory(prefix='s5-pin-contract-') as directory:
         root = Path(directory)
-        for name in ('tests', '.github'):
+        for name in ('tests', '.github', 'docs/adr'):
             shutil.copytree(source / name, root / name)
-        for name in ('socks5.sh', 'README.md', 'README.zh-CN.md', '.gitignore'):
+        for name in ('socks5.sh', 'README.md', 'README.zh-CN.md', '.gitignore', 'LICENSE'):
             shutil.copy2(source / name, root / name)
         subprocess.run(['git', '-C', str(root), 'init', '-q'], check=True)
         subprocess.run(['git', '-C', str(root), 'add', '.'], check=True)
@@ -153,18 +153,32 @@ def main():
         contract.check(root, shell)
         checked += 1
         run_test('test_xray_asset', 0)
-        run_test('test_xray_docs', 0)
+        run_test('test_xray_readme', 0)
         asset.write_text(originals[FILES[3]])
         for name, text in originals.items():
             match = declarations(name, text)[0]
             start, end = match.span('value')
             (root / name).write_text(text[:start] + 'invalid-pin' + text[end:])
             try:
-                run_test('test_xray_docs', 1)
+                run_test('test_xray_readme', 1)
             finally:
                 (root / name).write_text(text)
     print(f'release contract regressions: {checked} checks passed')
 
 
+class ReleaseContractTests(unittest.TestCase):
+    source = Path(__file__).resolve().parents[2]
+
+    def test_release_contract_mutations(self):
+        run_regressions(self.source)
+
+
+def main():
+    if len(sys.argv) > 1:
+        ReleaseContractTests.source = Path(sys.argv[1]).resolve()
+    result = unittest.TextTestRunner().run(unittest.defaultTestLoader.loadTestsFromTestCase(ReleaseContractTests))
+    return int(not result.wasSuccessful())
+
+
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

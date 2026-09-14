@@ -16,12 +16,15 @@ import sys
 import tempfile
 import threading
 import time
+import unittest
 from unittest import mock
 
+sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import duplex_target  # noqa: E402
 import hold_connections  # noqa: E402
 import xray_mixed  # noqa: E402
+from selftest_support import TapTestCase, run_tests
 
 
 def run_cohort(count, worker_limit=None, fail_connection=False):
@@ -235,40 +238,44 @@ def holder_checks(check):
         check("holder closes sockets after its stop signal", stopped_socket.closed)
 
 
+class ConcurrencyTests(TapTestCase):
+    def test_holder(self):
+        hold_connections.STOP.clear()
+        self.addCleanup(hold_connections.STOP.clear)
+        holder_checks(self.check)
+
+    def test_cohorts(self):
+        for count in (1, 32, 128):
+            problem, peak, _, report, stats = run_cohort(count)
+            self.check("%d tunnels overlap while carrying valid frames" % count,
+                       problem is None and peak == count + 1)
+            group = report.get("cohorts", {}).get("cohort-%d" % count, {})
+            self.check("%d cohort occupancy excludes the background tunnel" % count,
+                       group == {"active": 0, "peak": count, "frame_min": count,
+                                 "frames": 5 * count, "members": {str(1000 + i): 5 for i in range(count)}})
+            self.check("%d target/probe frame and tunnel totals reconcile" % count,
+                       report["accepted"] - 1 == stats["tunnels"] == count
+                       and report["frames"] == stats["client_frames"] == 5 * count)
+
+    def test_limited_workers(self):
+        for limit in (64, 1):
+            problem, peak, elapsed, _, _ = run_cohort(128, worker_limit=limit)
+            self.check("max%d mutant rejects boundedly rather than passing batches" % limit,
+                       problem is not None and peak <= limit + 1 and elapsed < 10)
+
+    def test_connection_failure(self):
+        problem, _, elapsed, _, _ = run_cohort(32, fail_connection=True)
+        self.check("connection failure releases every worker and socket boundedly",
+                   problem is not None and elapsed < 10)
+
+    def test_gate_evidence(self):
+        self.check("gate accepts matching independent cohort observations", gate_result() == 0)
+        for fault in ("peak", "frame_min", "members", "marker", "http-marker"):
+            self.check("gate rejects wrong cohort %s despite matching totals" % fault, gate_result(fault) != 0)
+
+
 def main():
-    failures = 0
-    checks = 0
-
-    def check(label, ok):
-        nonlocal failures, checks
-        checks += 1
-        print(("ok" if ok else "not ok") + " - " + label)
-        failures += not ok
-
-    holder_checks(check)
-    for count in (1, 32, 128):
-        problem, peak, _, report, stats = run_cohort(count)
-        check("%d tunnels overlap while carrying valid frames" % count,
-              problem is None and peak == count + 1)
-        group = report.get("cohorts", {}).get("cohort-%d" % count, {})
-        check("%d cohort occupancy excludes the background tunnel" % count,
-              group == {"active": 0, "peak": count, "frame_min": count,
-                        "frames": 5 * count, "members": {str(1000 + i): 5 for i in range(count)}})
-        check("%d target/probe frame and tunnel totals reconcile" % count,
-              report["accepted"] - 1 == stats["tunnels"] == count
-              and report["frames"] == stats["client_frames"] == 5 * count)
-    for limit in (64, 1):
-        problem, peak, elapsed, _, _ = run_cohort(128, worker_limit=limit)
-        check("max%d mutant rejects boundedly rather than passing batches" % limit,
-              problem is not None and peak <= limit + 1 and elapsed < 10)
-    problem, _, elapsed, _, _ = run_cohort(32, fail_connection=True)
-    check("connection failure releases every worker and socket boundedly",
-          problem is not None and elapsed < 10)
-    check("gate accepts matching independent cohort observations", gate_result() == 0)
-    for fault in ("peak", "frame_min", "members", "marker", "http-marker"):
-        check("gate rejects wrong cohort %s despite matching totals" % fault, gate_result(fault) != 0)
-    print("TESTS %d %d" % (checks - failures, failures))
-    return int(bool(failures))
+    return run_tests(unittest.defaultTestLoader.loadTestsFromTestCase(ConcurrencyTests))
 
 
 if __name__ == "__main__":

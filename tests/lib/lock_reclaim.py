@@ -8,6 +8,9 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import unittest
+
+sys.dont_write_bytecode = True
 
 
 def line(process):
@@ -26,7 +29,7 @@ def stop(process):
             process.wait(timeout=2)
 
 
-def race(source, shell):
+def race(case, source, shell):
     with tempfile.TemporaryDirectory(prefix="s5-lock-race.") as directory:
         root = Path(directory)
         (root / ".s5-test-root").touch()
@@ -72,24 +75,22 @@ printf 'release=%s\n' "$released"
                 return process
 
             first = start("yes")
-            assert line(first) == "reclaim-ready", "first reclaimer did not pause"
+            case.assertEqual(line(first), "reclaim-ready", "first reclaimer did not pause")
             second = start("no")
-            assert line(second) == "acquire=0 held=1", "second operation did not acquire"
+            case.assertEqual(line(second), "acquire=0 held=1", "second operation did not acquire")
             first_out, first_err = first.communicate("continue\nfinish\n", timeout=5)
-            assert second.poll() is None, "lock holder exited before competing acquisition"
+            case.assertIsNone(second.poll(), "lock holder exited before competing acquisition")
             second_out, second_err = second.communicate("finish\n", timeout=5)
-            assert "acquire=0 held=1" not in first_out, (
-                "both operations acquired while the second holder was alive"
-            )
-            assert first.returncode != 0, first_err
-            assert second.returncode == 0 and "release=0" in second_out, second_err
-            assert not lock.exists(), "winning holder could not cleanly release"
+            case.assertNotIn("acquire=0 held=1", first_out, "both operations acquired while the second holder was alive")
+            case.assertNotEqual(first.returncode, 0, first_err)
+            case.assertTrue(second.returncode == 0 and "release=0" in second_out, second_err)
+            case.assertFalse(lock.exists(), "winning holder could not cleanly release")
         finally:
             for process in processes:
                 stop(process)
 
 
-def rollback_exit(source, shell):
+def rollback_exit(case, source, shell):
     with tempfile.TemporaryDirectory(prefix="s5-rollback-lock.") as directory:
         env = {key: value for key, value in os.environ.items() if not key.startswith("S5_")}
         env.update(S5_REPO_ROOT=str(source.parent), TMPDIR=directory)
@@ -126,9 +127,9 @@ s5_cmd_install
                                      stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                      stderr=subprocess.PIPE, text=True)
             root_line = line(first)
-            assert root_line.startswith("root="), root_line
+            case.assertTrue(root_line.startswith("root="), root_line)
             root = Path(root_line[5:])
-            assert line(first) == "released-first", "first command did not release its lock"
+            case.assertEqual(line(first), "released-first", "first command did not release its lock")
             holder = r'''
 . "$S5_REPO_ROOT/socks5.sh"
 S5_LANG=en
@@ -141,7 +142,7 @@ s5_lock_release
             second = subprocess.Popen([*shell, "-c", holder], env=holder_env,
                                       stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                       stderr=subprocess.PIPE, text=True)
-            assert line(second) == "second-held", "second command did not acquire"
+            case.assertEqual(line(second), "second-held", "second command did not acquire")
             config = root / "etc/xray-socks5/config.json"
             transcript = root / "transcript"
             transaction = root / "var/lib/xray-socks5/transaction"
@@ -150,22 +151,21 @@ s5_lock_release
             backups = {name: (transaction / name).read_bytes()
                        for name in ("old.config.json", "old.state")}
             first.communicate("resume\n", timeout=5)
-            assert first.returncode != 0, "failed update reported success"
-            assert second.poll() is None, "second lock holder exited too soon"
-            assert config.stat().st_ino == inode, "EXIT cleanup rewrote config without holding the lock"
-            assert transcript.read_bytes() == events, "EXIT cleanup restarted service without the lock"
-            assert all((transaction / name).read_bytes() == data for name, data in backups.items()), (
-                "EXIT cleanup removed recovery evidence without the lock"
-            )
+            case.assertNotEqual(first.returncode, 0, "failed update reported success")
+            case.assertIsNone(second.poll(), "second lock holder exited too soon")
+            case.assertEqual(config.stat().st_ino, inode, "EXIT cleanup rewrote config without holding the lock")
+            case.assertEqual(transcript.read_bytes(), events, "EXIT cleanup restarted service without the lock")
+            case.assertTrue(all((transaction / name).read_bytes() == data for name, data in backups.items()),
+                            "EXIT cleanup removed recovery evidence without the lock")
             second.communicate("release\n", timeout=5)
-            assert second.returncode == 0, "second command could not release its lock"
+            case.assertEqual(second.returncode, 0, "second command could not release its lock")
         finally:
             for process in (first, second):
                 if process is not None:
                     stop(process)
 
 
-def controls(source, shell):
+def controls(case, source, shell):
     boot = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
     departed = subprocess.Popen([*shell, "-c", "exit 0"])
     departed.wait(timeout=5)
@@ -177,8 +177,8 @@ def controls(source, shell):
         ("absent", None, False),
         ("bad-pid", f"{boot}\nnot-a-pid\n", False),
         ("zero-pid", f"{boot}\n0\n", False),
-        ("extra-line", f"previous-boot\n123\nextra\n", False),
-        ("symlink", f"previous-boot\n123\n", False),
+        ("extra-line", "previous-boot\n123\nextra\n", False),
+        ("symlink", "previous-boot\n123\n", False),
     ]
     for name, owner, accepted in cases:
         with tempfile.TemporaryDirectory(prefix="s5-lock-control.") as directory:
@@ -200,26 +200,47 @@ def controls(source, shell):
                  "lock-control", str(source)], env=env, capture_output=True,
                 text=True, timeout=5,
             )
-            assert (result.returncode == 0) == accepted, name
+            case.assertEqual(result.returncode == 0, accepted, name)
             if accepted:
-                assert not lock.exists(), name
+                case.assertFalse(lock.exists(), name)
             else:
-                assert lock.is_dir(), name
+                case.assertTrue(lock.is_dir(), name)
                 if owner is not None:
-                    assert (lock / "owner").read_text() == owner, name
+                    case.assertEqual((lock / "owner").read_text(), owner, name)
                 if name == "symlink":
-                    assert (lock / "owner").is_symlink(), name
+                    case.assertTrue((lock / "owner").is_symlink(), name)
+
+
+class LockTests(unittest.TestCase):
+    source = Path(__file__).resolve().parents[2] / "socks5.sh"
+    shell = ["sh"]
+
+    def test_competing_reclaimers(self):
+        race(self, self.source, self.shell)
+
+    def test_owner_controls(self):
+        controls(self, self.source, self.shell)
+
+    def test_rollback_exit(self):
+        rollback_exit(self, self.source, self.shell)
+
+
+def main():
+    LockTests.source = Path(sys.argv[1]).resolve()
+    LockTests.shell = shlex.split(sys.argv[2])
+    if sys.argv[3:] == ["rollback-exit"]:
+        suite = unittest.TestSuite([LockTests("test_rollback_exit")])
+        success = "rollback stops before releasing operation lock"
+    elif not sys.argv[3:]:
+        suite = unittest.TestSuite([LockTests("test_competing_reclaimers"), LockTests("test_owner_controls")])
+        success = "stale-lock interleaving preserves mutual exclusion"
+    else:
+        raise SystemExit("unknown lock regression scenario")
+    result = unittest.TextTestRunner().run(suite)
+    if result.wasSuccessful():
+        print(success)
+    return int(not result.wasSuccessful())
 
 
 if __name__ == "__main__":
-    source = Path(sys.argv[1]).resolve()
-    shell = shlex.split(sys.argv[2])
-    if sys.argv[3:] == ["rollback-exit"]:
-        rollback_exit(source, shell)
-        print("rollback stops before releasing operation lock")
-    elif not sys.argv[3:]:
-        race(source, shell)
-        controls(source, shell)
-        print("stale-lock interleaving preserves mutual exclusion")
-    else:
-        raise SystemExit("unknown lock regression scenario")
+    sys.exit(main())

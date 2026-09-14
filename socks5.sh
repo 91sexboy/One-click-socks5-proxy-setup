@@ -1305,32 +1305,8 @@ STATE_FIELDS
     return 0
 }
 
-s5_verify_dataplane() {
-    # What this can prove on the operator's host is bounded by the destination
-    # boundary the config carries: every address reachable without changing the
-    # host's own networking is inside it, so a payload round trip through the
-    # proxy is not available here. It is proven in CI on both backends instead.
-    # What runs here is what only this host can answer: that its listener speaks
-    # both protocols, that both discriminate on the credential, and that its
-    # boundary actually refuses a destination that is listening and answering.
-    # Both modes converge on the single report at the end of this function.
-    # Returning the stub's status from inside the test branch skipped that report,
-    # which is why no test could observe restart printing the same failure twice.
-    _svd=0
-    if [ "${S5_TEST_MODE:-0}" = 1 ]; then
-        if [ -n "${S5_PROTOCOL_VERIFY:-}" ]; then
-            "$S5_PROTOCOL_VERIFY" "$S5_PORT"
-            _svd=$?
-        fi
-    else
-        _svpf=$(mktemp "${S5_WORKDIR:-${S5_ROOTDIR:-/var/tmp}}/.s5pass.XXXXXX") || return 1
-        # Recorded so a signal handler can remove it: on the restart path there is no
-        # workdir, so this lands in /var/tmp and the normal `rm -f` below is skipped
-        # when the process is killed mid-verification, leaving the credential on disk.
-        S5_VERIFY_TEMP=$_svpf
-        chmod 0600 "$_svpf" || { rm -f "$_svpf"; S5_VERIFY_TEMP=''; return 1; }
-        printf '%s\n%s\n' "$S5_USERNAME" "$S5_PASSWORD" >"$_svpf" || { rm -f "$_svpf"; S5_VERIFY_TEMP=''; return 1; }
-        python3 - "$S5_PORT" "$_svpf" <<'PY'
+s5_verify_protocols() {
+    python3 - "$1" "$2" <<'PY'
 import base64
 import socket
 import sys
@@ -1467,6 +1443,23 @@ except Exception as exc:
 finally:
     stop.set()
 PY
+}
+
+s5_verify_dataplane() {
+    # Local checks prove authentication and refusal; successful public traffic is proven in CI.
+    _svd=0
+    if [ "${S5_TEST_MODE:-0}" = 1 ]; then
+        if [ -n "${S5_PROTOCOL_VERIFY:-}" ]; then
+            "$S5_PROTOCOL_VERIFY" "$S5_PORT"
+            _svd=$?
+        fi
+    else
+        _svpf=$(mktemp "${S5_WORKDIR:-${S5_ROOTDIR:-/var/tmp}}/.s5pass.XXXXXX") || return 1
+        # Restart has no workdir, so signal cleanup must track this credential file explicitly.
+        S5_VERIFY_TEMP=$_svpf
+        chmod 0600 "$_svpf" || { rm -f "$_svpf"; S5_VERIFY_TEMP=''; return 1; }
+        printf '%s\n%s\n' "$S5_USERNAME" "$S5_PASSWORD" >"$_svpf" || { rm -f "$_svpf"; S5_VERIFY_TEMP=''; return 1; }
+        s5_verify_protocols "$S5_PORT" "$_svpf"
         _svd=$?
         rm -f "$_svpf"
         S5_VERIFY_TEMP=''
@@ -1578,8 +1571,9 @@ s5_listener_state() {
     _slmatchstate=''
     while IFS= read -r _slrow; do
         [ -n "$_slrow" ] || continue
-        _slstate=$(printf '%s\n' "$_slrow" | awk '{print $1}')
-        _sladdr=$(printf '%s\n' "$_slrow" | awk '{print $4}')
+        read -r _slstate _slignored _slignored _sladdr _slignored <<EOF
+$_slrow
+EOF
         case "$_sladdr" in
         "$S5_LISTEN:$_slsport") ;;
         "0.0.0.0:$_slsport")

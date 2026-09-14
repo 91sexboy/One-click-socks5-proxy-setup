@@ -39,7 +39,7 @@ sed 's/^    while len(data) < size:$/    while False:/' \
     "$ROOT/tests/protocol/xray_mixed.py" >"$_tpdir/xray_mixed.py"
 assert_contains "the short-reading copy dropped the exact read" 'while False:' \
     "$(cat "$_tpdir/xray_mixed.py")"
-cp "$ROOT/tests/protocol/probe_selftest.py" "$_tpdir/probe_selftest.py"
+cp "$ROOT/tests/protocol/probe_selftest.py" "$ROOT/tests/protocol/selftest_support.py" "$_tpdir/"
 t_run python3 "$_tpdir/probe_selftest.py"
 assert_ne "a short-reading probe fails the self-test" 0 "$T_STATUS"
 
@@ -67,15 +67,18 @@ for name, old, new in (
     ("no-payload", 'if payload != ("server-%d" % expected_seq).encode("ascii"):', 'if False:'),
     ("no-progress", 'progress_window = 2.0', 'progress_window = 60.0'),
 ):
-    assert source.count(old) == 1
+    if source.count(old) != 1:
+        raise AssertionError("transport mutation anchor changed")
     directory = scratch / name
     directory.mkdir()
     (directory / "xray_mixed.py").write_text(source.replace(old, new))
-    (directory / "probe_selftest.py").write_text((root / "tests/protocol/probe_selftest.py").read_text())
+    for helper in ("probe_selftest.py", "selftest_support.py"):
+        (directory / helper).write_text((root / "tests/protocol" / helper).read_text())
 launcher = (root / "tests/protocol/start_engine.sh").read_text()
 lines = launcher.splitlines(keepends=True)
 publication = ''.join(line for line in lines if line.startswith(("printf '%s\\n' \"$PORT\"", 'mv -f "$OUTDIR/ready.tmp"')))
-assert publication and launcher.count(publication) == 1
+if not publication or launcher.count(publication) != 1:
+    raise AssertionError("readiness mutation anchor changed")
 launcher = launcher.replace(publication, '').replace('ready=0\n', publication + 'ready=0\n')
 (scratch / "early-ready.sh").write_text(launcher)
 PY
@@ -91,5 +94,8 @@ t_run python3 "$ROOT/tests/protocol/launcher_selftest.py" --shell "${S5_TEST_SHE
 assert_ne "publishing readiness early makes the selftest red" 0 "$T_STATUS"
 assert_contains "early readiness mutation reaches the delayed-listener regression" \
     'not ok - delayed listener never releases the protocol consumer early' "$T_OUT"
+
+t_run python3 "$ROOT/tests/protocol/test_selftest_support.py"
+assert_eq "self-test assertions and owned resources remain reliable" 0 "$T_STATUS"
 
 t_summary

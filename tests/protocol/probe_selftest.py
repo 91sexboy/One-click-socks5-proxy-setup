@@ -7,6 +7,8 @@ valid or corrupted S frames while continuing to echo C frames, so corruption or
 stalled unsolicited traffic cannot hide behind successful client round trips.
 """
 
+import contextlib
+import io
 import os
 import select
 import socket
@@ -14,23 +16,15 @@ import struct
 import sys
 import threading
 import time
+import unittest
 from unittest.mock import patch
 
+sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import xray_mixed  # noqa: E402
+from selftest_support import TapTestCase, run_tests
 
 GAP = 0.15
-FAILURES = []
-CHECKS = []
-
-
-def check(label, ok):
-    CHECKS.append(label)
-    if ok:
-        print("ok - %s" % label)
-    else:
-        print("not ok - %s" % label)
-        FAILURES.append(label)
 
 
 def serve_split(pieces, hold=False, hold_after=False):
@@ -180,7 +174,7 @@ def scripted_exchange(fault=None, count=24, spacing=0.2, idle=False):
     return problem
 
 
-def exchange_checks(fault=None):
+def exchange_checks(check, fault=None):
     if fault:
         check("unsolicited %s is rejected" % fault,
               scripted_exchange(fault, count=24 if fault in ("once", "late-stop") else 4) is not None)
@@ -193,7 +187,7 @@ def exchange_checks(fault=None):
         check("unsolicited %s is rejected" % fault, problem is not None)
 
 
-def connection_cleanup_checks():
+def connection_cleanup_checks(check):
     original = xray_mixed.connect
     endpoint = xray_mixed.Endpoint("127.0.0.1", 1)
     for connector in (xray_mixed.socks5_connect, xray_mixed.http_connect):
@@ -235,7 +229,7 @@ class HandshakeSocket:
         self.closed = True
 
 
-def handshake_checks():
+def handshake_checks(check):
     endpoint = xray_mixed.Endpoint("127.0.0.1", 23456)
     creds = xray_mixed.Credentials("u", "p")
     for failure in ("socket-timeout", "expired-deadline"):
@@ -335,17 +329,7 @@ def handshake_checks():
         check("foreground failure closes the long-lived executor", pool.__exit__.called)
 
 
-def main():
-    if sys.argv[1:2] == ["--handshake-only"]:
-        handshake_checks()
-        print("TESTS %d %d" % (len(CHECKS) - len(FAILURES), len(FAILURES)))
-        return 1 if FAILURES else 0
-    if sys.argv[1:2] == ["--exchange-only"]:
-        exchange_checks(sys.argv[2] if len(sys.argv) > 2 else None)
-        print("TESTS %d %d" % (len(CHECKS) - len(FAILURES), len(FAILURES)))
-        return 1 if FAILURES else 0
-    handshake_checks()
-    connection_cleanup_checks()
+def rejection_checks(check):
     target = xray_mixed.Endpoint("127.0.0.1", 1)
     creds = xray_mixed.Credentials("u", "p")
 
@@ -429,8 +413,66 @@ def main():
           not_a_rejection(lambda: xray_mixed.socks5_denied_destination(
               proxy, target, creds, timeout=0.5)))
 
-    print("TESTS %d %d" % (len(CHECKS) - len(FAILURES), len(FAILURES)))
-    return 1 if FAILURES else 0
+
+class ProbeTests(TapTestCase):
+    def test_handshakes(self):
+        handshake_checks(self.check)
+
+    def test_connection_cleanup(self):
+        connection_cleanup_checks(self.check)
+
+    def test_rejections(self):
+        rejection_checks(self.check)
+
+    def test_main_case_order(self):
+        events = []
+        output = io.StringIO()
+        argv = ["probe", "--port", "1", "--target-port", "2", "--passfile", "unused"]
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(patch.object(sys, "argv", argv))
+            stack.enter_context(patch.object(xray_mixed, "read_passfile", return_value=("u", "p")))
+            executor = stack.enter_context(patch.object(xray_mixed.concurrent.futures, "ThreadPoolExecutor"))
+            pool = executor.return_value.__enter__.return_value
+            pool.submit.side_effect = lambda *args: events.append("longlived-start") or pool.submit.return_value
+            pool.submit.return_value.result.side_effect = lambda **kwargs: events.append("longlived-result")
+            for name in ("tunnel_once", "direct_control", "socks5_denied_destination", "socks5_wrong_auth",
+                         "http_wrong_auth", "socks5_noauth", "socks4_rejected", "socks5_reject_command", "concurrency"):
+                stack.enter_context(patch.object(xray_mixed, name,
+                                                 side_effect=lambda *args, _name=name, **kwargs: events.append(_name) or True))
+            stack.enter_context(patch.object(xray_mixed, "ipv6_target_available", return_value=True))
+            stack.enter_context(contextlib.redirect_stdout(output))
+            status = xray_mixed.main()
+        self.check("main preserves all protocol marker ordering", status == 0 and output.getvalue().splitlines() == [
+            "mixed_target_ipv4=ok", "mixed_http_connect=ok", "mixed_target_hostname=ok", "mixed_target_ipv6=ok",
+            "mixed_denied_control=ok", "mixed_denied_destination=ok", "mixed_denied_hostname=ok",
+            "mixed_concurrency_1=ok", "mixed_concurrency_32=ok", "mixed_concurrency_128=ok",
+            "mixed_longlived=ok", "mixed_protocol=ok"])
+        self.check("main keeps long-lived overlap and direct controls before refusals", events == [
+            "longlived-start", "tunnel_once", "tunnel_once", "tunnel_once", "tunnel_once",
+            "direct_control", "direct_control", "socks5_denied_destination", "socks5_denied_destination",
+            "socks5_wrong_auth", "http_wrong_auth", "socks5_noauth", "socks4_rejected", "socks4_rejected",
+            "socks5_reject_command", "socks5_reject_command", "concurrency", "concurrency", "concurrency",
+            "longlived-result"])
+        self.check("main joins the long-lived tunnel with its original budget", pool.submit.return_value.result.call_args.kwargs == {"timeout": 60})
+
+
+class ExchangeTests(TapTestCase):
+    fault = None
+
+    def test_unsolicited_exchange(self):
+        exchange_checks(self.check, self.fault)
+
+
+def main():
+    loader = unittest.defaultTestLoader
+    if sys.argv[1:2] == ["--handshake-only"]:
+        suite = unittest.TestSuite([ProbeTests("test_handshakes")])
+    elif sys.argv[1:2] == ["--exchange-only"]:
+        ExchangeTests.fault = sys.argv[2] if len(sys.argv) > 2 else None
+        suite = loader.loadTestsFromTestCase(ExchangeTests)
+    else:
+        suite = loader.loadTestsFromTestCase(ProbeTests)
+    return run_tests(suite)
 
 
 if __name__ == "__main__":
