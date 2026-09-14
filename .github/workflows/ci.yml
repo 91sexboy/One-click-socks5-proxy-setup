@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Install PyYAML
         # python3-yaml is installed rather than assumed: the workflow-structure
         # check below is the only independent oracle for "every job has a
@@ -127,7 +127,7 @@ jobs:
           - runner: ubuntu-24.04
             command: busybox sh
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Install shell implementations
         run: sudo apt-get update && sudo apt-get install -y dash busybox
       - name: Syntax
@@ -165,7 +165,7 @@ jobs:
             binary_sha: c2d20a7045250497083afea0d79db0672f6c89a25aaaf37c92de034d6b764b04
             elf_arch: aarch64
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Verify pinned Xray archive
         env:
           XRAY_ASSET: ${{ matrix.asset }}
@@ -205,9 +205,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Install protocol tools
-        run: sudo apt-get update && sudo apt-get install -y python3 curl unzip file
+        run: sudo apt-get update && sudo apt-get install -y python3 curl unzip file iproute2
       - name: Add the test target addresses
         run: sudo sh .github/scripts/add-test-target-addresses.sh
       - name: Run mixed protocol and duplex checks
@@ -253,7 +253,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Install runtime dependencies
         run: sudo apt-get update && sudo apt-get install -y python3 curl unzip file iproute2
       - name: Add the test target addresses
@@ -273,13 +273,15 @@ jobs:
       matrix:
         image: ["alpine:3.20", "alpine:3.24"]
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Run Alpine OpenRC lifecycle
+        env:
+          ALPINE_IMAGE: ${{ matrix.image }}
         run: |
           # The lifecycle body is a file rather than a single-quoted argument:
           # one apostrophe in it used to close the argument and hand the rest to
           # the host shell, and as a file it is linted like every other script.
-          docker run --rm --privileged -v "$PWD:/src" -w /src "${{ matrix.image }}" \
+          docker run --rm --privileged -v "$PWD:/src" -w /src "$ALPINE_IMAGE" \
             sh /src/.github/scripts/alpine-lifecycle.sh
 
   systemd-assertion-controls:
@@ -291,7 +293,7 @@ jobs:
       matrix:
         mutation: [fail, skip, unreachable, swallow]
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Install runtime dependencies
         run: sudo apt-get update && sudo apt-get install -y python3 curl unzip file iproute2
       - name: Add the test target addresses
@@ -311,7 +313,7 @@ jobs:
         image: ["alpine:3.20", "alpine:3.24"]
         mutation: [fail, skip, unreachable, swallow]
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Exercise native assertion reachability and failure propagation
         env:
           ASSERTION_MUTATION: ${{ matrix.mutation }}
@@ -335,7 +337,7 @@ jobs:
           - runner: ubuntu-24.04-arm
             arch: arm64
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Install memory tools
         run: sudo apt-get update && sudo apt-get install -y python3 curl unzip file iproute2
       - name: Add the test target addresses
@@ -343,6 +345,8 @@ jobs:
       - name: Prove descriptor-local peaks with a released high then low workload
         run: sudo env GITHUB_ACTIONS=true python3 .github/scripts/memory-peak-check.py --real-cgroup
       - name: Measure Xray process and cgroup memory
+        env:
+          XRAY_ARCH: ${{ matrix.arch }}
         run: |
           set -eu
           root=$(mktemp -d)
@@ -497,9 +501,9 @@ jobs:
             --config /etc/xray-socks5/config.json \
             --target-port "$target_port" --output "$root/memory-comparison.json"
           sudo install -m 0644 "$root/memory-comparison.json" \
-            "$GITHUB_WORKSPACE/memory-comparison-${{ matrix.arch }}.json"
+            "$GITHUB_WORKSPACE/memory-comparison-$XRAY_ARCH.json"
       - name: Retain paired memory measurements
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: memory-comparison-${{ matrix.arch }}
           path: memory-comparison-${{ matrix.arch }}.json

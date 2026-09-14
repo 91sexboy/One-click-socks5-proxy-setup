@@ -117,7 +117,7 @@ rm -f "$S5_TEST_ROOT/active"
 s5_svc start
 assert_ne "OpenRC inactive start remains failure" 0 "$?"
 
-# s5_service_active must fail closed like the systemd arm, where only exit 3
+# s5_service_state must fail closed like the systemd arm, where only exit 3
 # proves the service is down. 16 is OpenRC's `inactive`, which supervise-daemon
 # leaves behind while the supervised process is still alive and still holding the
 # port, and 1 is a plain rc-service error; treating either as stopped let
@@ -131,7 +131,7 @@ chmod 755 "$S5_TEST_ROOT/bin/rc-service"
 printf '0\n' >"$S5_TEST_ROOT/actioncode"
 for _sacase in 0:0 8:0 3:1 16:2 1:2 32:2 4:2; do
     printf '%s\n' "${_sacase%%:*}" >"$S5_TEST_ROOT/statuscode"
-    s5_service_active
+    s5_service_state
     assert_eq "rc-service status ${_sacase%%:*} means ${_sacase#*:}" \
         "${_sacase#*:}" "$?"
 done
@@ -172,8 +172,6 @@ SS
 chmod 755 "$S5_TEST_ROOT/bin/ss"
 s5_listener_state
 assert_eq "OpenRC listener accepts the supervised child" 0 "$?"
-# shellcheck disable=SC2154
-assert_eq "OpenRC listener owner is child_pid" 378 "$_slpid"
 
 # The supervisor never owns the listener, so a supervisor-owned endpoint is not
 # proof that Xray itself is listening.

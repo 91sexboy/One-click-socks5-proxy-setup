@@ -14,6 +14,9 @@ import tempfile
 import time
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "tests/lib"))
+from release_contract import PINS
+
 LAUNCHER = ROOT / "tests/protocol/start_engine.sh"
 
 
@@ -66,15 +69,15 @@ while True:
     peer.close()
 ''', encoding="ascii")
         engine.chmod(0o755)
-        fixture_tool = '''#!/usr/bin/env python3
+        fixture_tool = f'''#!/usr/bin/env python3
 import os, pathlib, sys, time
 name = pathlib.Path(sys.argv[0]).name
 root = pathlib.Path(os.environ["FIXTURE_ROOT"])
 if name == "curl":
     with open(sys.argv[sys.argv.index("-o") + 1], "wb") as handle:
-        handle.truncate(21136402)
+        handle.truncate({PINS['amd64']['size']})
 elif name == "sha256sum":
-    print("23cd9af937744d97776ee35ecad4972cf4b2109d1e0fe6be9930467608f7c8ae  archive")
+    print("{PINS['amd64']['sha']}  archive")
 elif name == "unzip":
     if sys.argv[1] == "-Z1":
         print("xray\\ngeoip.dat\\ngeosite.dat\\nLICENSE\\nREADME.md")

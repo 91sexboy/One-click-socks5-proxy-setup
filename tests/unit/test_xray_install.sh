@@ -331,13 +331,73 @@ test_download_candidate_failure() { t_download_fault_case candidate; }
 test_download_candidate_remove_failure() { t_download_fault_case candidate-remove; }
 test_download_signal() { t_download_fault_case signal; }
 
+test_account_creation_failure() {
+    for _acfamily in debian alpine; do
+        for _acfailure in 0 1; do
+            t_xray_fixture 23456
+            S5_OS_FAMILY=$_acfamily
+            : >"$S5_TEST_ROOT/fail-useradd"
+            if [ "$_acfailure" = 1 ]; then : >"$S5_TEST_ROOT/fail-groupdel"; fi
+            s5_account_create >"$S5_TEST_ROOT/account.log" 2>&1
+            assert_eq "$_acfamily rejects failed account creation" 1 "$?"
+            assert_eq "$_acfamily records no uncreated user" 0 "$S5_CREATED_USER"
+            assert_eq "$_acfamily retains group ownership only while cleanup is incomplete" "$_acfailure" "$S5_CREATED_GROUP"
+            case "$_acfamily" in
+            debian) _actranscript='groupadd -r xray-socks5
+useradd -r -g xray-socks5 -M -d /nonexistent -s /usr/sbin/nologin xray-socks5
+groupdel xray-socks5' ;;
+            alpine) _actranscript='addgroup -S xray-socks5
+adduser -S -D -H -h /nonexistent -G xray-socks5 -s /sbin/nologin xray-socks5
+delgroup xray-socks5' ;;
+            esac
+            assert_eq "$_acfamily failure preserves account command ordering and arguments" \
+                "$_actranscript" "$(cat "$S5_TEST_ROOT/account-transcript")"
+            if [ "$_acfailure" = 1 ]; then
+                assert_file_exists "$_acfamily failed cleanup leaves its owned group" "$S5_TEST_ROOT/group-exists"
+                rm "$S5_TEST_ROOT/fail-groupdel"
+                s5_cleanup
+                assert_file_absent "$_acfamily cleanup retries the owned group" "$S5_TEST_ROOT/group-exists"
+            else
+                assert_file_absent "$_acfamily successful cleanup removes its group" "$S5_TEST_ROOT/group-exists"
+            fi
+        done
+    done
+}
+
+test_account_lifecycle() {
+    for _acfamily in debian alpine; do
+        t_xray_fixture 23456
+        S5_OS_FAMILY=$_acfamily
+        s5_account_create
+        assert_eq "$_acfamily creates its dedicated account" 0 "$?"
+        assert_eq "$_acfamily records the created user" 1 "$S5_CREATED_USER"
+        assert_eq "$_acfamily records the created group" 1 "$S5_CREATED_GROUP"
+        s5_account_remove
+        assert_eq "$_acfamily removes its dedicated account" 0 "$?"
+        assert_eq "$_acfamily clears user ownership after removal" 0 "$S5_CREATED_USER"
+        assert_eq "$_acfamily clears group ownership after removal" 0 "$S5_CREATED_GROUP"
+        case "$_acfamily" in
+        debian) _actranscript='groupadd -r xray-socks5
+useradd -r -g xray-socks5 -M -d /nonexistent -s /usr/sbin/nologin xray-socks5
+userdel xray-socks5
+groupdel xray-socks5' ;;
+        alpine) _actranscript='addgroup -S xray-socks5
+adduser -S -D -H -h /nonexistent -G xray-socks5 -s /sbin/nologin xray-socks5
+deluser xray-socks5
+delgroup xray-socks5' ;;
+        esac
+        assert_eq "$_acfamily lifecycle preserves account command ordering and arguments" \
+            "$_actranscript" "$(cat "$S5_TEST_ROOT/account-transcript")"
+    done
+}
+
 # Optional scenario arguments support isolated runs, permutation and repetition.
 if [ "$#" -eq 0 ]; then
-    set -- install config_corrupt binary_corrupt unit_corrupt account_corrupt cleanup_temps openrc_runtime locks download_cleanup download_remove_failure download_remove_zh download_release_failure download_candidate_failure download_candidate_remove_failure download_signal
+    set -- account_creation_failure account_lifecycle install config_corrupt binary_corrupt unit_corrupt account_corrupt cleanup_temps openrc_runtime locks download_cleanup download_remove_failure download_remove_zh download_release_failure download_candidate_failure download_candidate_remove_failure download_signal
 fi
 for scenario do
     case "$scenario" in
-    install|config_corrupt|binary_corrupt|unit_corrupt|account_corrupt|cleanup_temps|openrc_runtime|locks|download_cleanup|download_remove_failure|download_remove_zh|download_release_failure|download_candidate_failure|download_candidate_remove_failure|download_signal)
+    account_creation_failure|account_lifecycle|install|config_corrupt|binary_corrupt|unit_corrupt|account_corrupt|cleanup_temps|openrc_runtime|locks|download_cleanup|download_remove_failure|download_remove_zh|download_release_failure|download_candidate_failure|download_candidate_remove_failure|download_signal)
         "test_$scenario" ;;
     *) t_bad "unknown install scenario: $scenario" ;;
     esac

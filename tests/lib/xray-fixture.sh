@@ -101,9 +101,16 @@ esac
 exit 0
 RCSERVICE
     chmod 0755 "$S5_TEST_ROOT/bin/systemctl" "$S5_TEST_ROOT/bin/rc-service"
-    for _acct_cmd in getent groupadd groupdel useradd userdel id; do
+    for _acct_cmd in getent groupadd groupdel useradd userdel addgroup delgroup adduser deluser id; do
         cat >"$S5_TEST_ROOT/bin/$_acct_cmd" <<'ACCT'
 #!/bin/sh
+case "${0##*/}" in
+groupadd|groupdel|useradd|userdel|addgroup|delgroup|adduser|deluser)
+    printf '%s' "${0##*/}" >>"$S5_TEST_ROOT/account-transcript"
+    for argument do printf ' %s' "$argument" >>"$S5_TEST_ROOT/account-transcript"; done
+    printf '\n' >>"$S5_TEST_ROOT/account-transcript"
+    ;;
+esac
 case "${0##*/}" in
 getent)
     case "$1" in
@@ -113,10 +120,14 @@ getent)
         printf 'xray-socks5:x:%s:\n' "$(cat "$S5_TEST_ROOT/group-exists")" ;;
     *) exit 2 ;;
     esac ;;
-groupadd) printf '900\n' >"$S5_TEST_ROOT/group-exists" ;;
-useradd) printf '900\n' >"$S5_TEST_ROOT/user-exists" ;;
-groupdel) rm -f "$S5_TEST_ROOT/group-exists" ;;
-userdel) rm -f "$S5_TEST_ROOT/user-exists" ;;
+groupadd|addgroup) printf '900\n' >"$S5_TEST_ROOT/group-exists" ;;
+useradd|adduser)
+    [ ! -f "$S5_TEST_ROOT/fail-useradd" ] || exit 1
+    printf '900\n' >"$S5_TEST_ROOT/user-exists" ;;
+groupdel|delgroup)
+    [ ! -f "$S5_TEST_ROOT/fail-groupdel" ] || exit 1
+    rm -f "$S5_TEST_ROOT/group-exists" ;;
+userdel|deluser) rm -f "$S5_TEST_ROOT/user-exists" ;;
 id)
     test -f "$S5_TEST_ROOT/user-exists" || exit 1
     case "$1" in
@@ -131,6 +142,10 @@ ACCT
     # Some BusyBox shells prefer their built-in id applet over PATH. Route the
     # external account command explicitly, without replacing account validation.
     id() { "$S5_TEST_ROOT/bin/id" "$@"; }
+    addgroup() { "$S5_TEST_ROOT/bin/addgroup" "$@"; }
+    adduser() { "$S5_TEST_ROOT/bin/adduser" "$@"; }
+    delgroup() { "$S5_TEST_ROOT/bin/delgroup" "$@"; }
+    deluser() { "$S5_TEST_ROOT/bin/deluser" "$@"; }
     PATH="$S5_TEST_ROOT/bin:$PATH"
     S5_STUB_CFG=$S5_CFG
     export PATH S5_STUB_CFG

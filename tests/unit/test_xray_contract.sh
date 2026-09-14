@@ -377,4 +377,38 @@ detect.unzip|||required command(s) are missing: unzip with -Z (Info-ZIP).|缺少
 usage.unknown|bogus||unknown command: bogus.|未知命令：bogus。
 CATALOG
 
+S5_LANG=en
+while IFS='|' read -r _confirm_mode _confirm_answer _confirm_status; do
+    printf '%s\n' "$_confirm_answer" >"$S5_TEST_ROOT/confirm.answer"
+    t_run "s5_confirm_$_confirm_mode" <"$S5_TEST_ROOT/confirm.answer"
+    assert_eq "$_confirm_mode accepts exactly its documented confirmation answers" "$_confirm_status" "$T_STATUS"
+    if [ "$_confirm_status" = 1 ]; then
+        assert_contains "$_confirm_mode reports a declined answer" 'operation cancelled.' "$T_OUT"
+    else
+        assert_not_contains "$_confirm_mode never calls an accepted answer cancelled" 'operation cancelled.' "$T_OUT"
+    fi
+done <<'CONFIRM'
+install||0
+install|y|0
+install|Y|0
+install|yes|0
+install|YES|0
+install|Yes|0
+install|n|1
+install|true|1
+install| y|1
+update||1
+update|y|0
+update|Y|0
+update|yes|1
+update|YES|1
+update|Yes|1
+update|n|1
+CONFIRM
+for _confirm_mode in install update; do
+    t_run "s5_confirm_$_confirm_mode" </dev/null
+    assert_eq "$_confirm_mode rejects confirmation EOF" 1 "$T_STATUS"
+    assert_not_contains "$_confirm_mode distinguishes EOF from declining" 'operation cancelled.' "$T_OUT"
+done
+
 t_summary

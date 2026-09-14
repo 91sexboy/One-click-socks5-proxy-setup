@@ -37,8 +37,6 @@ S5_CARD_KIND=''
 S5_CONFIG_REPLACED=0
 S5_CREATED_USER=0
 S5_CREATED_GROUP=0
-S5_CREATED_USER_NAMED=0
-S5_CREATED_GROUP_NAMED=0
 S5_CREATED_PREFIX=0
 S5_CREATED_CONFDIR=0
 S5_CREATED_STATEDIR=0
@@ -318,28 +316,28 @@ s5_osrel_get() {
 }
 
 s5_ver_ge() {
-    _vga=$1
-    _vgb=$2
-    while [ -n "$_vga" ] || [ -n "$_vgb" ]; do
-        _vca=${_vga%%.*}
-        _vcb=${_vgb%%.*}
-        [ -n "$_vca" ] || _vca=0
-        [ -n "$_vcb" ] || _vcb=0
-        case "$_vca:$_vcb" in *[!0-9:]* | *::* | :* | *:) return 2 ;; esac
-        _vca=${_vca#"${_vca%%[!0]*}"}
-        _vcb=${_vcb#"${_vcb%%[!0]*}"}
-        [ -n "$_vca" ] || _vca=0
-        [ -n "$_vcb" ] || _vcb=0
-        [ "${#_vca}" -le 18 ] && [ "${#_vcb}" -le 18 ] || return 2
-        if [ "${#_vca}" -gt "${#_vcb}" ]; then return 0; fi
-        if [ "${#_vca}" -lt "${#_vcb}" ]; then return 1; fi
-        if [ "$_vca" != "$_vcb" ]; then
-            _vgr=$(awk -v a="$_vca" -v b="$_vcb" 'BEGIN { print (a > b) ? 0 : 1 }')
-            [ "$_vgr" = 0 ] && return 0
+    _svg_left=$1
+    _svg_right=$2
+    while [ -n "$_svg_left" ] || [ -n "$_svg_right" ]; do
+        _svg_left_part=${_svg_left%%.*}
+        _svg_right_part=${_svg_right%%.*}
+        [ -n "$_svg_left_part" ] || _svg_left_part=0
+        [ -n "$_svg_right_part" ] || _svg_right_part=0
+        case "$_svg_left_part:$_svg_right_part" in *[!0-9:]* | *::* | :* | *:) return 2 ;; esac
+        _svg_left_part=${_svg_left_part#"${_svg_left_part%%[!0]*}"}
+        _svg_right_part=${_svg_right_part#"${_svg_right_part%%[!0]*}"}
+        [ -n "$_svg_left_part" ] || _svg_left_part=0
+        [ -n "$_svg_right_part" ] || _svg_right_part=0
+        [ "${#_svg_left_part}" -le 18 ] && [ "${#_svg_right_part}" -le 18 ] || return 2
+        if [ "${#_svg_left_part}" -gt "${#_svg_right_part}" ]; then return 0; fi
+        if [ "${#_svg_left_part}" -lt "${#_svg_right_part}" ]; then return 1; fi
+        if [ "$_svg_left_part" != "$_svg_right_part" ]; then
+            _svg_result=$(awk -v a="$_svg_left_part" -v b="$_svg_right_part" 'BEGIN { print (a > b) ? 0 : 1 }')
+            [ "$_svg_result" = 0 ] && return 0
             return 1
         fi
-        case "$_vga" in *.*) _vga=${_vga#*.}; [ -n "$_vga" ] || return 2 ;; *) _vga='' ;; esac
-        case "$_vgb" in *.*) _vgb=${_vgb#*.}; [ -n "$_vgb" ] || return 2 ;; *) _vgb='' ;; esac
+        case "$_svg_left" in *.*) _svg_left=${_svg_left#*.}; [ -n "$_svg_left" ] || return 2 ;; *) _svg_left='' ;; esac
+        case "$_svg_right" in *.*) _svg_right=${_svg_right#*.}; [ -n "$_svg_right" ] || return 2 ;; *) _svg_right='' ;; esac
     done
     return 0
 }
@@ -419,20 +417,20 @@ s5_valid_port() {
 s5_ipv4_is_canonical() {
     case "${1:-}" in '' | *[!0-9.]*) return 1 ;; esac
     case "$1" in .* | *. | *..*) return 1 ;; esac
-    _ivoldifs=$IFS
+    _siic_oldifs=$IFS
     IFS=.
     set -f
     # Split the canonical address at dots with pathname expansion disabled.
     # shellcheck disable=SC2086
     set -- $1
     set +f
-    IFS=$_ivoldifs
+    IFS=$_siic_oldifs
     [ "$#" -eq 4 ] || return 1
-    for _iv in "$1" "$2" "$3" "$4"; do
-        case "$_iv" in '' | *[!0-9]*) return 1 ;; esac
-        [ "${#_iv}" -le 3 ] || return 1
-        case "$_iv" in 0 | 0*) [ "$_iv" = 0 ] || return 1 ;; esac
-        [ "$_iv" -le 255 ] 2>/dev/null || return 1
+    for _siic_octet in "$1" "$2" "$3" "$4"; do
+        case "$_siic_octet" in '' | *[!0-9]*) return 1 ;; esac
+        [ "${#_siic_octet}" -le 3 ] || return 1
+        case "$_siic_octet" in 0 | 0*) [ "$_siic_octet" = 0 ] || return 1 ;; esac
+        [ "$_siic_octet" -le 255 ] 2>/dev/null || return 1
     done
     return 0
 }
@@ -450,24 +448,24 @@ s5_ipv4_is_public() {
     # other. This one adds the documentation/benchmarking ranges the boundary omits
     # and is IPv4-only.
     s5_ipv4_is_canonical "${1:-}" || return 1
-    _ipo1=${1%%.*}
-    _ipore=${1#*.}
-    _ipo2=${_ipore%%.*}
-    _ipore=${_ipore#*.}
-    _ipo3=${_ipore%%.*}
-    _ipore=''
-    [ "$_ipo1" -eq 0 ] && return 1
-    [ "$_ipo1" -eq 10 ] && return 1
-    [ "$_ipo1" -eq 127 ] && return 1
-    [ "$_ipo1" -ge 224 ] && return 1
-    case "$_ipo1.$_ipo2" in
+    _siip_first=${1%%.*}
+    _siip_rest=${1#*.}
+    _siip_second=${_siip_rest%%.*}
+    _siip_rest=${_siip_rest#*.}
+    _siip_third=${_siip_rest%%.*}
+    _siip_rest=''
+    [ "$_siip_first" -eq 0 ] && return 1
+    [ "$_siip_first" -eq 10 ] && return 1
+    [ "$_siip_first" -eq 127 ] && return 1
+    [ "$_siip_first" -ge 224 ] && return 1
+    case "$_siip_first.$_siip_second" in
     100.6[4-9] | 100.[7-9]? | 100.1[01]? | 100.12[0-7]) return 1 ;;
     169.254) return 1 ;;
     172.1[6-9] | 172.2? | 172.3[01]) return 1 ;;
     192.168) return 1 ;;
     198.18 | 198.19) return 1 ;;
     esac
-    case "$_ipo1.$_ipo2.$_ipo3" in
+    case "$_siip_first.$_siip_second.$_siip_third" in
     192.0.0 | 192.0.2 | 192.31.196 | 192.52.193 | 192.88.99 | 192.175.48) return 1 ;;
     198.51.100 | 203.0.113) return 1 ;;
     esac
@@ -617,19 +615,19 @@ s5_mkdir_parents() {
     if [ -L "$1" ]; then return 1; fi
     if [ -d "$1" ]; then return 0; fi
     if [ -e "$1" ]; then return 1; fi
-    _smpp=${1%/*}
-    [ "$_smpp" != "$1" ] || _smpp=.
-    s5_mkdir_parents "$_smpp" || return 1
+    _smp_parent=${1%/*}
+    [ "$_smp_parent" != "$1" ] || _smp_parent=.
+    s5_mkdir_parents "$_smp_parent" || return 1
     mkdir "$1" || return 1
     chmod 0755 "$1"
 }
 
 s5_mkdir_private() {
     if [ -L "$1" ]; then return 1; fi
-    _smpp=${1%/*}
-    [ "$_smpp" != "$1" ] || _smpp=.
-    if [ "$_smpp" != "$1" ]; then
-        s5_mkdir_parents "$_smpp" || return 1
+    _smpriv_parent=${1%/*}
+    [ "$_smpriv_parent" != "$1" ] || _smpriv_parent=.
+    if [ "$_smpriv_parent" != "$1" ]; then
+        s5_mkdir_parents "$_smpriv_parent" || return 1
     fi
     if [ ! -d "$1" ]; then
         mkdir "$1" || return 1
@@ -856,6 +854,9 @@ s5_tmp_base() {
 # stripped (the same digit-only sanitiser used elsewhere for wc output).
 s5_bytecount() { wc -c <"$1" | tr -cd '0-9'; }
 
+# Callers retain their own diagnostic policy for unreadable artifacts.
+s5_sha256() { sha256sum "$1" | awk '{print $1}'; }
+
 s5_fetch_archive() {
     # $1: destination path for the release archive. Acquire it (a local fixture in
     # test mode, else the pinned HTTPS download) and accept it only as the pinned
@@ -882,7 +883,7 @@ s5_fetch_archive() {
         }
     fi
     [ "$(s5_bytecount "$1")" = "$S5_ASSET_SIZE" ] || { s5_msg_err asset.invalid size; return 1; }
-    [ "$(sha256sum "$1" | awk '{print $1}')" = "$S5_ASSET_SHA256" ] || { s5_msg_err asset.invalid sha256; return 1; }
+    [ "$(s5_sha256 "$1")" = "$S5_ASSET_SHA256" ] || { s5_msg_err asset.invalid sha256; return 1; }
 }
 
 s5_verify_archive_members() {
@@ -892,12 +893,12 @@ s5_verify_archive_members() {
     # mode is not a regular 10xx file.
     unzip -Z1 "$1" >"$2" 2>/dev/null || { s5_msg_err asset.invalid members; return 1; }
     [ "$(grep -cxF xray "$2" || true)" = 1 ] || { s5_msg_err asset.invalid members; return 1; }
-    for _sden in geoip.dat geosite.dat LICENSE README.md; do
-        [ "$(grep -cxF "$_sden" "$2" || true)" = 1 ] || { s5_msg_err asset.invalid members; return 1; }
+    for _svam_entry in geoip.dat geosite.dat LICENSE README.md; do
+        [ "$(grep -cxF "$_svam_entry" "$2" || true)" = 1 ] || { s5_msg_err asset.invalid members; return 1; }
     done
     [ "$(wc -l <"$2" | tr -cd '0-9')" = 5 ] || { s5_msg_err asset.invalid members; return 1; }
-    while IFS= read -r _sden; do
-        case "$_sden" in '' | */* | *..* | *\\*) s5_msg_err asset.invalid members; return 1 ;; esac
+    while IFS= read -r _svam_entry; do
+        case "$_svam_entry" in '' | */* | *..* | *\\*) s5_msg_err asset.invalid members; return 1 ;; esac
     done <"$2"
     if ! unzip -Z -v "$1" 2>/dev/null |
         awk '/Unix file attributes/ { seen++; if ($4 !~ /^\(10[0-7]/) bad=1 }
@@ -913,20 +914,20 @@ s5_extract_binary() {
     # install it atomically at $S5_BIN and record its digest.
     unzip -p "$1" xray >"$2" 2>/dev/null || return 1
     [ "$(s5_bytecount "$2")" = "$S5_ASSET_BINARY_SIZE" ] || { s5_msg_err asset.invalid binary-size; return 1; }
-    [ "$(sha256sum "$2" | awk '{print $1}')" = "$S5_ASSET_BINARY_SHA256" ] || { s5_msg_err asset.invalid binary-sha256; return 1; }
+    [ "$(s5_sha256 "$2")" = "$S5_ASSET_BINARY_SHA256" ] || { s5_msg_err asset.invalid binary-sha256; return 1; }
     chmod 0755 "$2" || return 1
-    _sdef=$(file -b "$2" 2>/dev/null) || return 1
-    case "$S5_ARCHNAME:$_sdef" in
+    _seb_file=$(file -b "$2" 2>/dev/null) || return 1
+    case "$S5_ARCHNAME:$_seb_file" in
     amd64:*'ELF 64-bit LSB executable, x86-64'*) ;;
     arm64:*'ELF 64-bit LSB executable, ARM aarch64'*) ;;
     *) s5_msg_err asset.invalid architecture; return 1 ;;
     esac
-    _sdet=$(mktemp "$S5_PREFIX/.xray.XXXXXX") || return 1
-    chmod 0755 "$_sdet" || { rm -f "$_sdet"; return 1; }
-    cat "$2" >"$_sdet" || { rm -f "$_sdet"; return 1; }
-    mv -f "$_sdet" "$S5_BIN" || { rm -f "$_sdet"; return 1; }
+    _seb_temp=$(mktemp "$S5_PREFIX/.xray.XXXXXX") || return 1
+    chmod 0755 "$_seb_temp" || { rm -f "$_seb_temp"; return 1; }
+    cat "$2" >"$_seb_temp" || { rm -f "$_seb_temp"; return 1; }
+    mv -f "$_seb_temp" "$S5_BIN" || { rm -f "$_seb_temp"; return 1; }
     S5_CREATED_BIN=1
-    S5_BINARY_SHA256=$(sha256sum "$S5_BIN" | awk '{print $1}')
+    S5_BINARY_SHA256=$(s5_sha256 "$S5_BIN")
     [ "$S5_BINARY_SHA256" = "$S5_ASSET_BINARY_SHA256" ]
 }
 
@@ -943,7 +944,7 @@ s5_download_engine() {
 
 s5_binary_ready() {
     [ -x "$S5_BIN" ] && [ ! -L "$S5_BIN" ] || return 1
-    [ "$(sha256sum "$S5_BIN" 2>/dev/null | awk '{print $1}')" = "$S5_ASSET_BINARY_SHA256" ]
+    [ "$(s5_sha256 "$S5_BIN" 2>/dev/null)" = "$S5_ASSET_BINARY_SHA256" ]
 }
 
 s5_getent_state() {
@@ -961,8 +962,27 @@ s5_nologin_path() {
     case "$S5_OS_FAMILY" in alpine) printf '/sbin/nologin' ;; *) printf '/usr/sbin/nologin' ;; esac
 }
 
+s5_account_tool() {
+    if [ "$S5_OS_FAMILY" = alpine ]; then
+        case "$1" in
+        create-group) addgroup -S "$S5_SERVICE_GROUP" ;;
+        create-user) adduser -S -D -H -h /nonexistent -G "$S5_SERVICE_GROUP" -s "$(s5_nologin_path)" "$S5_SERVICE_USER" ;;
+        delete-user) deluser "$S5_SERVICE_USER" ;;
+        delete-group) delgroup "$S5_SERVICE_GROUP" ;;
+        *) return 1 ;;
+        esac
+    else
+        case "$1" in
+        create-group) groupadd -r "$S5_SERVICE_GROUP" ;;
+        create-user) useradd -r -g "$S5_SERVICE_GROUP" -M -d /nonexistent -s "$(s5_nologin_path)" "$S5_SERVICE_USER" ;;
+        delete-user) userdel "$S5_SERVICE_USER" ;;
+        delete-group) groupdel "$S5_SERVICE_GROUP" ;;
+        *) return 1 ;;
+        esac
+    fi >/dev/null 2>&1
+}
+
 s5_account_create() {
-    _s5nologin=$(s5_nologin_path)
     s5_getent_state passwd "$S5_SERVICE_USER"
     case $? in
     0) s5_msg_err account.exists "$S5_SERVICE_USER"; return 1 ;;
@@ -975,29 +995,14 @@ s5_account_create() {
     1) ;;
     *) s5_msg_err account.identity; return 1 ;;
     esac
-    if [ "$S5_OS_FAMILY" = alpine ]; then
-        addgroup -S "$S5_SERVICE_GROUP" >/dev/null 2>&1 || { s5_msg_err account.failed "$S5_SERVICE_GROUP"; return 1; }
-        S5_CREATED_GROUP=1
-        S5_CREATED_GROUP_NAMED=1
-        adduser -S -D -H -h /nonexistent -G "$S5_SERVICE_GROUP" -s "$_s5nologin" "$S5_SERVICE_USER" >/dev/null 2>&1 || {
-            s5_msg_err account.failed "$S5_SERVICE_USER"
-            delgroup "$S5_SERVICE_GROUP" >/dev/null 2>&1 || true
-            S5_CREATED_GROUP=0
-            S5_CREATED_GROUP_NAMED=0
-            return 1
-        }
-    else
-        groupadd -r "$S5_SERVICE_GROUP" >/dev/null 2>&1 || { s5_msg_err account.failed "$S5_SERVICE_GROUP"; return 1; }
-        S5_CREATED_GROUP=1
-        S5_CREATED_GROUP_NAMED=1
-        useradd -r -g "$S5_SERVICE_GROUP" -M -d /nonexistent -s "$_s5nologin" "$S5_SERVICE_USER" >/dev/null 2>&1 || {
-            s5_msg_err account.failed "$S5_SERVICE_USER"
-            groupdel "$S5_SERVICE_GROUP" >/dev/null 2>&1 || true
-            return 1
-        }
+    s5_account_tool create-group || { s5_msg_err account.failed "$S5_SERVICE_GROUP"; return 1; }
+    S5_CREATED_GROUP=1
+    if ! s5_account_tool create-user; then
+        s5_msg_err account.failed "$S5_SERVICE_USER"
+        if s5_account_tool delete-group; then S5_CREATED_GROUP=0; fi
+        return 1
     fi
     S5_CREATED_USER=1
-    S5_CREATED_USER_NAMED=1
     S5_ACCOUNT_UID=$(id -u "$S5_SERVICE_USER" 2>/dev/null) || return 1
     S5_ACCOUNT_GID=$(id -g "$S5_SERVICE_USER" 2>/dev/null) || return 1
     return 0
@@ -1023,22 +1028,15 @@ s5_account_remove() {
             s5_msg_err account.identity
             return 1
         }
-    elif [ "$S5_CREATED_USER_NAMED" != 1 ] && [ "$S5_CREATED_GROUP_NAMED" != 1 ]; then
+    elif [ "$S5_CREATED_USER" != 1 ] && [ "$S5_CREATED_GROUP" != 1 ]; then
         s5_msg_err account.identity
         return 1
     fi
     if [ "$S5_CREATED_USER" = 1 ] || [ -n "$S5_ACCOUNT_UID" ]; then
-        if [ "$S5_OS_FAMILY" = alpine ]; then
-            deluser "$S5_SERVICE_USER" >/dev/null 2>&1 || {
-                s5_msg_warn account.remove.user "$S5_SERVICE_USER"
-                return 1
-            }
-        else
-            if ! userdel "$S5_SERVICE_USER" >/dev/null 2>&1; then
-                s5_msg_warn account.remove.user "$S5_SERVICE_USER"
-                return 1
-            fi
-        fi
+        s5_account_tool delete-user || {
+            s5_msg_warn account.remove.user "$S5_SERVICE_USER"
+            return 1
+        }
         s5_getent_state passwd "$S5_SERVICE_USER"
         case $? in
         1) ;;
@@ -1050,10 +1048,8 @@ s5_account_remove() {
         s5_getent_state group "$S5_SERVICE_GROUP"
         case $? in
         0)
-            if [ "$S5_OS_FAMILY" = alpine ]; then
-                delgroup "$S5_SERVICE_GROUP" >/dev/null 2>&1 || return 1
-            elif ! groupdel "$S5_SERVICE_GROUP" >/dev/null 2>&1; then
-                s5_msg_warn account.remove.group "$S5_SERVICE_GROUP"
+            if ! s5_account_tool delete-group; then
+                [ "$S5_OS_FAMILY" = alpine ] || s5_msg_warn account.remove.group "$S5_SERVICE_GROUP"
                 return 1
             fi
             ;;
@@ -1069,8 +1065,6 @@ s5_account_remove() {
     fi
     S5_CREATED_USER=0
     S5_CREATED_GROUP=0
-    S5_CREATED_USER_NAMED=0
-    S5_CREATED_GROUP_NAMED=0
     S5_ACCOUNT_UID=''
     S5_ACCOUNT_GID=''
     return 0
@@ -1225,11 +1219,11 @@ s5_verify_installed_artifacts() {
     # s5_report_state_load renders differently from an invalid state -- while every
     # other failure returns 1.
     [ -f "$S5_SERVICE_ARTIFACT" ] && [ ! -L "$S5_SERVICE_ARTIFACT" ] || return 1
-    [ "$(sha256sum "$S5_SERVICE_ARTIFACT" 2>/dev/null | awk '{print $1}')" = "$S5_UNIT_SHA256" ] || return 1
+    [ "$(s5_sha256 "$S5_SERVICE_ARTIFACT" 2>/dev/null)" = "$S5_UNIT_SHA256" ] || return 1
     [ -f "$S5_CFG" ] && [ ! -L "$S5_CFG" ] || return 1
-    [ "$(sha256sum "$S5_CFG" 2>/dev/null | awk '{print $1}')" = "$S5_CONFIG_SHA256" ] || return 2
+    [ "$(s5_sha256 "$S5_CFG" 2>/dev/null)" = "$S5_CONFIG_SHA256" ] || return 2
     [ -f "$S5_BIN" ] && [ ! -L "$S5_BIN" ] && [ -x "$S5_BIN" ] || return 1
-    [ "$(sha256sum "$S5_BIN" 2>/dev/null | awk '{print $1}')" = "$S5_BINARY_SHA256" ] || return 1
+    [ "$(s5_sha256 "$S5_BIN" 2>/dev/null)" = "$S5_BINARY_SHA256" ] || return 1
     return 0
 }
 
@@ -1481,7 +1475,7 @@ PY
     return 0
 }
 
-s5_service_active() {
+s5_service_state() {
     case "$S5_INIT" in
     openrc)
         rc-service "$S5_PROJECT" status >/dev/null 2>&1
@@ -1506,7 +1500,7 @@ s5_openrc_start() {
     rc-service "$S5_PROJECT" "$1"
     _sosrc=$?
     [ "$_sosrc" -eq 0 ] && return 0
-    s5_service_active
+    s5_service_state
     _sosactive=$?
     [ "$_sosactive" -eq 0 ] && return 0
     return "$_sosrc"
@@ -1516,7 +1510,7 @@ s5_svc() {
     # The single place that branches on the init backend for the lifecycle verbs.
     # Each of start/stop/restart/enable/disable maps to one backend command, so the
     # backend decision is made once here rather than repeated per verb. start keeps
-    # OpenRC's idempotent fallback (s5_openrc_start); s5_service_active and
+    # OpenRC's idempotent fallback (s5_openrc_start); s5_service_state and
     # s5_listener_state stay separate, since each carries a backend-specific
     # exit-code contract rather than this shared verb switch.
     if [ "$S5_INIT" = openrc ]; then
@@ -1545,7 +1539,7 @@ s5_svc() {
 s5_wait_stopped() {
     _swsi=0
     while [ "$_swsi" -lt 15 ]; do
-        s5_service_active
+        s5_service_state
         case $? in 1) return 0 ;; 0 | 2) ;; *) return 2 ;; esac
         _swsi=$((_swsi + 1))
         sleep 1
@@ -1693,11 +1687,7 @@ s5_cleanup() {
         if [ "$S5_CREATED_USER" = 1 ]; then
             s5_account_remove || true
         elif [ "$S5_CREATED_GROUP" = 1 ]; then
-            if [ "$S5_OS_FAMILY" = alpine ]; then
-                delgroup "$S5_SERVICE_GROUP" >/dev/null 2>&1 || true
-            else
-                groupdel "$S5_SERVICE_GROUP" >/dev/null 2>&1 || true
-            fi
+            s5_account_tool delete-group || true
         fi
         # An interrupted atomic write leaves a private temporary behind; the
         # rmdir below, and uninstall later, both refuse a non-empty directory.
@@ -1786,9 +1776,9 @@ s5_install_runtime_dependencies() {
     set -f
     # shellcheck disable=SC2086
     apk add --no-cache $_sird >/dev/null 2>&1
-    _s5apk=$?
+    _sird_status=$?
     set +f
-    [ "$_s5apk" -eq 0 ] || {
+    [ "$_sird_status" -eq 0 ] || {
         s5_msg_err packages.failed apk
         return 1
     }
@@ -1879,19 +1869,22 @@ s5_precheck() {
     return 0
 }
 
-s5_confirm_install() {
-    s5_msg_ask install.confirm || return 1
-    _sci=''
-    IFS= read -r _sci || return 1
-    case "$_sci" in '' | y | Y | yes | YES | Yes) return 0 ;; *) s5_msg_print install.cancelled; return 1 ;; esac
+s5_confirm() {
+    _sc_answer=''
+    if ! { s5_msg_ask "$1.confirm" && IFS= read -r _sc_answer; }; then
+        [ "$1" != uninstall ] || s5_fail_locked
+        return 1
+    fi
+    case "$1:$_sc_answer" in
+    install: | install:y | install:Y | install:yes | install:YES | install:Yes | update:y | update:Y | uninstall:y | uninstall:Y) return 0 ;;
+    esac
+    [ "$1" != uninstall ] || s5_lock_release || true
+    s5_msg_print install.cancelled
+    return 1
 }
 
-s5_confirm_update() {
-    s5_msg_ask update.confirm || return 1
-    _scu=''
-    IFS= read -r _scu || return 1
-    case "$_scu" in y | Y) return 0 ;; *) s5_msg_print install.cancelled; return 1 ;; esac
-}
+s5_confirm_install() { s5_confirm install; }
+s5_confirm_update() { s5_confirm update; }
 
 s5_restore_transaction() {
     _srtcfg=$1
@@ -1945,18 +1938,18 @@ s5_install_new() {
     S5_CREATED_CFG=1
     s5_write_unit || return 1
     S5_CREATED_UNIT=1
-    S5_UNIT_SHA256=$(sha256sum "$S5_SERVICE_ARTIFACT" | awk '{print $1}')
+    S5_UNIT_SHA256=$(s5_sha256 "$S5_SERVICE_ARTIFACT")
     s5_svc reload || return 1
     s5_svc enable || return 1
     S5_UNIT_ENABLED=1
     s5_svc start || { s5_msg_err service.start; return 1; }
     S5_SERVICE_STARTED=1
-    s5_service_active; _sina=$?
+    s5_service_state; _sina=$?
     case "$_sina" in 0) ;; 1) s5_msg_err service.start; return 1 ;; *) s5_msg_err service.inactive; return 1 ;; esac
     s5_wait_listening "$S5_PORT"
     case $? in 0) ;; 1) s5_msg_err service.listen "$S5_PORT"; return 1 ;; *) s5_msg_err service.unverified "$S5_PORT"; return 1 ;; esac
     s5_verify_dataplane || return 1
-    S5_CONFIG_SHA256=$(sha256sum "$S5_CFG" | awk '{print $1}')
+    S5_CONFIG_SHA256=$(s5_sha256 "$S5_CFG")
     s5_state_write || return 1
     S5_INSTALL_COMPLETE=1
     return 0
@@ -2047,7 +2040,7 @@ s5_install_update() {
         s5_update_rollback "$_sioldcfg" "$_sioldstate"
         return 1
     }
-    S5_CONFIG_SHA256=$(sha256sum "$S5_CFG" | awk '{print $1}')
+    S5_CONFIG_SHA256=$(s5_sha256 "$S5_CFG")
     if ! s5_state_write; then
         s5_update_rollback "$_sioldcfg" "$_sioldstate"
         return 1
@@ -2107,7 +2100,7 @@ s5_cmd_status() {
     _ssr=$?
     s5_report_state_load "$_ssr" || { s5_fail_locked; return 1; }
     s5_config_extract || { s5_fail_locked config.unreadable "$S5_CFG"; return 1; }
-    s5_service_active
+    s5_service_state
     _ssa=$?
     case "$_ssa" in 0) _ssv=status.state.running ;; 1) _ssv=status.state.stopped ;; *) _ssv=status.state.unverified ;; esac
     s5_msg_print status.heading
@@ -2152,7 +2145,7 @@ s5_read_public_ipv4() {
             return 1
         fi
     fi
-    _sripv4_size=$(wc -c <"$_sripv4_file" 2>/dev/null | tr -cd '0-9')
+    _sripv4_size=$(s5_bytecount "$_sripv4_file" 2>/dev/null)
     case "$_sripv4_size" in '' | *[!0-9]*) _sripv4_size=18 ;; esac
     # The longest address is 15 bytes and one terminator is allowed two, so a
     # larger body cannot be a single address. Checked before the read so an
@@ -2218,17 +2211,17 @@ s5_resolve_card_address() {
 # Callers must verify root privileges and a terminal stdout before showing credentials.
 s5_render_card() {
     s5_resolve_card_address
-    _sss="socks5://$S5_USERNAME:$S5_PASSWORD@$S5_CARD_ADDR:$S5_PORT"
-    _sshttp="http://$S5_USERNAME:$S5_PASSWORD@$S5_CARD_ADDR:$S5_PORT"
+    _src_socks="socks5://$S5_USERNAME:$S5_PASSWORD@$S5_CARD_ADDR:$S5_PORT"
+    _src_http="http://$S5_USERNAME:$S5_PASSWORD@$S5_CARD_ADDR:$S5_PORT"
     s5_msg_print show.heading || return 1
     case "$S5_CARD_KIND" in
     placeholder) s5_msg_print show.placeholder "$S5_CARD_ADDR" || return 1 ;;
     esac
-    s5_msg_print show.socks "$_sss" || return 1
-    s5_msg_print show.http "$_sshttp" || return 1
+    s5_msg_print show.socks "$_src_socks" || return 1
+    s5_msg_print show.http "$_src_http" || return 1
     s5_msg_print show.warning || return 1
-    _sss=''
-    _sshttp=''
+    _src_socks=''
+    _src_http=''
     return 0
 }
 
@@ -2351,10 +2344,7 @@ s5_cmd_uninstall() {
     # rather than a missing one.
     s5_report_state_load "$_sur" || { s5_fail_locked; return 1; }
     s5_config_extract || { s5_fail_locked config.unreadable "$S5_CFG"; return 1; }
-    s5_msg_ask uninstall.confirm || { s5_fail_locked; return 1; }
-    _suc=''
-    IFS= read -r _suc || { s5_fail_locked; return 1; }
-    case "$_suc" in y | Y) ;; *) s5_lock_release || true; s5_msg_print install.cancelled; return 1 ;; esac
+    s5_confirm uninstall || return 1
     s5_uninstall_preflight || { s5_fail_locked; return 1; }
     s5_svc stop || { s5_fail_locked service.stop; return 1; }
     s5_wait_stopped

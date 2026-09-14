@@ -14,6 +14,7 @@ import struct
 import sys
 import threading
 import time
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import xray_mixed  # noqa: E402
@@ -210,11 +211,140 @@ def connection_cleanup_checks():
             client.close()
 
 
+class HandshakeSocket:
+    def __init__(self, replies):
+        self.replies = list(replies)
+        self.sent = []
+        self.closed = False
+
+    def sendall(self, data):
+        self.sent.append(data)
+
+    def settimeout(self, timeout):
+        pass
+
+    def recv(self, size):
+        reply = self.replies.pop(0)
+        if isinstance(reply, BaseException):
+            raise reply
+        if len(reply) > size:
+            self.replies.insert(0, reply[size:])
+        return reply[:size]
+
+    def close(self):
+        self.closed = True
+
+
+def handshake_checks():
+    endpoint = xray_mixed.Endpoint("127.0.0.1", 23456)
+    creds = xray_mixed.Credentials("u", "p")
+    for failure in ("socket-timeout", "expired-deadline"):
+        sock = HandshakeSocket([socket.timeout("synthetic stall")])
+        observed = None
+        clock = [0, 11] if failure == "expired-deadline" else [0, 0, 0]
+        with patch.object(xray_mixed, "connect", return_value=sock), \
+                patch.object(xray_mixed.time, "monotonic", side_effect=clock):
+            try:
+                xray_mixed.http_connect(endpoint, endpoint, creds)
+            except BaseException as error:
+                observed = error
+        check("HTTP %s becomes ProbeTimeout" % failure, isinstance(observed, xray_mixed.ProbeTimeout))
+        check("HTTP %s closes its socket" % failure, sock.closed)
+
+    for connector, reply, suffix in (
+            (xray_mixed.http_connect, b"HTTP/1.1 200 OK\r\n\r\n", b"Connection: keep-alive\r\n\r\n"),
+            (xray_mixed.http_wrong_auth, b"HTTP/1.1 407 Required\r\n\r\n", b"\r\n")):
+        sock = HandshakeSocket([reply])
+        with patch.object(xray_mixed, "connect", return_value=sock):
+            connector(endpoint, endpoint, creds)
+        expected = (b"CONNECT 127.0.0.1:23456 HTTP/1.1\r\nHost: 127.0.0.1:23456\r\n"
+                    b"Proxy-Authorization: Basic dTpw\r\n" + suffix)
+        check("%s preserves its exact request bytes" % connector.__name__, sock.sent == [expected])
+        sock.close()
+
+    calls = (
+        ("positive", lambda: xray_mixed.socks5_connect(endpoint, endpoint, creds)),
+        ("wrong-auth", lambda: xray_mixed.socks5_wrong_auth(endpoint, creds)),
+        ("command", lambda: xray_mixed.socks5_reject_command(endpoint, endpoint, creds, 2)),
+        ("boundary", lambda: xray_mixed.socks5_denied_destination(endpoint, endpoint, creds)),
+    )
+    for label, call in calls:
+        for stage, replies in (("negotiation", [b"\x05", b"\xff"]),
+                               ("authentication", [b"\x05", b"\x02", b"\x01", b"\x01"]),
+                               ("negotiation-timeout", [socket.timeout()]),
+                               ("authentication-timeout", [b"\x05\x02", socket.timeout()])):
+            sock = HandshakeSocket(replies)
+            with patch.object(xray_mixed, "connect", return_value=sock):
+                try:
+                    result = call()
+                except BaseException as error:
+                    result = error
+            if stage.endswith("timeout"):
+                expected = isinstance(result, xray_mixed.ProbeTimeout)
+            elif label == "positive" or (label == "boundary" and stage == "authentication"):
+                expected = isinstance(result, RuntimeError)
+            else:
+                expected = result is True
+            check("%s preserves %s rejection policy" % (label, stage), expected)
+            check("%s closes after %s" % (label, stage), sock.closed)
+
+    sock = HandshakeSocket([b"\x05", b"\x02", b"\x01", b"\x00",
+                            b"\x05\x00\x00\x01" + b"\x00" * 6])
+    with patch.object(xray_mixed, "connect", return_value=sock):
+        result = xray_mixed.socks5_connect(endpoint, endpoint, creds)
+    check("split SOCKS5 acceptance reaches the tunnel", result is sock and not sock.closed)
+    check("SOCKS5 sends negotiation, credentials and destination unchanged", sock.sent == [
+        b"\x05\x01\x02", b"\x01\x01u\x01p", b"\x05\x01\x00\x01\x7f\x00\x00\x01\x5b\xa0"])
+    sock.close()
+
+    slow_send = HandshakeSocket([b"\x05\x02", b"\x01\x00"])
+    clock = [0]
+
+    def delayed_send(data):
+        slow_send.sent.append(data)
+        clock[0] += 6
+
+    slow_send.sendall = delayed_send
+    with patch.object(xray_mixed, "connect", return_value=slow_send), \
+            patch.object(xray_mixed.time, "monotonic", side_effect=lambda: clock[0]):
+        try:
+            result = xray_mixed.socks5_wrong_auth(endpoint, creds)
+        except xray_mixed.ProbeTimeout:
+            result = None
+    check("wrong-auth gives each reply five seconds after its request is sent", result is False)
+
+    sockets = [HandshakeSocket([]), HandshakeSocket([])]
+    with patch.object(xray_mixed, "socks5_connect", side_effect=sockets), \
+            patch.object(xray_mixed, "exchange"), \
+            patch.object(xray_mixed.os, "urandom", side_effect=[b"NONCE-AA", b"NONCE-BB"]) as random_bytes:
+        xray_mixed.tunnel_once("socks5", endpoint, endpoint, creds, 123)
+        xray_mixed.tunnel_once("socks5", endpoint, endpoint, creds, 123)
+    check("each tunnel obtains an independent eight-byte nonce", [call.args for call in random_bytes.call_args_list] == [(8,), (8,)])
+    check("the generated nonce reaches each hello frame", [sock.sent[0][15:23] for sock in sockets] == [b"NONCE-AA", b"NONCE-BB"])
+
+    with patch.object(sys, "argv", ["probe", "--port", "1", "--target-port", "2", "--passfile", "unused"]), \
+            patch.object(xray_mixed, "read_passfile", return_value=("u", "p")), \
+            patch.object(xray_mixed, "tunnel_once", side_effect=RuntimeError("synthetic foreground failure")), \
+            patch.object(xray_mixed.concurrent.futures, "ThreadPoolExecutor") as executor:
+        pool = executor.return_value
+        pool.__enter__.return_value = pool
+        try:
+            xray_mixed.main()
+        except RuntimeError:
+            pass
+        check("foreground failure closes the long-lived executor", pool.__exit__.called)
+
+
 def main():
+    if sys.argv[1:2] == ["--handshake-only"]:
+        handshake_checks()
+        print("TESTS %d %d" % (len(CHECKS) - len(FAILURES), len(FAILURES)))
+        return 1 if FAILURES else 0
     if sys.argv[1:2] == ["--exchange-only"]:
         exchange_checks(sys.argv[2] if len(sys.argv) > 2 else None)
         print("TESTS %d %d" % (len(CHECKS) - len(FAILURES), len(FAILURES)))
         return 1 if FAILURES else 0
+    handshake_checks()
     connection_cleanup_checks()
     target = xray_mixed.Endpoint("127.0.0.1", 1)
     creds = xray_mixed.Credentials("u", "p")

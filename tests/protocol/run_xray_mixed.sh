@@ -37,6 +37,7 @@ fi
 cat "$OUT/probe.log"
 
 grep -q '^mixed_target_ipv4=ok$' "$OUT/probe.log" || exit 1
+grep -q '^mixed_http_connect=ok$' "$OUT/probe.log" || exit 1
 grep -q '^mixed_target_hostname=ok$' "$OUT/probe.log" || exit 1
 grep -qE '^mixed_target_ipv6=(ok|unavailable)$' "$OUT/probe.log" || exit 1
 grep -q '^mixed_denied_control=ok$' "$OUT/probe.log" || exit 1

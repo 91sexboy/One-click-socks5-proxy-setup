@@ -420,6 +420,8 @@ assert_contains "the probe reaches the denied address without the proxy" \
     'direct_control(denied)' "$_a2probe"
 assert_contains "the probe reaches the denied hostname without the proxy" \
     'direct_control(denied_by_name)' "$_a2probe"
+assert_eq "the mixed gate requires HTTP CONNECT to have run" 1 \
+    "$(grep -c 'mixed_http_connect=ok' "$ROOT/tests/protocol/run_xray_mixed.sh")"
 assert_eq "the mixed gate requires the boundary control to have run" 1 \
     "$(grep -c 'mixed_denied_control=ok' "$ROOT/tests/protocol/run_xray_mixed.sh")"
 # Presence is not order: a control that runs after the refusal it is meant to

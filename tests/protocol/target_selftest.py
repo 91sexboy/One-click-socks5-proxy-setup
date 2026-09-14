@@ -291,7 +291,23 @@ def metrics_writer_checks(scratch):
     check("write_metrics runs with the count lock already held", not holder.is_alive())
 
 
+def connection_cleanup_checks():
+    for label, request in (("EOF", b""), ("invalid magic", b"XX" + struct.pack("!I", 17) + b"H" + b"\0" * 16),
+                           ("non-hello", b"X5" + struct.pack("!I", 17) + b"C" + b"\0" * 16)):
+        server, client = socket.socketpair()
+        try:
+            if request:
+                client.sendall(request)
+            client.shutdown(socket.SHUT_WR)
+            duplex_target.serve_connection(server, None, None)
+            check("target closes an early %s connection" % label, server.fileno() == -1)
+        finally:
+            server.close()
+            client.close()
+
+
 def main():
+    connection_cleanup_checks()
     frame_writer_checks()
     scratch = tempfile.mkdtemp(prefix="s5target.")
     try:

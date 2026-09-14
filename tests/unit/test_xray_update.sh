@@ -516,13 +516,52 @@ test_uninstall_messages() {
     done
 }
 
+test_uninstall_confirmation() {
+    for _uninstall_answer in '' y Y yes YES Yes n eof prompt-failure; do
+        t_xray_fixture 23456
+        t_xray_install
+        s5_precheck() { return 0; }
+        if [ "$_uninstall_answer" = eof ]; then
+            : >"$S5_TEST_ROOT/answers.uninstall"
+        else
+            printf '%s\n' "$_uninstall_answer" >"$S5_TEST_ROOT/answers.uninstall"
+        fi
+        T_OUT=$( (
+            rmdir() {
+                command rmdir "$@" || return $?
+                if [ "$1" = "$S5_LOCKDIR" ]; then printf 'lock-released\n'; fi
+            }
+            if [ "$_uninstall_answer" = prompt-failure ]; then s5_msg() { return 1; }; fi
+            s5_cmd_uninstall <"$S5_TEST_ROOT/answers.uninstall"
+        ) 2>&1) && T_STATUS=0 || T_STATUS=$?
+        case "$_uninstall_answer" in
+        y|Y)
+            assert_eq "uninstall accepts $_uninstall_answer" 0 "$T_STATUS"
+            assert_file_absent "confirmed uninstall removes config" "$S5_CFG"
+            ;;
+        *)
+            assert_eq "uninstall refuses a non-confirming answer" 1 "$T_STATUS"
+            assert_file_exists "unconfirmed uninstall preserves config" "$S5_CFG"
+            assert_eq "unconfirmed uninstall preserves the listener" 23456 "$(cat "$S5_TEST_ROOT/svc_active")"
+            case "$_uninstall_answer" in
+            eof|prompt-failure) assert_not_contains "failed input is not called cancellation" 'operation cancelled.' "$T_OUT" ;;
+            *) assert_contains "uninstall unlocks before reporting cancellation" 'lock-released
+operation cancelled.' "$T_OUT" ;;
+            esac
+            ;;
+        esac
+        assert_file_absent "uninstall confirmation leaves no lock" "$S5_LOCKDIR"
+        assert_eq "uninstall confirmation releases its lock once" 1 "$(printf '%s\n' "$T_OUT" | grep -c '^lock-released$')"
+    done
+}
+
 # Optional scenario arguments support isolated runs, permutation and repetition.
 if [ "$#" -eq 0 ]; then
-    set -- uninstall_messages family update owned_port rejected_candidate listener_failure rejected_command publish_signal config_symlink uninstall_leftovers uninstall_residue verifier_cleanup txn_mkdir_failure txn_copy_failure txn_chmod_failure stop_failure wait_stopped_failure publication_failure new_start_failure dataplane_failure state_write_failure rollback_restart_failure restore_failure uninstall_unknown rollback_exit
+    set -- uninstall_confirmation uninstall_messages family update owned_port rejected_candidate listener_failure rejected_command publish_signal config_symlink uninstall_leftovers uninstall_residue verifier_cleanup txn_mkdir_failure txn_copy_failure txn_chmod_failure stop_failure wait_stopped_failure publication_failure new_start_failure dataplane_failure state_write_failure rollback_restart_failure restore_failure uninstall_unknown rollback_exit
 fi
 for scenario do
     case "$scenario" in
-    uninstall_messages|family|update|owned_port|rejected_candidate|listener_failure|rejected_command|publish_signal|config_symlink|uninstall_leftovers|uninstall_residue|verifier_cleanup|txn_mkdir_failure|txn_copy_failure|txn_chmod_failure|stop_failure|wait_stopped_failure|publication_failure|new_start_failure|dataplane_failure|state_write_failure|rollback_restart_failure|restore_failure|uninstall_unknown|rollback_exit)
+    uninstall_confirmation|uninstall_messages|family|update|owned_port|rejected_candidate|listener_failure|rejected_command|publish_signal|config_symlink|uninstall_leftovers|uninstall_residue|verifier_cleanup|txn_mkdir_failure|txn_copy_failure|txn_chmod_failure|stop_failure|wait_stopped_failure|publication_failure|new_start_failure|dataplane_failure|state_write_failure|rollback_restart_failure|restore_failure|uninstall_unknown|rollback_exit)
         "test_$scenario" ;;
     *) t_bad "unknown update scenario: $scenario" ;;
     esac
