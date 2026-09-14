@@ -3,6 +3,27 @@
 S5T_NAME=test_xray_ci_helpers
 . "${S5_REPO_ROOT}/tests/lib/assert.sh"
 t_mktestroot
+s5t_source_contract() {
+    t_source_production "$S5_REPO_ROOT/tests/fixtures/os-release/debian-12" || return 1
+    [ "$S5_LIB_ONLY:$S5_ASSUME_ROOT:$S5_SKIP_OWNERSHIP" = 1:1:1 ] || return 1
+    s5_map_arch x86_64
+}
+t_run s5t_source_contract
+assert_eq "shared source setup loads isolated production functions" 0 "$T_STATUS"
+assert_eq "shared source setup preserves the production interface" amd64 "$T_OUT"
+: >"$S5_TEST_ROOT/empty"
+t_run t_sha256 "$S5_TEST_ROOT/empty"
+assert_eq "shared hash helper hashes the supplied file" \
+    e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 "$T_OUT"
+t_run t_stub synthetic-command <<'STUB'
+#!/bin/sh
+printf '%s\n' "$1"
+exit 7
+STUB
+assert_eq "shared stub writer creates an executable command" 0 "$T_STATUS"
+t_run "$S5_TEST_ROOT/bin/synthetic-command" argument
+assert_eq "a shared stub keeps its supplied exit status" 7 "$T_STATUS"
+assert_eq "a shared stub keeps its supplied arguments" argument "$T_OUT"
 # shellcheck source=/dev/null
 . "$S5_REPO_ROOT/.github/scripts/lifecycle-common.sh"
 printf 'ordinary diagnostic\n' >"$S5_TEST_ROOT/clean.log"
@@ -15,22 +36,22 @@ assert_not_contains "the failure never repeats the credential" 'synthetic.[crede
 t_run lifecycle_no_credential_in "$S5_TEST_ROOT/missing.log" 'synthetic.[credential]~'
 assert_ne "a missing log is not a clean log" 0 "$T_STATUS"
 assert_contains "an unreadable log identifies a failed check" 'credential check' "$T_OUT"
-credential_prefix() {
+s5t_credential_prefix() {
     printf '%s\n' "$1" >"$S5_TEST_ROOT/prefix-command"
     "$@"
 }
-t_run lifecycle_no_credential_in "$S5_TEST_ROOT/clean.log" 'synthetic.[credential]~' credential_prefix
+t_run lifecycle_no_credential_in "$S5_TEST_ROOT/clean.log" 'synthetic.[credential]~' s5t_credential_prefix
 assert_eq "a privilege prefix can inspect a clean log" 0 "$T_STATUS"
 assert_eq "the privilege prefix executes grep" grep "$(cat "$S5_TEST_ROOT/prefix-command")"
-credential_denied() { return 2; }
-t_run lifecycle_no_credential_in "$S5_TEST_ROOT/clean.log" 'synthetic.[credential]~' credential_denied
+s5t_credential_denied() { return 2; }
+t_run lifecycle_no_credential_in "$S5_TEST_ROOT/clean.log" 'synthetic.[credential]~' s5t_credential_denied
 assert_ne "a failed privileged read is not a clean log" 0 "$T_STATUS"
 
 wait_calls=0
 wait_ready=3
-wait_predicate() { wait_calls=$((wait_calls + 1)); test "$wait_calls" -ge "$wait_ready"; }
+s5t_wait_predicate() { wait_calls=$((wait_calls + 1)); test "$wait_calls" -ge "$wait_ready"; }
 sleep() { printf '%s\n' "$1" >>"$S5_TEST_ROOT/sleeps"; }
-lifecycle_wait_until 3 0.2 wait_predicate
+lifecycle_wait_until 3 0.2 s5t_wait_predicate
 assert_eq "waiting succeeds on its final permitted attempt" 0 "$?"
 assert_eq "the predicate runs in the caller shell" 3 "$wait_calls"
 assert_eq "successful wait sleeps only between attempts" 2 "$(wc -l <"$S5_TEST_ROOT/sleeps" | tr -d '[:space:]')"
@@ -39,7 +60,7 @@ assert_eq "waiting preserves its requested interval" '0.2
 wait_calls=0
 wait_ready=4
 : >"$S5_TEST_ROOT/sleeps"
-lifecycle_wait_until 3 1 wait_predicate
+lifecycle_wait_until 3 1 s5t_wait_predicate
 assert_ne "an exhausted wait fails" 0 "$?"
 assert_eq "waiting is bounded to the given attempts" 3 "$wait_calls"
 assert_eq "an exhausted wait preserves the original full sleep budget" 3 "$(wc -l <"$S5_TEST_ROOT/sleeps" | tr -d '[:space:]')"
@@ -83,7 +104,7 @@ assert_eq "gate final assertions observe readiness arriving during the final sle
 if [ "$T_STATUS" -ne 0 ]; then printf '%s\n' "$T_OUT" >&2; fi
 
 mkdir -p "$S5_TEST_ROOT/bin"
-cat >"$S5_TEST_ROOT/bin/sudo" <<'SUDO'
+t_stub sudo <<'SUDO'
 #!/bin/sh
 printf '%s\n' "$*" >>"$S5_TEST_ROOT/cleanup-calls"
 if [ "$1" = rm ]; then
@@ -92,7 +113,6 @@ if [ "$1" = rm ]; then
 fi
 exit 1
 SUDO
-chmod 0700 "$S5_TEST_ROOT/bin/sudo"
 for cleanup_failure in -rf -f none; do
     : >"$S5_TEST_ROOT/cleanup-calls"
     # Split a configured multiword shell such as busybox sh.

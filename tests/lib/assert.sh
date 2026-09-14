@@ -111,11 +111,25 @@ t_run() {
     return 0
 }
 
-# t_run_sh <shell> <script> <args...>
-t_run_sh() {
-    _sh=$1
-    shift
-    t_run "$_sh" "$@"
+t_stub() {
+    mkdir -p "$S5_TEST_ROOT/bin" || return 1
+    cat >"$S5_TEST_ROOT/bin/$1" || return 1
+    chmod 0755 "$S5_TEST_ROOT/bin/$1"
+}
+
+t_sha256() {
+    sha256sum "$1" | awk '{print $1}'
+}
+
+t_source_production() {
+    S5_LIB_ONLY=1
+    S5_ASSUME_ROOT=1
+    S5_SKIP_OWNERSHIP=1
+    S5_OSRELEASE=${1:-}
+    export S5_LIB_ONLY S5_ASSUME_ROOT S5_SKIP_OWNERSHIP S5_OSRELEASE
+    # Production is sourced dynamically from the caller's checkout.
+    # shellcheck source=/dev/null
+    . "$S5_REPO_ROOT/socks5.sh"
 }
 
 # t_mktestroot: create an isolated test root with the .s5-test-root sentinel and
@@ -128,8 +142,7 @@ t_mktestroot() {
     : >"$S5_TEST_ROOT/.s5-test-root"
     S5_TEST_MODE=1
     export S5_TEST_ROOT S5_TEST_MODE
-    # shellcheck disable=SC2064
-    trap "t_cleanup_root" EXIT HUP INT TERM
+    trap 't_cleanup_root' EXIT HUP INT TERM
 }
 
 t_cleanup_root() {

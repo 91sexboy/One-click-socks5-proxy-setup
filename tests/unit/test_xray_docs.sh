@@ -5,12 +5,7 @@ S5T_NAME=test_xray_docs
 . "${S5_REPO_ROOT}/tests/lib/assert.sh"
 ROOT=${S5_REPO_ROOT}
 t_mktestroot
-S5_LIB_ONLY=1
-S5_ASSUME_ROOT=1
-S5_SKIP_OWNERSHIP=1
-export S5_LIB_ONLY S5_ASSUME_ROOT S5_SKIP_OWNERSHIP
-# shellcheck source=/dev/null
-. "$ROOT/socks5.sh"
+t_source_production ''
 
 t_run python3 "$ROOT/tests/lib/release_contract.py" "$ROOT" "${S5_TEST_SHELL:-sh}"
 assert_eq "release declarations agree with independent pins" 0 "$T_STATUS"
@@ -322,14 +317,13 @@ assert_contains "the Alpine gate requires the service to stay down" \
 assert_contains "the Alpine gate records the observed child_pid values" \
     'openrc: child_pid %s then %s' "$alpine_text"
 for _doc in README.md README.zh-CN.md; do
-    _doctext=$(cat "$ROOT/$_doc")
-    if grep -qi 'alpine' "$ROOT/$_doc" && grep -qi 'openrc' "$ROOT/$_doc"; then
-        t_ok
-        t_ok
-    else
-        t_bad "$_doc documents the Alpine target"
-        t_bad "$_doc documents the OpenRC backend"
-    fi
+    for _platform in Alpine OpenRC; do
+        if grep -qi "$_platform" "$ROOT/$_doc"; then
+            t_ok
+        else
+            t_bad "$_doc documents $_platform"
+        fi
+    done
 done
 
 # show makes an outbound request to name the server in the credential card, so
@@ -354,14 +348,14 @@ done
 S5_PORT=23456
 S5_USERNAME=testuser
 S5_PASSWORD='TestPassword_123~x'
-_dcextract() {
+s5t_boundary_ranges() {
     sed -n '/"ip": \[/,/\]/p' | sed -n 's/.*"\([0-9a-f:.]*\/[0-9]*\)".*/\1/p' | sort
 }
-_dcrendered=$(s5_config_render | _dcextract)
+_dcrendered=$(s5_config_render | s5t_boundary_ranges)
 _dcfixture="$ROOT/tests/fixtures/denied-destinations.txt"
 assert_file_exists "the destination boundary fixture exists" "$_dcfixture"
 _dcexpected=$(sort "$_dcfixture")
-_dcengine=$(_dcextract <"$ROOT/tests/protocol/start_engine.sh")
+_dcengine=$(s5t_boundary_ranges <"$ROOT/tests/protocol/start_engine.sh")
 assert_eq "the destination boundary has twelve distinct ranges" 12 \
     "$(printf '%s\n' "$_dcexpected" | sort -u | wc -l | tr -d '[:space:]')"
 assert_eq "the renderer denies exactly the expected ranges" \
@@ -415,25 +409,25 @@ assert_eq "the duplex target answers at the denied address too" 4 \
 # the wrong reason. The probe now reaches the denied endpoint directly, by address
 # and by name, before asserting either refusal. Both the probe's control and the
 # gate's requirement that it ran are pinned: either can be dropped alone.
-_a2probe=$(cat "$ROOT/tests/protocol/xray_mixed.py")
+_boundary_probe=$(cat "$ROOT/tests/protocol/xray_mixed.py")
 assert_contains "the probe reaches the denied address without the proxy" \
-    'direct_control(denied)' "$_a2probe"
+    'direct_control(denied)' "$_boundary_probe"
 assert_contains "the probe reaches the denied hostname without the proxy" \
-    'direct_control(denied_by_name)' "$_a2probe"
+    'direct_control(denied_by_name)' "$_boundary_probe"
 assert_eq "the mixed gate requires HTTP CONNECT to have run" 1 \
     "$(grep -c 'mixed_http_connect=ok' "$ROOT/tests/protocol/run_xray_mixed.sh")"
 assert_eq "the mixed gate requires the boundary control to have run" 1 \
     "$(grep -c 'mixed_denied_control=ok' "$ROOT/tests/protocol/run_xray_mixed.sh")"
 # Presence is not order: a control that runs after the refusal it is meant to
 # qualify proves nothing about that refusal.
-_a2ctl=$(grep -n 'direct_control(denied_by_name)' \
+_boundary_control_line=$(grep -n 'direct_control(denied_by_name)' \
     "$ROOT/tests/protocol/xray_mixed.py" | head -n 1 | cut -d: -f1)
-_a2den=$(grep -n 'atyp="hostname"' \
+_boundary_refusal_line=$(grep -n 'atyp="hostname"' \
     "$ROOT/tests/protocol/xray_mixed.py" | head -n 1 | cut -d: -f1)
-if [ -n "$_a2ctl" ] && [ -n "$_a2den" ] && [ "$_a2ctl" -lt "$_a2den" ]; then
+if [ -n "$_boundary_control_line" ] && [ -n "$_boundary_refusal_line" ] && [ "$_boundary_control_line" -lt "$_boundary_refusal_line" ]; then
     t_ok
 else
-    t_bad "the hostname control must run before the hostname refusal is asserted (control at ${_a2ctl:-none}, refusal at ${_a2den:-none})"
+    t_bad "the hostname control must run before the hostname refusal is asserted (control at ${_boundary_control_line:-none}, refusal at ${_boundary_refusal_line:-none})"
 fi
 
 # SPEC 6:228 lists "one long-lived framed bidirectional tunnel" as a case apart
@@ -441,12 +435,10 @@ fi
 # (count=4, idle=True), whose only long element was a 4s sleep, so the long-lived
 # case was never exercised on its own. It now runs as a distinct case that holds
 # one socket open across many frames spaced over time, and prints its own marker.
-# Probe emission and gate requirement are pinned separately, matching the A2 pair
-# above: either can be dropped alone, and a silent deletion of the gate line is
-# exactly how A2 was lost. The marker is a behaviour (the case ran and printed),
-# not a function name, so it survives the case being refactored.
+# Probe emission and gate requirements are independent: either can be dropped alone.
+# The marker records the behavior rather than its function name.
 assert_contains "the long-lived case prints its own marker" \
-    'mixed_longlived=ok' "$_a2probe"
+    'mixed_longlived=ok' "$_boundary_probe"
 assert_eq "the mixed gate requires the long-lived tunnel to have run" 1 \
     "$(grep -c 'mixed_longlived=ok' "$ROOT/tests/protocol/run_xray_mixed.sh")"
 for _dcconcurrency in 1 32 128; do
@@ -454,7 +446,7 @@ for _dcconcurrency in 1 32 128; do
         "$(grep -c "mixed_concurrency_$_dcconcurrency=ok" "$ROOT/tests/protocol/run_xray_mixed.sh")"
 done
 assert_contains "the probe emits concurrency completion markers" \
-    'mixed_concurrency_%d=ok' "$_a2probe"
+    'mixed_concurrency_%d=ok' "$_boundary_probe"
 assert_contains "the protocol job consumes a listener-verified ready marker" \
     'test -s "$root/out/ready"' "$ci_text"
 

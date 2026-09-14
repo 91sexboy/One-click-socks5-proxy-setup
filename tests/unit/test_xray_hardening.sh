@@ -1,22 +1,18 @@
 #!/bin/sh
-# Round-5 hardening regressions that no prior guard bound.
+# Account identity and stale-lock ownership regressions.
 #
-# SA2: s5_account_identity must confirm the service group name still maps to the
+# s5_account_identity must confirm the service group name still maps to the
 # recorded GID on every backend, not only Alpine. account_identity gates
 # account_remove, which deletes the group by name (groupdel/delgroup), so a
 # same-named group that drifted to a different GID would otherwise be deleted --
 # SPEC 7 removes only the resources this installation recorded.
 
 S5T_NAME=test_xray_hardening
-# shellcheck disable=SC1091
+# shellcheck source=/dev/null
 . "${S5_REPO_ROOT}/tests/lib/assert.sh"
 ROOT=${S5_REPO_ROOT}
 t_mktestroot
-S5_LIB_ONLY=1
-S5_ASSUME_ROOT=1
-export S5_LIB_ONLY S5_ASSUME_ROOT
-# shellcheck disable=SC1091
-. "$ROOT/socks5.sh"
+t_source_production ''
 S5_LANG=en
 
 # id reports the recorded identity for the user; the group's GID is whatever the

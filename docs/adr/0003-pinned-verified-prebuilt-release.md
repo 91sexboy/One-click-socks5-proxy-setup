@@ -49,9 +49,8 @@ recorded hash on every later command. See `s5_asset_select` in the
   per-architecture asset metadata in `socks5.sh`, `.github/workflows/ci.yml`,
   `tests/protocol/start_engine.sh`, and the independent pin table in
   `tests/lib/release_contract.py`. Update the release tags and published sizes in
-  `README.md` and `README.zh-CN.md`, the independent expectations in
-  `tests/lib/release_contract_regression.py`, and any remaining literal fixture
-  pins in `tests/protocol/launcher_selftest.py`. The release-contract oracle and
+  `README.md` and `README.zh-CN.md`, and the independent expectations in
+  `tests/lib/release_contract_regression.py`. The release-contract oracle and
   its mutation regressions retain independent expectations rather than deriving
   the expected bytes from the production declarations.
 - A wrong pin refuses every install on that architecture rather than installing an
