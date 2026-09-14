@@ -365,7 +365,125 @@ delgroup xray-socks5' ;;
     done
 }
 
-SCENARIOS='account_creation_failure account_lifecycle install config_corrupt binary_corrupt unit_corrupt account_corrupt cleanup_temps openrc_runtime locks download_cleanup download_remove_failure download_remove_zh download_release_failure download_candidate_failure download_candidate_remove_failure download_signal'
+s5t_cleanup_run() {
+    s5_precheck() { return 0; }
+    sleep() { :; }
+    s5_verify_dataplane() {
+        : >"$S5_TEST_ROOT/verification-failed"
+        return 1
+    }
+    S5T_CLEANUP_FAULT=$1
+    export S5T_CLEANUP_FAULT S5_INIT S5_PIDFILE S5_OPENRC_OPTION_DIR
+    export S5_LOCK_HELD S5_LOCK_OWNER S5_LOCK_TOKEN
+    t_stub systemctl <<'MANAGER'
+#!/bin/sh
+printf '%s\n' "$1" >>"$S5_TEST_ROOT/manager-calls"
+case "$1" in
+start)
+    printf '23456\n' >"$S5_TEST_ROOT/svc_active"
+    if [ "$S5_INIT" = openrc ]; then
+        mkdir -p "$S5_OPENRC_OPTION_DIR"
+        printf '100\n' >"$S5_PIDFILE"
+        printf '101\n' >"$S5_OPENRC_OPTION_DIR/child_pid"
+    fi
+    [ "$S5T_CLEANUP_FAULT" != start-failure ] || exit 1
+    ;;
+stop)
+    : >"$S5_TEST_ROOT/stop-attempted"
+    if [ "$S5_LOCK_HELD" = 1 ] && [ "$(cat "$S5_LOCK_OWNER")" = "$S5_LOCK_TOKEN" ]; then
+        : >"$S5_TEST_ROOT/stop-under-lock"
+    fi
+    case "$S5T_CLEANUP_FAULT" in
+    stop-failure|start-failure) exit 1 ;;
+    stopped) rm -f "$S5_TEST_ROOT/svc_active" ;;
+    esac
+    ;;
+is-active|status)
+    if [ "$S5T_CLEANUP_FAULT" = start-failure ] ||
+        { [ "$S5T_CLEANUP_FAULT" = unknown ] && [ -f "$S5_TEST_ROOT/stop-attempted" ]; }; then
+        exit 4
+    fi
+    [ -f "$S5_TEST_ROOT/svc_active" ] && exit 0
+    exit 3
+    ;;
+esac
+exit 0
+MANAGER
+    t_stub rc-service <<'RCSERVICE'
+#!/bin/sh
+exec "$S5_TEST_ROOT/bin/systemctl" "$2"
+RCSERVICE
+    t_stub rc-update <<'RCUPDATE'
+#!/bin/sh
+exec "$S5_TEST_ROOT/bin/systemctl" "$1"
+RCUPDATE
+    S5_WORKDIR=$S5_TEST_ROOT/download
+    mkdir -p "$S5_WORKDIR"
+    S5_VERIFY_TEMP=$S5_TEST_ROOT/verify-temp
+    printf '%s\n' "$S5_PASSWORD" >"$S5_VERIFY_TEMP"
+    chmod 0600 "$S5_VERIFY_TEMP"
+    s5_cmd_install
+    _scrstatus=$?
+    printf '%s\n' "$S5_SERVICE_STARTED" >"$S5_TEST_ROOT/service-owned"
+    return "$_scrstatus"
+}
+
+test_cleanup_stop_failure() {
+    for _csbackend in systemd openrc; do
+        for _csfault in stop-failure active unknown start-failure stopped; do
+            for _cslang in en zh; do
+                t_xray_fixture 23456
+                S5_INIT=$_csbackend
+                if [ "$S5_INIT" = openrc ]; then S5_OS_FAMILY=alpine; fi
+                S5_LANG=$_cslang
+                s5_select_service_artifact
+                t_run s5t_cleanup_run "$_csfault"
+                _cscase="$_csbackend/$_csfault/$_cslang"
+                assert_ne "$_cscase remains an installation failure" 0 "$T_STATUS"
+                if [ "$_csfault" != start-failure ]; then
+                    assert_file_exists "$_cscase failed verification after starting" "$S5_TEST_ROOT/verification-failed"
+                fi
+                assert_file_exists "$_cscase attempts native stop" "$S5_TEST_ROOT/stop-attempted"
+                assert_file_exists "$_cscase stops under its owned lock" "$S5_TEST_ROOT/stop-under-lock"
+                if [ "$_csfault" = stopped ]; then
+                    assert_file_absent "$_cscase proves the service stopped" "$S5_TEST_ROOT/svc_active"
+                    assert_eq "$_cscase clears service ownership" 0 "$(cat "$S5_TEST_ROOT/service-owned")"
+                    for _cspath in "$S5_CFG" "$S5_BIN" "$S5_SERVICE_ARTIFACT" "$S5_TEST_ROOT/user-exists" "$S5_TEST_ROOT/group-exists"; do
+                        assert_file_absent "$_cscase removes the stopped installation" "$_cspath"
+                    done
+                    if [ "$S5_INIT" = openrc ]; then
+                        assert_file_absent "$_cscase removes its stopped supervisor pid" "$S5_PIDFILE"
+                        assert_file_absent "$_cscase removes its stopped child pid" "$S5_OPENRC_OPTION_DIR/child_pid"
+                    fi
+                else
+                    assert_file_exists "$_cscase still has a live service" "$S5_TEST_ROOT/svc_active"
+                    assert_eq "$_cscase retains service ownership" 1 "$(cat "$S5_TEST_ROOT/service-owned")"
+                    for _cspath in "$S5_CFG" "$S5_BIN" "$S5_SERVICE_ARTIFACT" "$S5_TEST_ROOT/user-exists" "$S5_TEST_ROOT/group-exists"; do
+                        assert_file_exists "$_cscase retains live resources" "$_cspath"
+                    done
+                    assert_mode "$_cscase keeps the retained config private" 640 "$S5_CFG"
+                    if [ "$S5_INIT" = openrc ]; then
+                        assert_eq "$_cscase preserves supervisor tracking" 100 "$(cat "$S5_PIDFILE" 2>/dev/null)"
+                        assert_eq "$_cscase preserves child tracking" 101 "$(cat "$S5_OPENRC_OPTION_DIR/child_pid" 2>/dev/null)"
+                    fi
+                    case "$_cslang" in
+                    en) _csdiagnosis='installation files and account were retained' ;;
+                    zh) _csdiagnosis='已保留安装文件和账户' ;;
+                    esac
+                    assert_contains "$_cscase explains retained resources" "$_csdiagnosis" "$T_OUT"
+                    assert_not_contains "$_cscase does not disable the live service" 'disable' "$(cat "$S5_TEST_ROOT/manager-calls")"
+                    assert_not_contains "$_cscase does not remove OpenRC boot registration" 'del' "$(cat "$S5_TEST_ROOT/manager-calls")"
+                fi
+                assert_file_absent "$_cscase releases its lock" "$S5_LOCKDIR"
+                assert_file_absent "$_cscase removes the verification secret" "$S5_TEST_ROOT/verify-temp"
+                assert_file_absent "$_cscase removes download scratch" "$S5_TEST_ROOT/download"
+                assert_not_contains "$_cscase does not expose the password" "$S5_PASSWORD" "$T_OUT"
+            done
+        done
+    done
+}
+
+SCENARIOS='cleanup_stop_failure account_creation_failure account_lifecycle install config_corrupt binary_corrupt unit_corrupt account_corrupt cleanup_temps openrc_runtime locks download_cleanup download_remove_failure download_remove_zh download_release_failure download_candidate_failure download_candidate_remove_failure download_signal'
 if [ "$#" -eq 0 ]; then
     # Expand the fixed scenario words into the default argument list.
     # shellcheck disable=SC2086

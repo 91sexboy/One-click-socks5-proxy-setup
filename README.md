@@ -125,6 +125,29 @@ S5_SERVER_IPV4=203.0.113.10 sh socks5.sh show
 
 Replace the example address with your own. This changes **only the displayed links**, not the listen address or firewall. An invalid override falls back to automatic lookup. Detecting a public address does not prove that the port is reachable from the Internet.
 
+## Measured memory
+
+Historical evidence: Xray `v26.3.27`, Ubuntu 24.04, kernel `6.17.0-1022-azure`, and the installer's default authenticated TCP-only `mixed` configuration at [commit `9271644`](https://github.com/91sexboy/One-click-socks5-proxy-setup/commit/9271644340d2332725d0c83e818711481486668f). [CI run `34800667931`](https://github.com/91sexboy/One-click-socks5-proxy-setup/actions/runs/34800667931) produced the [amd64 measurements](https://github.com/91sexboy/One-click-socks5-proxy-setup/actions/runs/34800667931/job/103842545297) and [arm64 measurements](https://github.com/91sexboy/One-click-socks5-proxy-setup/actions/runs/34800667931/job/103842545245).
+
+These are **instantaneous RSS snapshots** after establishing authenticated tunnels to a local test target; 0 means idle. The phase cgroup peak covers reset-to-sample, including connection establishment. This is **not a 60-second load test**: 60 seconds is the connection holder's timeout, not a measurement window.
+
+| Architecture | Held connections | RSS (KiB) | Phase cgroup peak (bytes) |
+| --- | ---: | ---: | ---: |
+| amd64 | 0 | 35896 | 11710464 |
+| amd64 | 1 | 35912 | 11972608 |
+| amd64 | 32 | 36424 | 13283328 |
+| amd64 | 128 | 40876 | 19304448 |
+| arm64 | 0 | 29460 | 6348800 |
+| arm64 | 1 | 29520 | 6348800 |
+| arm64 | 32 | 30928 | 8183808 |
+| arm64 | 128 | 35324 | 14200832 |
+
+The sampler starts **after installation**; these are **not isolated startup RSS peaks**. `xray_startup_usec=0` in these logs is a systemd state-transition timestamp delta, not zero startup time or listener-readiness time. The later systemd `MemoryPeak` is a lifetime cgroup peak, not an isolated startup measurement. RSS and cgroup accounting differ: shared/file-backed pages can make cgroup usage smaller than RSS; do not add the two metrics. The target and load driver stay **outside the Xray cgroup**. Both jobs recorded zero service restarts and zero cgroup OOM events during this measurement.
+
+A separate experiment in the same jobs compares three pairs of the default profile and a 4-KiB buffer candidate: each trial has a five-second warmup, then 30-second stage windows sampled at one-second intervals, including 32-connection duplex and slow-reader workloads. Those windows do **not** describe the snapshots above. Artifacts `memory-comparison-amd64` and `memory-comparison-arm64` retain the detailed results for **14 days**; links may stop serving artifacts after expiry. The candidate was ineligible on both architectures (`no-demonstrated-benefit` on amd64; `regression` on arm64). Successful CI does not mean the candidate qualified for production; the default configuration remains unchanged.
+
+These observations are **not a minimum-memory guarantee** for a whole server or other workloads. No hard `MemoryMax` or universal 128/256-MiB deployment budget is inferred from them; allow for the OS, other services, traffic patterns, and unmeasured startup peaks.
+
 ## Troubleshooting
 
 | Symptom | What to check |

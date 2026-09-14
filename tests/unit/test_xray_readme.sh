@@ -40,6 +40,108 @@ for _doc in README.md README.zh-CN.md; do
         "($_docrepo/releases/tag/xray-v26.3.27)" "$_doctext"
 done
 
+t_run python3 -O - "$ROOT" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+REPO = 'https://github.com/91sexboy/One-click-socks5-proxy-setup'
+COMMIT = '9271644340d2332725d0c83e818711481486668f'
+RUN = '34800667931'
+ROWS = [
+    ('amd64', '0', '35896', '11710464'),
+    ('amd64', '1', '35912', '11972608'),
+    ('amd64', '32', '36424', '13283328'),
+    ('amd64', '128', '40876', '19304448'),
+    ('arm64', '0', '29460', '6348800'),
+    ('arm64', '1', '29520', '6348800'),
+    ('arm64', '32', '30928', '8183808'),
+    ('arm64', '128', '35324', '14200832'),
+]
+DOCS = {
+    'README.md': ('Measured memory', 'Phase cgroup peak (bytes)', (
+        'instantaneous RSS snapshots', 'not a 60-second load test',
+        'not isolated startup RSS peaks', 'outside the Xray cgroup',
+        'not a minimum-memory guarantee', '14 days',
+    )),
+    'README.zh-CN.md': ('内存实测', '阶段 cgroup 峰值 (bytes)', (
+        '瞬时 RSS 快照', '不是持续 60 秒的负载测试',
+        '不是独立启动 RSS 峰值', '位于 Xray cgroup 之外',
+        '不是最低内存保证', '14 天',
+    )),
+}
+
+
+def require(condition, message):
+    if not condition:
+        raise ValueError(message)
+
+
+def check(texts):
+    for name, (heading, peak_header, caveats) in DOCS.items():
+        sections = re.findall(r'^## ' + re.escape(heading) + r'\n(.*?)(?=^## |\Z)',
+                              texts[name], re.MULTILINE | re.DOTALL)
+        require(len(sections) == 1, f'{name}: evidence section')
+        section = sections[0]
+        tables = []
+        for block in re.findall(r'(?:^\|[^\n]*\n)+', section, re.MULTILINE):
+            cells = [tuple(cell.strip() for cell in line.strip('|').split('|'))
+                     for line in block.splitlines()]
+            tables.append(cells)
+        require(len(tables) == 1, f'{name}: evidence table')
+        table = tables[0]
+        require(len(table[0]) == 4 and table[0][2:] == ('RSS (KiB)', peak_header),
+                f'{name}: evidence units')
+        require(sorted(table[2:]) == sorted(ROWS), f'{name}: historical measurements')
+        for path in (f'/commit/{COMMIT}', f'/actions/runs/{RUN}',
+                     f'/actions/runs/{RUN}/job/103842545297',
+                     f'/actions/runs/{RUN}/job/103842545245'):
+            require(f']({REPO}{path})' in section, f'{name}: evidence provenance')
+        for claim in ('v26.3.27', 'Ubuntu 24.04', 'memory-comparison-amd64',
+                      'memory-comparison-arm64', *caveats):
+            require(claim in section, f'{name}: measurement context')
+
+
+texts = {name: (Path(sys.argv[1]) / name).read_text() for name in DOCS}
+check(texts)
+mutations = 0
+for name, (heading, peak_header, caveats) in DOCS.items():
+    row = '| amd64 | 0 | 35896 | 11710464 |'
+    changes = [
+        (f'## {heading}', f'### {heading}', 'evidence section'),
+        (row + '\n', '', 'historical measurements'),
+        (row, row + '\n' + row, 'historical measurements'),
+        ('35896', '35897', 'historical measurements'),
+        ('RSS (KiB)', 'RSS (MiB)', 'evidence units'),
+        (peak_header, peak_header.replace('bytes', 'KiB'), 'evidence units'),
+        (COMMIT, '0' * 40, 'evidence provenance'),
+        (RUN, '34800667930', 'evidence provenance'),
+        ('103842545297', '103842545296', 'evidence provenance'),
+        ('103842545245', '103842545244', 'evidence provenance'),
+    ] + [(claim, '', 'measurement context') for claim in caveats]
+    for old, new, reason in changes:
+        require(old in texts[name], f'mutation target missing: {old}')
+        changed = dict(texts)
+        changed[name] = texts[name].replace(old, new)
+        try:
+            check(changed)
+        except ValueError as error:
+            require(str(error) == f'{name}: {reason}', f'wrong rejection: {error}')
+        else:
+            raise ValueError(f'mutation accepted: {name}: {old}')
+        mutations += 1
+changed = {name: text.replace('35896', '35897') for name, text in texts.items()}
+try:
+    check(changed)
+except ValueError as error:
+    require(str(error) == 'README.md: historical measurements', f'wrong rejection: {error}')
+else:
+    raise ValueError('identical corruption in both translations was accepted')
+print(f'memory evidence: two translations, eight rows, {mutations + 1} rejected mutations')
+PY
+assert_eq "historical memory evidence and its rejection controls agree" 0 "$T_STATUS"
+if [ "$T_STATUS" -ne 0 ]; then printf '%s\n' "$T_OUT" >&2; fi
+
 t_run python3 "$ROOT/tests/lib/doc_links.py" "$ROOT"
 assert_eq "all public README and ADR local links resolve" 0 "$T_STATUS"
 if [ "$T_STATUS" -ne 0 ]; then printf '%s\n' "$T_OUT" >&2; fi

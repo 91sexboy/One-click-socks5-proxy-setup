@@ -170,6 +170,7 @@ s5_msg() {
     install.cancelled) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '操作已取消。' ;; en) printf 'operation cancelled.' ;; esac ;;
     asset.download) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '正在下载并校验 Xray 资产：%s。' "$1" ;; en) printf 'downloading and verifying Xray asset: %s.' "$1" ;; esac ;;
     asset.invalid) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf 'Xray 资产校验失败：%s。' "$1" ;; en) printf 'Xray asset verification failed: %s.' "$1" ;; esac ;;
+    cleanup.service) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '无法确认 Xray 服务已停止；已保留安装文件和账户。' ;; en) printf 'could not verify that the Xray service stopped; installation files and account were retained.' ;; esac ;;
     cleanup.download) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法删除下载临时目录：%s。' "$1" ;; en) printf 'could not remove temporary download directory: %s.' "$1" ;; esac ;;
     config.invalid) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf 'Xray 配置测试失败；旧配置未改变。' ;; en) printf 'Xray configuration test failed; the old configuration was unchanged.' ;; esac ;;
     transaction.pending) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '存在待处理的恢复目录，拒绝覆盖：%s。' "$1" ;; en) printf 'pending recovery directory must be resolved before updating: %s.' "$1" ;; esac ;;
@@ -1651,17 +1652,21 @@ s5_cleanup() {
     [ "$S5_IN_CLEANUP" = 1 ] && return 0
     S5_IN_CLEANUP=1
     trap '' HUP INT TERM
-    if [ "$S5_INSTALL_COMPLETE" != 1 ]; then
+    _sclstatus=0
+    if [ "$S5_INSTALL_COMPLETE" != 1 ] && [ "$S5_SERVICE_STARTED" = 1 ]; then
+        if ! s5_svc stop || ! s5_wait_stopped; then
+            s5_msg_err cleanup.service
+            _sclstatus=1
+        fi
+    fi
+    if [ "$S5_INSTALL_COMPLETE" != 1 ] && [ "$_sclstatus" -eq 0 ]; then
         # Whether this run owns the service's runtime files has to be decided
         # before S5_SERVICE_STARTED is cleared just below.
         _sclruntime=0
         if [ "$S5_SERVICE_STARTED" = 1 ] || [ "$S5_CREATED_UNIT" = 1 ]; then
             _sclruntime=1
         fi
-        if [ "$S5_SERVICE_STARTED" = 1 ]; then
-            s5_svc stop || true
-            S5_SERVICE_STARTED=0
-        fi
+        S5_SERVICE_STARTED=0
         if [ "$S5_UNIT_ENABLED" = 1 ]; then
             s5_svc disable || true
             s5_svc reload || true
@@ -1709,7 +1714,7 @@ s5_cleanup() {
         s5_lock_release || true
     fi
     S5_IN_CLEANUP=0
-    return 0
+    return "$_sclstatus"
 }
 
 s5_on_signal() {
@@ -1936,8 +1941,9 @@ s5_install_new() {
     s5_svc reload || return 1
     s5_svc enable || return 1
     S5_UNIT_ENABLED=1
-    s5_svc start || { s5_msg_err service.start; return 1; }
+    # A failed start or a signal can still leave a managed process running.
     S5_SERVICE_STARTED=1
+    s5_svc start || { s5_msg_err service.start; return 1; }
     s5_service_state; _sina=$?
     case "$_sina" in 0) ;; 1) s5_msg_err service.start; return 1 ;; *) s5_msg_err service.inactive; return 1 ;; esac
     s5_wait_listening "$S5_PORT"

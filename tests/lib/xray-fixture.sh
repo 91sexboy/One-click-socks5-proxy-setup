@@ -108,7 +108,7 @@ SYSTEMCTL
 #!/bin/sh
 case "$2" in
 stop) rm -f "$S5_TEST_ROOT/svc_active" ;;
-status) test -f "$S5_TEST_ROOT/svc_active"; exit $? ;;
+status) if [ -f "$S5_TEST_ROOT/svc_active" ]; then exit 0; else exit 3; fi ;;
 esac
 exit 0
 RCSERVICE
