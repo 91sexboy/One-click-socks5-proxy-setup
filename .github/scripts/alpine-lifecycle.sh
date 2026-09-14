@@ -46,13 +46,14 @@ crash_recovered() {
   new_pid=$(cat /run/openrc/options/xray-socks5/child_pid 2>/dev/null || printf 0)
   test "$new_pid" != "$crash_pid" && test "$new_pid" -gt 0
 }
-lifecycle_wait_until 60 1 crash_recovered
+# The assertions below remain authoritative after the final sleep.
+lifecycle_wait_until 60 1 crash_recovered || true
 test "$new_pid" != "$crash_pid"
 test "$new_pid" -gt 0
 listener_recovered() {
   ss -H -ltnp 2>/dev/null | grep -q "pid=$new_pid,"
 }
-lifecycle_wait_until 60 1 listener_recovered
+lifecycle_wait_until 60 1 listener_recovered || true
 ss -H -ltnp | grep -q "pid=$new_pid,"
 cp /etc/xray-socks5/config.json "$work/good.json"
 printf "{broken\n" >/etc/xray-socks5/config.json
@@ -60,7 +61,7 @@ rc-service xray-socks5 restart || true
 service_stopped() {
   if rc-service xray-socks5 status >/dev/null 2>&1; then return 1; fi
 }
-lifecycle_wait_until 30 1 service_stopped
+lifecycle_wait_until 30 1 service_stopped || true
 if rc-service xray-socks5 status >/dev/null 2>&1; then
   printf "a broken config left the service running\n" >&2
   exit 1
@@ -127,7 +128,7 @@ sh .github/scripts/add-test-target-addresses.sh
 python3 tests/protocol/duplex_target.py --host 0.0.0.0 --host6 :: \
   --ready-file "$work/target.port" \
   --count-file "$work/count" --report-file "$work/report" >"$work/target.log" 2>&1 &
-lifecycle_wait_until 50 0.2 test -s "$work/target.port"
+lifecycle_wait_until 50 0.2 test -s "$work/target.port" || true
 test -s "$work/target.port"
 PASSFILE="$work/pass.update" PORT=23456 TARGET_PORT="$(cat "$work/target.port")" \
   REPORT="$work/report" OUT="$work/probe" \

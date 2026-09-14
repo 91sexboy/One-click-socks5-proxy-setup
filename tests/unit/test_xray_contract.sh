@@ -291,6 +291,18 @@ for _init_case in systemd:debian-12 openrc:alpine-3.20; do
         assert_ne "$_init_mode refuses an unbooted $_init_backend" 0 "$T_STATUS"
         assert_contains "unbooted $_init_backend is diagnosed before installation" 'no supported service manager was found' "$T_OUT"
     done
+    rm -f "$S5_TEST_ROOT/init-download" "$S5_TEST_ROOT/init-account" "$S5_TEST_ROOT/init-unit"
+    T_OUT=$( (
+        s5_download_engine() { : >"$S5_TEST_ROOT/init-download"; return 1; }
+        s5_account_create() { : >"$S5_TEST_ROOT/init-account"; return 1; }
+        s5_write_unit() { : >"$S5_TEST_ROOT/init-unit"; return 1; }
+        s5_cmd_install
+    ) 2>&1) && T_STATUS=0 || T_STATUS=$?
+    assert_ne "install command refuses unbooted $_init_backend" 0 "$T_STATUS"
+    assert_contains "install command reports the init refusal" 'no supported service manager was found' "$T_OUT"
+    assert_file_absent "unbooted $_init_backend never reaches download" "$S5_TEST_ROOT/init-download"
+    assert_file_absent "unbooted $_init_backend never creates an account" "$S5_TEST_ROOT/init-account"
+    assert_file_absent "unbooted $_init_backend never writes a service artifact" "$S5_TEST_ROOT/init-unit"
     for _init_mode in status restart uninstall; do
         t_run s5_precheck "$_init_mode"
         assert_eq "$_init_mode remains available without $_init_backend startup marker" 0 "$T_STATUS"

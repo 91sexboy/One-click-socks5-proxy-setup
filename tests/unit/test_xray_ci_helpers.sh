@@ -45,6 +45,43 @@ assert_eq "waiting is bounded to the given attempts" 3 "$wait_calls"
 assert_eq "an exhausted wait preserves the original full sleep budget" 3 "$(wc -l <"$S5_TEST_ROOT/sleeps" | tr -d '[:space:]')"
 unset -f sleep
 
+t_run python3 - "$S5_REPO_ROOT" <<'PY'
+import os
+from pathlib import Path
+import shlex
+import subprocess
+import sys
+import tempfile
+
+root = Path(sys.argv[1])
+for backend in ('systemd', 'alpine'):
+    lines = (root / '.github/scripts' / (backend + '-lifecycle.sh')).read_text().splitlines()
+    waits = [index for index, line in enumerate(lines) if line.startswith('lifecycle_wait_until 50 ')]
+    if len(waits) != 1:
+        raise AssertionError('expected one target readiness wait')
+    index = waits[0]
+    for ready in ('yes', 'no'):
+        with tempfile.TemporaryDirectory(prefix='s5-last-wait-') as work:
+            script = '''set -eu
+work=$1
+. "$2"
+ready=$3
+calls=0
+sleep() {
+    calls=$((calls + 1))
+    if [ "$calls" = 50 ] && [ "$ready" = yes ]; then printf '23456\\n' >"$work/target.port"; fi
+}
+''' + '\n'.join(lines[index:index + 2]) + '\n'
+            result = subprocess.run(shlex.split(os.environ.get('S5_TEST_SHELL', 'sh')) +
+                                    ['-c', script, 'wait-test', work,
+                                     str(root / '.github/scripts/lifecycle-common.sh'), ready],
+                                    capture_output=True, text=True, timeout=10)
+            if (result.returncode == 0) != (ready == 'yes'):
+                raise AssertionError(backend + ': final-sleep readiness was not independently checked')
+PY
+assert_eq "gate final assertions observe readiness arriving during the final sleep" 0 "$T_STATUS"
+if [ "$T_STATUS" -ne 0 ]; then printf '%s\n' "$T_OUT" >&2; fi
+
 mkdir -p "$S5_TEST_ROOT/bin"
 cat >"$S5_TEST_ROOT/bin/sudo" <<'SUDO'
 #!/bin/sh

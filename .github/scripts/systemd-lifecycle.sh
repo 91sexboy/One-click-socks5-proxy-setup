@@ -67,7 +67,8 @@ crash_recovered() {
   new_pid=$(systemctl show xray-socks5.service -p MainPID --value)
   test "$new_pid" != "$crash_pid" && test "$new_pid" -gt 0
 }
-lifecycle_wait_until 60 1 crash_recovered
+# The assertions below also observe changes during the final sleep.
+lifecycle_wait_until 60 1 crash_recovered || true
 sudo systemctl is-active --quiet xray-socks5.service
 test "$(systemctl show xray-socks5.service -p MainPID --value)" != "$crash_pid"
 test "$(systemctl show xray-socks5.service -p NRestarts --value)" -gt "$restarts_before"
@@ -82,7 +83,7 @@ sudo systemctl restart xray-socks5.service || true
 service_stopped() {
   if sudo systemctl is-active --quiet xray-socks5.service; then return 1; fi
 }
-lifecycle_wait_until 30 1 service_stopped
+lifecycle_wait_until 30 1 service_stopped || true
 # set -e does not apply to a command a ! inverts, so `! systemctl is-active` did
 # not fail the gate when the broken config left the service running: the check
 # below was dead, and SPEC 5's guarantee was unproven on this backend.
@@ -100,7 +101,7 @@ sudo systemctl restart xray-socks5.service
 sudo systemctl is-active --quiet xray-socks5.service
 python3 tests/protocol/duplex_target.py --host 0.0.0.0 --host6 :: --ready-file "$work/target.port" --count-file "$work/count" --report-file "$work/report" >"$work/target.log" 2>&1 &
 target_pid=$!
-lifecycle_wait_until 50 0.1 test -s "$work/target.port"
+lifecycle_wait_until 50 0.1 test -s "$work/target.port" || true
 target_port=$(cat "$work/target.port")
 PASSFILE="$work/pass" PORT=23456 TARGET_PORT="$target_port" \
   REPORT="$work/report" OUT="$work/probe" \
