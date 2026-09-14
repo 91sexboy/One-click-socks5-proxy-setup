@@ -26,7 +26,6 @@ S5_ARCHNAME=''
 S5_OS_ID=''
 S5_OS_VERSION_ID=''
 S5_OS_FAMILY=''
-S5_PKGMGR=''
 S5_INIT=''
 S5_WORKDIR=''
 S5_LOCK_HELD=0
@@ -128,12 +127,11 @@ s5_redact() {
     fi
     { printf '%s\n' "$S5_SECRET"; printf '%s\n' "$1"; } | awk '
         NR == 1 { s=$0; n=length(s); next }
-        { line=$0; out=""; while (n > 0) { i=index(line,s); if (i == 0) break; out=out substr(line,1,i-1) "***REDACTED***"; line=substr(line,i+n) } printf "%s%s\n", out, line }
+        { line=$0; out=""; while (n > 0) { i=index(line,s); if (i == 0) break; out=out substr(line,1,i-1) "<REDACTED>"; line=substr(line,i+n) } printf "%s%s\n", out, line }
     '
 }
 
 s5_say() { printf '%s\n' "$1"; }
-s5_log() { printf '[*] %s\n' "$(s5_redact "$1")"; }
 s5_warn() { printf '[!] %s\n' "$(s5_redact "$1")" >&2; }
 s5_err() { printf '[x] %s\n' "$(s5_redact "$1")" >&2; }
 
@@ -192,6 +190,9 @@ s5_msg() {
     lock.busy) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '另一个管理操作正在运行。' ;; en) printf 'another management operation is already running.' ;; esac ;;
     state.missing) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '没有已安装的 %s。' "$1" ;; en) printf 'no %s installation was found.' "$1" ;; esac ;;
     state.invalid) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf 'state 文件无效：%s。拒绝删除或覆盖资源。' "$1" ;; en) printf 'invalid state file: %s. Refusing to delete or overwrite resources.' "$1" ;; esac ;;
+    status.state.running) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '运行中' ;; en) printf 'running' ;; esac ;;
+    status.state.stopped) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '已停止' ;; en) printf 'stopped' ;; esac ;;
+    status.state.unverified) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '未验证' ;; en) printf 'unverified' ;; esac ;;
     status.heading) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf 'Xray mixed 代理状态：' ;; en) printf 'Xray mixed proxy status:' ;; esac ;;
     status.line) [ "$#" -eq 3 ] || return 1; case "$S5_LANG" in zh) printf '服务：%s；端口：%s；账户：%s；协议：mixed（SOCKS5 + HTTP）；认证：password；UDP：关闭' "$1" "$2" "$3" ;; en) printf 'service: %s; port: %s; username: %s; protocol: mixed (SOCKS5 + HTTP); auth: password; UDP: disabled' "$1" "$2" "$3" ;; esac ;;
     status.version) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf 'Xray 版本：%s' "$1" ;; en) printf 'Xray version: %s' "$1" ;; esac ;;
@@ -207,6 +208,21 @@ s5_msg() {
     install.confirm) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '确认安装 Xray mixed 代理？[Y/n] ' ;; en) printf 'Install the Xray mixed proxy? [Y/n] ' ;; esac ;;
     update.confirm) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '更新现有 Xray 配置？[y/N] ' ;; en) printf 'Update the existing Xray configuration? [y/N] ' ;; esac ;;
     usage) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '用法：sh socks5.sh [install|status|show|restart|uninstall|language|help]' ;; en) printf 'Usage: sh socks5.sh [install|status|show|restart|uninstall|language|help]' ;; esac ;;
+    account.remove.identity) [ "$#" -eq 2 ] || return 1; case "$S5_LANG" in zh) printf '账户身份不匹配：记录值为 %s/%s。' "$1" "$2" ;; en) printf 'account identity mismatch: recorded %s/%s' "$1" "$2" ;; esac ;;
+    account.remove.user) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法删除服务账户：%s。' "$1" ;; en) printf 'could not remove service account: %s' "$1" ;; esac ;;
+    account.remove.user.exists) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '删除后服务账户仍然存在：%s。' "$1" ;; en) printf 'service account still exists after removal: %s' "$1" ;; esac ;;
+    account.remove.user.verify) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法验证服务账户已删除：%s。' "$1" ;; en) printf 'could not verify service account removal: %s' "$1" ;; esac ;;
+    account.remove.group) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法删除服务组：%s。' "$1" ;; en) printf 'could not remove service group: %s' "$1" ;; esac ;;
+    account.remove.group.before) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '删除前无法验证服务组：%s。' "$1" ;; en) printf 'could not verify service group before removal: %s' "$1" ;; esac ;;
+    account.remove.group.exists) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '删除后服务组仍然存在：%s。' "$1" ;; en) printf 'service group still exists after removal: %s' "$1" ;; esac ;;
+    account.remove.group.verify) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法验证服务组已删除：%s。' "$1" ;; en) printf 'could not verify service group removal: %s' "$1" ;; esac ;;
+    uninstall.symlink) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '卸载时拒绝符号链接：%s。' "$1" ;; en) printf 'refusing symlink during uninstall: %s' "$1" ;; esac ;;
+    uninstall.file) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法删除自有文件：%s。' "$1" ;; en) printf 'could not remove owned file: %s' "$1" ;; esac ;;
+    uninstall.notdir) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '自有路径不是目录：%s。' "$1" ;; en) printf 'owned path is not a directory: %s' "$1" ;; esac ;;
+    uninstall.nonempty) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '拒绝删除非空自有目录：%s。' "$1" ;; en) printf 'refusing non-empty owned directory: %s' "$1" ;; esac ;;
+    uninstall.directory) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法删除自有目录：%s。' "$1" ;; en) printf 'could not remove owned directory: %s' "$1" ;; esac ;;
+    detect.unzip) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '缺少必要命令：支持 -Z 的 unzip（Info-ZIP）。' ;; en) printf 'required command(s) are missing: unzip with -Z (Info-ZIP).' ;; esac ;;
+    usage.unknown) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '未知命令：%s。' "$1" ;; en) printf 'unknown command: %s.' "$1" ;; esac ;;
     extra) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '命令不接受额外参数：%s。' "$1" ;; en) printf 'the command does not accept extra arguments: %s.' "$1" ;; esac ;;
     *) return 1 ;;
     esac
@@ -360,27 +376,22 @@ s5_detect_platform() {
         *) return 1 ;;
         esac
         S5_OS_FAMILY=debian
-        S5_PKGMGR=apt
         S5_INIT=systemd
         ;;
     debian)
         s5_ver_ge "$S5_OS_VERSION_ID" 12 || return 1
         S5_OS_FAMILY=debian
-        S5_PKGMGR=apt
         S5_INIT=systemd
         ;;
     alpine)
         s5_ver_ge "$S5_OS_VERSION_ID" 3.20 || return 1
         S5_OS_FAMILY=alpine
-        S5_PKGMGR=apk
         S5_INIT=openrc
         ;;
     centos)
         s5_ver_ge "$S5_OS_VERSION_ID" 9 || return 1
         S5_OS_FAMILY=el
-        S5_PKGMGR=dnf
         S5_INIT=systemd
-        export S5_PKGMGR
         ;;
     *) return 1 ;;
     esac
@@ -411,6 +422,7 @@ s5_ipv4_is_canonical() {
     _ivoldifs=$IFS
     IFS=.
     set -f
+    # Split the canonical address at dots with pathname expansion disabled.
     # shellcheck disable=SC2086
     set -- $1
     set +f
@@ -1007,7 +1019,7 @@ s5_account_identity() {
 s5_account_remove() {
     if [ -n "$S5_ACCOUNT_UID" ] && [ -n "$S5_ACCOUNT_GID" ]; then
         s5_account_identity || {
-            s5_warn "account identity mismatch: recorded $S5_ACCOUNT_UID/$S5_ACCOUNT_GID"
+            s5_msg_warn account.remove.identity "$S5_ACCOUNT_UID" "$S5_ACCOUNT_GID"
             s5_msg_err account.identity
             return 1
         }
@@ -1016,22 +1028,22 @@ s5_account_remove() {
         return 1
     fi
     if [ "$S5_CREATED_USER" = 1 ] || [ -n "$S5_ACCOUNT_UID" ]; then
-    if [ "$S5_OS_FAMILY" = alpine ]; then
-        deluser "$S5_SERVICE_USER" >/dev/null 2>&1 || {
-            s5_warn "could not remove service account: $S5_SERVICE_USER"
-            return 1
-        }
-    else
-        if ! userdel "$S5_SERVICE_USER" >/dev/null 2>&1; then
-            s5_warn "could not remove service account: $S5_SERVICE_USER"
-            return 1
+        if [ "$S5_OS_FAMILY" = alpine ]; then
+            deluser "$S5_SERVICE_USER" >/dev/null 2>&1 || {
+                s5_msg_warn account.remove.user "$S5_SERVICE_USER"
+                return 1
+            }
+        else
+            if ! userdel "$S5_SERVICE_USER" >/dev/null 2>&1; then
+                s5_msg_warn account.remove.user "$S5_SERVICE_USER"
+                return 1
+            fi
         fi
-    fi
-    s5_getent_state passwd "$S5_SERVICE_USER"
+        s5_getent_state passwd "$S5_SERVICE_USER"
         case $? in
         1) ;;
-        0) s5_warn "service account still exists after removal: $S5_SERVICE_USER"; return 1 ;;
-        *) s5_warn "could not verify service account removal: $S5_SERVICE_USER"; return 1 ;;
+        0) s5_msg_warn account.remove.user.exists "$S5_SERVICE_USER"; return 1 ;;
+        *) s5_msg_warn account.remove.user.verify "$S5_SERVICE_USER"; return 1 ;;
         esac
     fi
     if [ "$S5_CREATED_GROUP" = 1 ] || [ -n "$S5_ACCOUNT_GID" ]; then
@@ -1041,18 +1053,18 @@ s5_account_remove() {
             if [ "$S5_OS_FAMILY" = alpine ]; then
                 delgroup "$S5_SERVICE_GROUP" >/dev/null 2>&1 || return 1
             elif ! groupdel "$S5_SERVICE_GROUP" >/dev/null 2>&1; then
-                s5_warn "could not remove service group: $S5_SERVICE_GROUP"
+                s5_msg_warn account.remove.group "$S5_SERVICE_GROUP"
                 return 1
             fi
             ;;
         1) ;;
-        *) s5_warn "could not verify service group before removal: $S5_SERVICE_GROUP"; return 1 ;;
+        *) s5_msg_warn account.remove.group.before "$S5_SERVICE_GROUP"; return 1 ;;
         esac
         s5_getent_state group "$S5_SERVICE_GROUP"
         case $? in
         1) ;;
-        0) s5_warn "service group still exists after removal: $S5_SERVICE_GROUP"; return 1 ;;
-        *) s5_warn "could not verify service group removal: $S5_SERVICE_GROUP"; return 1 ;;
+        0) s5_msg_warn account.remove.group.exists "$S5_SERVICE_GROUP"; return 1 ;;
+        *) s5_msg_warn account.remove.group.verify "$S5_SERVICE_GROUP"; return 1 ;;
         esac
     fi
     S5_CREATED_USER=0
@@ -1178,13 +1190,7 @@ s5_state_parse() {
     ' "$S5_STATE" 2>/dev/null
 }
 
-s5_state_schema_valid() {
-    s5_state_parse >/dev/null
-}
-
 s5_state_write() {
-    _sswtmp=$(mktemp "$S5_STATEDIR/.s5state.XXXXXX") || return 1
-    rm -f "$_sswtmp" || return 1
     s5_atomic_write "$S5_STATE" root:root 0600 <<STATE
 engine	xray
 release	$S5_XRAY_VERSION
@@ -1520,6 +1526,8 @@ s5_svc() {
         restart) rc-service "$S5_PROJECT" restart ;;
         enable) rc-update add "$S5_PROJECT" default >/dev/null 2>&1 ;;
         disable) rc-update del "$S5_PROJECT" default >/dev/null 2>&1 ;;
+        reload) return 0 ;;
+        *) return 1 ;;
         esac
     else
         case "$1" in
@@ -1528,6 +1536,8 @@ s5_svc() {
         restart) systemctl restart "$S5_PROJECT.service" >/dev/null 2>&1 ;;
         enable) systemctl enable "$S5_PROJECT.service" >/dev/null 2>&1 ;;
         disable) systemctl disable "$S5_PROJECT.service" >/dev/null 2>&1 ;;
+        reload) systemctl daemon-reload >/dev/null 2>&1 ;;
+        *) return 1 ;;
         esac
     fi
 }
@@ -1544,13 +1554,14 @@ s5_wait_stopped() {
 }
 
 s5_listener_state() {
+    _slsport=${1:-$S5_PORT}
     if [ "${S5_TEST_MODE:-0}" = 1 ]; then
         if [ -n "${S5_LISTENER_PROBE:-}" ]; then
-            "$S5_LISTENER_PROBE" "$S5_LISTEN" "$S5_PORT"
+            "$S5_LISTENER_PROBE" "$S5_LISTEN" "$_slsport"
             return $?
         fi
         if [ -n "${S5_PORT_PROBE:-}" ]; then
-            "$S5_PORT_PROBE" "$S5_PORT"
+            "$S5_PORT_PROBE" "$_slsport"
             case $? in 1) return 0 ;; 0) return 1 ;; *) return 2 ;; esac
         fi
     fi
@@ -1576,13 +1587,12 @@ s5_listener_state() {
         _slstate=$(printf '%s\n' "$_slrow" | awk '{print $1}')
         _sladdr=$(printf '%s\n' "$_slrow" | awk '{print $4}')
         case "$_sladdr" in
-        "$S5_LISTEN:$S5_PORT") ;;
-        "0.0.0.0:$S5_PORT")
+        "$S5_LISTEN:$_slsport") ;;
+        "0.0.0.0:$_slsport")
             [ "$S5_LISTEN" = 0.0.0.0 ] || continue
             ;;
-        "*:$S5_PORT")
+        "*:$_slsport")
             [ "$S5_LISTEN" = 0.0.0.0 ] || continue
-            [ "$_sladdr" = "*:$S5_PORT" ] || continue
             ;;
         *) continue ;;
         esac
@@ -1604,8 +1614,7 @@ s5_wait_listening() {
     _swlp=$1
     _swli=0
     while [ "$_swli" -lt 30 ]; do
-        S5_PORT=$_swlp
-        s5_listener_state
+        s5_listener_state "$_swlp"
         case $? in 0) return 0 ;; 1) ;; 2) [ "$S5_INIT" = openrc ] || return 2 ;; *) return 2 ;; esac
         _swli=$((_swli + 1))
         sleep 1
@@ -1667,9 +1676,7 @@ s5_cleanup() {
         fi
         if [ "$S5_UNIT_ENABLED" = 1 ]; then
             s5_svc disable || true
-            if [ "$S5_INIT" = systemd ]; then
-                systemctl daemon-reload >/dev/null 2>&1 || true
-            fi
+            s5_svc reload || true
             S5_UNIT_ENABLED=0
         fi
         if [ "$S5_CREATED_UNIT" = 1 ]; then rm -f "$S5_SERVICE_ARTIFACT" 2>/dev/null || true; fi
@@ -1816,6 +1823,14 @@ s5_precheck() {
         s5_msg_err detect.unsupported "$S5_OS_ID" "$S5_OS_VERSION_ID" "$S5_ARCHNAME"
         return 1
     }
+    case "$S5_INIT:$_spcmode" in
+    systemd:install | systemd:update)
+        [ -d "$S5_ROOTDIR/run/systemd/system" ] || { s5_msg_err detect.init; return 1; }
+        ;;
+    openrc:install | openrc:update)
+        [ -f "$S5_ROOTDIR/run/openrc/softlevel" ] || { s5_msg_err detect.init; return 1; }
+        ;;
+    esac
     s5_install_runtime_dependencies "$_spcmode" || return 1
     s5_require_commands awk sed grep tr tail head id getent mkdir rmdir rm mv cp cat printf stat sha256sum mktemp ln sleep wc chmod || return 1
     case "$S5_INIT:$_spcmode" in
@@ -1855,7 +1870,7 @@ s5_precheck() {
     case "$_spcmode" in
     install | update)
         s5_unzip_lists_members || {
-            s5_msg_err detect.commands 'unzip with -Z (Info-ZIP)'
+            s5_msg_err detect.unzip
             return 1
         }
         ;;
@@ -1931,12 +1946,8 @@ s5_install_new() {
     s5_write_unit || return 1
     S5_CREATED_UNIT=1
     S5_UNIT_SHA256=$(sha256sum "$S5_SERVICE_ARTIFACT" | awk '{print $1}')
-    if [ "$S5_INIT" = openrc ]; then
-        s5_svc enable || return 1
-    else
-        systemctl daemon-reload >/dev/null 2>&1 || return 1
-        s5_svc enable || return 1
-    fi
+    s5_svc reload || return 1
+    s5_svc enable || return 1
     S5_UNIT_ENABLED=1
     s5_svc start || { s5_msg_err service.start; return 1; }
     S5_SERVICE_STARTED=1
@@ -1982,7 +1993,6 @@ s5_report_state_load() {
 s5_install_update() {
     s5_state_load
     s5_report_state_load $? || return 1
-    s5_backend_supported || { s5_msg_err state.invalid "$S5_STATE"; return 1; }
     if [ -e "$S5_TXNDIR" ] || [ -L "$S5_TXNDIR" ]; then
         s5_msg_err transaction.pending "$S5_TXNDIR"
         return 1
@@ -1992,7 +2002,6 @@ s5_install_update() {
     s5_prompt_port || return 1
     s5_prompt_username || return 1
     s5_prompt_password || return 1
-    s5_asset_select || return 1
     mkdir -m 0700 "$S5_TXNDIR" || return 1
     S5_CREATED_TRANSACTION=1
     _sioldcfg=$S5_TXNDIR/old.config.json
@@ -2100,9 +2109,9 @@ s5_cmd_status() {
     s5_config_extract || { s5_fail_locked config.unreadable "$S5_CFG"; return 1; }
     s5_service_active
     _ssa=$?
-    case "$_ssa" in 0) _ssv=running ;; 1) _ssv=stopped ;; *) _ssv=unverified ;; esac
+    case "$_ssa" in 0) _ssv=status.state.running ;; 1) _ssv=status.state.stopped ;; *) _ssv=status.state.unverified ;; esac
     s5_msg_print status.heading
-    s5_msg_print status.line "$_ssv" "$S5_PORT" "$S5_USERNAME"
+    s5_msg_print status.line "$(s5_msg "$_ssv")" "$S5_PORT" "$S5_USERNAME"
     s5_msg_print status.version "$S5_XRAY_VERSION"
     s5_listener_state
     _ssls=$?
@@ -2266,22 +2275,22 @@ s5_cmd_restart() {
 s5_remove_owned_file() {
     _srof=$1
     [ -e "$_srof" ] || [ -L "$_srof" ] || return 0
-    [ -L "$_srof" ] && { s5_warn "refusing symlink during uninstall: $_srof"; return 1; }
-    rm -f "$_srof" || { s5_warn "could not remove owned file: $_srof"; return 1; }
+    [ -L "$_srof" ] && { s5_msg_warn uninstall.symlink "$_srof"; return 1; }
+    rm -f "$_srof" || { s5_msg_warn uninstall.file "$_srof"; return 1; }
     return 0
 }
 
 s5_remove_owned_dir() {
     _srod=$1
     [ -e "$_srod" ] || [ -L "$_srod" ] || return 0
-    [ -L "$_srod" ] || [ -d "$_srod" ] || { s5_warn "owned path is not a directory: $_srod"; return 1; }
+    [ -L "$_srod" ] || [ -d "$_srod" ] || { s5_msg_warn uninstall.notdir "$_srod"; return 1; }
     for _sroe in "$_srod"/* "$_srod"/.[!.]* "$_srod"/..?*; do
         if [ -e "$_sroe" ] || [ -L "$_sroe" ]; then
-            s5_warn "refusing non-empty owned directory: $_sroe"
+            s5_msg_warn uninstall.nonempty "$_sroe"
             return 1
         fi
     done
-    rmdir "$_srod" || { s5_warn "could not remove owned directory: $_srod"; return 1; }
+    rmdir "$_srod" || { s5_msg_warn uninstall.directory "$_srod"; return 1; }
     return 0
 }
 
@@ -2361,9 +2370,7 @@ s5_cmd_uninstall() {
     s5_remove_owned_file "$S5_SERVICE_ARTIFACT" || { s5_fail_locked; return 1; }
     s5_remove_owned_file "$S5_CFG" || { s5_fail_locked; return 1; }
     s5_remove_owned_file "$S5_BIN" || { s5_fail_locked; return 1; }
-    if [ "$S5_INIT" = systemd ]; then
-        systemctl daemon-reload >/dev/null 2>&1 || { s5_fail_locked; return 1; }
-    fi
+    s5_svc reload || { s5_fail_locked; return 1; }
     s5_account_remove || { s5_fail_locked; return 1; }
     s5_remove_owned_file "$S5_STATE" || { s5_fail_locked; return 1; }
     s5_remove_owned_dir "$S5_SYSCONFDIR" || { s5_fail_locked; return 1; }
@@ -2396,7 +2403,7 @@ s5_main() {
     uninstall) s5_cmd_uninstall ;;
     language) s5_msg_print lang.saved ;;
     help | -h | --help) s5_msg_print usage ;;
-    *) s5_msg_err extra "$_smcmd"; s5_msg_print usage >&2; return 64 ;;
+    *) s5_msg_err usage.unknown "$_smcmd"; s5_msg_print usage >&2; return 64 ;;
     esac
 }
 

@@ -13,7 +13,7 @@ cp "$ROOT/socks5.sh" "$ROOT/README.md" "$ROOT/README.zh-CN.md" \
 git -C "$snapshot" init -q || exit 1
 git -C "$snapshot" add . || exit 1
 
-for doc in CLAUDE.md CONTEXT.md SPEC.md; do
+for doc in CLAUDE.md CONTEXT.md SPEC.md todo.md; do
     assert_file_absent "public checkout has no $doc" "$snapshot/$doc"
     t_run git -C "$snapshot" check-ignore -q -- "$doc"
     assert_eq "$doc stays ignored" 0 "$T_STATUS"

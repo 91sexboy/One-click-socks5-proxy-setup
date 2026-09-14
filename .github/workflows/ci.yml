@@ -119,7 +119,7 @@ jobs:
             command: sh
           - runner: ubuntu-24.04
             command: dash
-          # bash is the /bin/sh of the EL family, which SPEC 1 lists as supported.
+          # bash is the /bin/sh of the EL family, which SPEC 8 lists as supported.
           # The sh leg above is dash on this runner, so without bash the matrix
           # covered one interpreter twice and left the other untested.
           - runner: ubuntu-24.04
@@ -341,7 +341,7 @@ jobs:
       - name: Add the test target addresses
         run: sudo sh .github/scripts/add-test-target-addresses.sh
       - name: Prove descriptor-local peaks with a released high then low workload
-        run: sudo python3 .github/scripts/memory-peak-check.py --real-cgroup
+        run: sudo env GITHUB_ACTIONS=true python3 .github/scripts/memory-peak-check.py --real-cgroup
       - name: Measure Xray process and cgroup memory
         run: |
           set -eu

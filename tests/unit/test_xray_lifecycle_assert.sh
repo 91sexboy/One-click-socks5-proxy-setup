@@ -9,13 +9,8 @@ mkdir -p "$fixture/etc/xray-socks5" "$fixture/var/lib/xray-socks5"
 config=$fixture/etc/xray-socks5/config.json
 state=$fixture/var/lib/xray-socks5/state
 transaction=$fixture/var/lib/xray-socks5/transaction
-assertion=$S5_TEST_ROOT/assert.sh
-owner=$(stat -c '%U:%G' "$fixture")
-# Paths and the expected host identity are adapted only in this disposable copy;
-# the CI module has no environment override for either its root or its policy.
-sed -e "s#=/etc/#=$fixture/etc/#g" -e "s#=/var/#=$fixture/var/#g" \
-    -e "s/root:xray-socks5 640/$owner 640/" \
-    "$S5_REPO_ROOT/.github/scripts/lifecycle-update-assert.sh" >"$assertion"
+assertion=$S5_REPO_ROOT/.github/scripts/lifecycle-update-assert.sh
+fixture_owner=root:xray-socks5
 cat >"$S5_TEST_ROOT/healthy.json" <<'JSON'
 {"inbounds":[{"settings":{"accounts":[{"user":"ciuser2","pass":"synthetic"}]}}]}
 JSON
@@ -25,11 +20,22 @@ chmod 0640 "$config"
 chmod 0600 "$state"
 
 run_assertion() {
-    # A function also overrides BusyBox's preferred id applet. File, JSON, grep
-    # and stat observations still execute against the real fixture.
+    # Only host identities are substituted; modes and content stay real.
+    # Split a configured multiword shell such as busybox sh.
     # shellcheck disable=SC2086
-    $SHELL_UNDER_TEST -c 'fixture_uid=$2; id() { printf "%s\n" "$fixture_uid"; }; . "$1"' \
-        fixture "$assertion" "${fixture_uid:-0}"
+    $SHELL_UNDER_TEST -c '
+        assertion=$1; fixture_uid=$2; fixture_owner=$3; fixture_root=$4
+        id() { printf "%s\n" "$fixture_uid"; }
+        stat() {
+            if [ "$1" = -c ] && [ "$2" = "%U:%G %a" ]; then
+                printf "%s %s\n" "$fixture_owner" "$(command stat -c %a "$3")"
+            else
+                command stat "$@"
+            fi
+        }
+        set -- "$fixture_root"
+        . "$assertion"
+    ' fixture "$assertion" "${fixture_uid:-0}" "$fixture_owner" "$fixture"
 }
 expect_refusal() {
     t_run run_assertion
@@ -53,13 +59,9 @@ printf 'username\tciuser2\n' >"$state"
 chmod 0600 "$config"
 expect_refusal "wrong config mode" 'updated config ownership or mode is wrong'
 chmod 0640 "$config"
-# Non-root tests cannot chown a fixture to root; vary the expected identity in
-# another disposable copy while retaining the real stat result.
-sed "s/$owner 640/unmatched-owner:unmatched-group 640/" "$assertion" >"$S5_TEST_ROOT/wrong-owner.sh"
-original_assertion=$assertion
-assertion=$S5_TEST_ROOT/wrong-owner.sh
+fixture_owner=unmatched-owner:unmatched-group
 expect_refusal "owner mismatch" 'updated config ownership or mode is wrong'
-assertion=$original_assertion
+fixture_owner=root:xray-socks5
 mkdir "$transaction"
 expect_refusal "transaction directory residue" 'update transaction evidence remains'
 rmdir "$transaction"

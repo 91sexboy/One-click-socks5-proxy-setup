@@ -7,7 +7,14 @@ S5T_NAME=test_xray_install
 
 test_install() {
     t_xray_fixture 23456
+    mkdir -p "$S5_TEST_ROOT/etc/socks5-manager" "$S5_TEST_ROOT/var/lib/socks5-manager" "$S5_TEST_ROOT/usr/local/libexec/socks5-manager"
+    printf 'legacy config\n' >"$S5_TEST_ROOT/etc/socks5-manager/3proxy.cfg"
+    printf 'legacy state\n' >"$S5_TEST_ROOT/var/lib/socks5-manager/state"
+    printf 'legacy binary\n' >"$S5_TEST_ROOT/usr/local/libexec/socks5-manager/3proxy"
     t_xray_install
+    assert_eq "install preserves the legacy config" 'legacy config' "$(cat "$S5_TEST_ROOT/etc/socks5-manager/3proxy.cfg")"
+    assert_eq "install preserves the legacy state" 'legacy state' "$(cat "$S5_TEST_ROOT/var/lib/socks5-manager/state")"
+    assert_eq "install preserves the legacy binary" 'legacy binary' "$(cat "$S5_TEST_ROOT/usr/local/libexec/socks5-manager/3proxy")"
     assert_file_exists "Xray config exists" "$S5_CFG"
     assert_file_exists "Xray state exists" "$S5_STATE"
     assert_file_exists "Xray unit exists" "$S5_SERVICE_ARTIFACT"
@@ -20,10 +27,6 @@ test_install() {
     assert_mode "config is group-readable only" 640 "$S5_CFG"
     assert_mode "state is private" 600 "$S5_STATE"
 
-    # Old namespace remains untouched.
-    mkdir -p "$S5_TEST_ROOT/etc/socks5-manager"
-    printf legacy >"$S5_TEST_ROOT/etc/socks5-manager/3proxy.cfg"
-    assert_file_exists "legacy namespace remains present" "$S5_TEST_ROOT/etc/socks5-manager/3proxy.cfg"
     unit=$(cat "$S5_SERVICE_ARTIFACT")
     assert_not_contains "unit does not expose password" "$S5_PASSWORD" "$unit"
     assert_contains "unit runs Xray" 'run -c' "$unit"

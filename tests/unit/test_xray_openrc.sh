@@ -23,7 +23,6 @@ S5_OS_FAMILY=alpine
 # Platform detection must select the OpenRC adapter and reject old Alpine.
 s5_detect_platform
 assert_eq "Alpine selects OpenRC" 0 "$?"
-assert_eq "Alpine package manager" apk "$S5_PKGMGR"
 assert_eq "Alpine init" openrc "$S5_INIT"
 S5_OSRELEASE="$ROOT/tests/fixtures/os-release/alpine-3.19"
 t_run s5_detect_platform
@@ -233,5 +232,33 @@ assert_eq "OpenRC enable adds the service to the default runlevel" 1 \
 s5_svc disable
 assert_eq "OpenRC disable removes the service from the default runlevel" 1 \
     "$(grep -c "^rc-update del $S5_PROJECT default\$" "$S5_TEST_ROOT/svc-transcript")"
+
+_reload_before=$(cat "$S5_TEST_ROOT/svc-transcript")
+t_run s5_svc reload
+assert_eq "OpenRC reload succeeds without an external command" 0 "$T_STATUS"
+assert_eq "OpenRC reload leaves the transcript unchanged" "$_reload_before" "$(cat "$S5_TEST_ROOT/svc-transcript")"
+t_run s5_svc unknown
+assert_eq "OpenRC rejects unknown lifecycle verbs" 1 "$T_STATUS"
+
+. "$ROOT/tests/lib/xray-fixture.sh"
+t_xray_fixture 23456
+s5_svc reload
+assert_eq "systemd reload succeeds" 0 "$?"
+assert_eq "systemd reload invokes exactly one daemon-reload" 'systemctl daemon-reload' "$(cat "$S5_TEST_ROOT/transcript")"
+t_run s5_svc unknown
+assert_eq "systemd rejects unknown lifecycle verbs" 1 "$T_STATUS"
+
+S5_PORT=23455
+S5_LISTENER_PROBE=$S5_TEST_ROOT/listenerprobe
+cat >"$S5_LISTENER_PROBE" <<'PROBE'
+#!/bin/sh
+printf '%s\n' "$2" >"$S5_TEST_ROOT/listener-port"
+exit 0
+PROBE
+chmod 0755 "$S5_LISTENER_PROBE"
+s5_wait_listening 23456
+assert_eq "listener wait observes its requested port" 0 "$?"
+assert_eq "listener wait passes its port to the probe" 23456 "$(cat "$S5_TEST_ROOT/listener-port")"
+assert_eq "listener wait leaves the configured port unchanged" 23455 "$S5_PORT"
 
 t_summary

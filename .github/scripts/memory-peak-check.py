@@ -128,6 +128,8 @@ def experiment():
 
 if __name__ == "__main__":
     try:
+        if os.environ.get("GITHUB_ACTIONS") != "true" or os.geteuid() != 0:
+            raise RuntimeError("native peak experiments run only as root in disposable GitHub Actions environments")
         if len(sys.argv) == 3 and sys.argv[1] == "--worker":
             worker(Path(sys.argv[2]))
         elif sys.argv[1:] == ["--real-cgroup"]:
