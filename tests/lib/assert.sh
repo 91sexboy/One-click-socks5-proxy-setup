@@ -121,6 +121,13 @@ t_sha256() {
     sha256sum "$1" | awk '{print $1}'
 }
 
+# t_state_get <key> : read one field from the installed state file. A test-only
+# query helper; state loading in production uses one validated snapshot
+# (s5_state_parse), so this lives here rather than in socks5.sh.
+t_state_get() {
+    awk -F '\t' -v k="$1" '$1 == k { print $2; exit }' "$S5_STATE" 2>/dev/null
+}
+
 t_source_production() {
     S5_LIB_ONLY=1
     S5_ASSUME_ROOT=1

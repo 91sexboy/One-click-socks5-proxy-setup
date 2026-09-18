@@ -8,7 +8,7 @@ S5T_NAME=test_xray_update
 test_family() {
     t_xray_fixture 23456
     t_xray_install
-    assert_eq "state records the installed port" 23456 "$(s5_state_get port)"
+    assert_eq "state records the installed port" 23456 "$(t_state_get port)"
     # Debian and EL share the systemd path; family must still match the host.
     S5_OS_FAMILY=el
     t_run s5_state_load
@@ -27,7 +27,7 @@ test_update() {
     s5_install_update
     assert_eq "update completes" 0 "$?"
     assert_contains "config carries the new port" '"port": 23999' "$(cat "$S5_CFG")"
-    assert_eq "state records the new port" 23999 "$(s5_state_get port)"
+    assert_eq "state records the new port" 23999 "$(t_state_get port)"
     assert_file_absent "update leaves no transaction directory" "$S5_TXNDIR"
     assert_eq "service listens on the new port" 23999 "$(cat "$S5_TEST_ROOT/svc_active")"
     t_xray_assert_healthy

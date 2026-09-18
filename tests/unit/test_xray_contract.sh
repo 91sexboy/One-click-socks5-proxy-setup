@@ -84,6 +84,24 @@ assert_eq "random port generation succeeds" 0 "$_rprc"
 s5_valid_port "$_rp"; _rpv=$?
 assert_eq "the generated random port is valid" 0 "$_rpv"
 
+# An update leaves S5_PORT holding the port the running service owns; a blank
+# answer must keep it rather than rotate to a random one (SPEC 5: the port the
+# service already owns is accepted, ownership verified through the listener).
+# The port probe reports 25000 busy, and in test mode s5_listener_state reads
+# that same probe, so s5_port_owned_by_service confirms ownership.
+S5_PORT=25000
+printf '25000\n' >"$S5_TEST_ROOT/occupied"
+printf '\n' >"$S5_TEST_ROOT/port.blank"
+s5_prompt_port <"$S5_TEST_ROOT/port.blank" >/dev/null 2>&1
+assert_eq "a blank port on update keeps the owned port" 25000 "$S5_PORT"
+# A blank answer with no current port (a fresh install) still generates one.
+S5_PORT=''
+s5_prompt_port <"$S5_TEST_ROOT/port.blank" >/dev/null 2>&1
+s5_valid_port "$S5_PORT"; _rpfresh=$?
+assert_eq "a blank port on a fresh install still generates a valid port" 0 "$_rpfresh"
+assert_ne "a fresh install does not reuse the update's owned port" 25000 "$S5_PORT"
+rm -f "$S5_TEST_ROOT/occupied"
+
 S5_PORT=23456
 S5_USERNAME=alice
 S5_PASSWORD='Secret_123~x'
@@ -105,10 +123,10 @@ s5_state_write
 assert_file_exists "Xray state is written" "$S5_STATE"
 assert_mode "Xray state is root-only" 600 "$S5_STATE"
 assert_not_contains "state never stores password" "$S5_PASSWORD" "$(cat "$S5_STATE")"
-assert_eq "state identifies Xray" xray "$(s5_state_get engine)"
-assert_eq "state identifies mixed" mixed "$(s5_state_get protocol)"
-assert_eq "state disables UDP" false "$(s5_state_get udp)"
-assert_eq "state has unit ownership hash" "$S5_UNIT_SHA256" "$(s5_state_get unit_sha256)"
+assert_eq "state identifies Xray" xray "$(t_state_get engine)"
+assert_eq "state identifies mixed" mixed "$(t_state_get protocol)"
+assert_eq "state disables UDP" false "$(t_state_get udp)"
+assert_eq "state has unit ownership hash" "$S5_UNIT_SHA256" "$(t_state_get unit_sha256)"
 
 source=$(cat "$ROOT/socks5.sh")
 assert_not_contains "production has no legacy namespace" 'socks5-manager' "$source"
