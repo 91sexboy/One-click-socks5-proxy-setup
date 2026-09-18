@@ -535,11 +535,22 @@ s5_port_owned_by_service() {
 }
 
 s5_prompt_port() {
+    # On update S5_PORT holds the port the running service owns; a blank answer
+    # keeps it (verified through the listener, not assumed) rather than rotating
+    # to a random port. On a fresh install S5_PORT is empty, so a blank answer
+    # generates one as before.
+    _spp_current=${S5_PORT:-}
     while :; do
         s5_msg_ask input.port || return 1
         _spp=''
         IFS= read -r _spp || return 1
-        [ -n "$_spp" ] || _spp=$(s5_random_port) || return 1
+        if [ -z "$_spp" ]; then
+            if [ -n "$_spp_current" ] && s5_port_owned_by_service "$_spp_current"; then
+                S5_PORT=$_spp_current
+                return 0
+            fi
+            _spp=$(s5_random_port) || return 1
+        fi
         if ! s5_valid_port "$_spp"; then
             s5_msg_err input.port.invalid
             continue
@@ -1154,11 +1165,6 @@ AmbientCapabilities=
 WantedBy=multi-user.target
 UNIT
     esac
-}
-
-# Queries are for individual callers; state loading uses one validated snapshot.
-s5_state_get() {
-    awk -F '\t' -v k="$1" '$1 == k { print $2; exit }' "$S5_STATE" 2>/dev/null
 }
 
 # Emit one value per line in this fixed order only after the whole schema passes.
