@@ -313,7 +313,19 @@ s5_init_language() {
 
 s5_osrel_get() {
     [ -r "$1" ] || return 1
-    sed -n "s/^$2=//p" "$1" | tail -n 1 | tr -d '\r' | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'\$/\1/"
+    # Single awk pass replaces sed|tail|tr|sed: keep the last "key=" line, strip
+    # CR, then peel one matching pair of surrounding quotes. An absent key prints
+    # nothing (like the old empty sed output), preserving callers' return value.
+    awk -v key="$2" '
+        index($0, key "=") == 1 { v = substr($0, length(key) + 2); found = 1 }
+        END {
+            if (!found) exit 0
+            gsub(/\r/, "", v)
+            if (v ~ /^".*"$/) v = substr(v, 2, length(v) - 2)
+            else if (v ~ /^'\''.*'\''$/) v = substr(v, 2, length(v) - 2)
+            print v
+        }
+    ' "$1"
 }
 
 s5_ver_ge() {
@@ -867,7 +879,7 @@ s5_tmp_base() {
 s5_bytecount() { wc -c <"$1" | tr -cd '0-9'; }
 
 # Callers retain their own diagnostic policy for unreadable artifacts.
-s5_sha256() { sha256sum "$1" | awk '{print $1}'; }
+s5_sha256() { sha256sum "$1" | { read -r _s5_sha _s5_rest; printf '%s\n' "$_s5_sha"; }; }
 
 s5_fetch_archive() {
     # $1: destination path for the release archive. Acquire it (a local fixture in
@@ -1029,7 +1041,7 @@ s5_account_identity() {
     # Alpine -- the name must still resolve to the recorded GID. A group that drifted
     # to a new GID, or a same-named group created by something else, must not be
     # deleted: SPEC 7 removes only the resources this installation recorded.
-    _saig_named=$(getent group "$S5_SERVICE_GROUP" 2>/dev/null | awk -F: 'NR == 1 { print $3 }') || return 1
+    _saig_named=$(getent group "$S5_SERVICE_GROUP" 2>/dev/null | { IFS=: read -r _sai_gn _sai_gp _sai_gid _sai_rest; printf '%s\n' "${_sai_gid:-}"; }) || return 1
     [ "$_saig_named" = "$S5_ACCOUNT_GID" ]
 }
 
