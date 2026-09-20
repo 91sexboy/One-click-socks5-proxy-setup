@@ -1,49 +1,31 @@
-# Xray-only 双协议代理
+# Linux 一键搭建 SOCKS5 + HTTP 代理（Xray）
 
 [English](README.md) | **简体中文**
 
 [![CI — xray-only](https://github.com/91sexboy/One-click-socks5-proxy-setup/actions/workflows/ci.yml/badge.svg?branch=xray-only)](https://github.com/91sexboy/One-click-socks5-proxy-setup)
 
-一个单文件 POSIX shell 安装器，用于在你拥有或获授权管理的 Linux 服务器上部署需要身份认证的 **SOCKS5 + HTTP 代理**。
+使用一个 POSIX shell 脚本，在 Ubuntu、Debian、CentOS Stream 或 Alpine Linux 服务器上一键部署带用户名密码认证的 **SOCKS5 与 HTTP CONNECT 代理**。适用于你拥有或获授权管理的 Linux 服务器。
 
 **一个 Xray 进程、一个 TCP 端口、一组账户。** 不安装 Web 面板、数据库或订阅服务，也不进行源码编译。
 
+- SOCKS5 与 HTTP 代理共用一个 TCP 端口
+- 用户名／密码认证（SOCKS5 RFC 1929 与 HTTP Basic）
+- Ubuntu、Debian、CentOS Stream 和 Alpine Linux
+- amd64 与 arm64
+- systemd 与 OpenRC
+- `install`、`status`、`show`、`restart`、`uninstall` 管理命令
+- CI 验证的安装与服务生命周期管理
+- 固定版本的 Xray 发布包，使用 SHA-256 校验
+
 > **身份认证不等于加密。** 客户端与代理之间的连接没有传输层加密，认证信息会在这条连接上传输。请使用可信网络或另外配置的加密隧道；本安装器不会替你建立加密隧道。
 
-[安装](#快速安装) · [管理命令](#管理命令) · [支持系统](#支持范围) · [常见问题](#常见问题)
-
-## `mixed` 是什么
-
-Xray-core 的 `protocol: mixed` 入站在同一个监听端口接受两种客户端协议：
-
-| 客户端协议 | 认证方式 | 用途 |
-| --- | --- | --- |
-| SOCKS5 | RFC 1929 用户名／密码 | TCP CONNECT |
-| HTTP 代理 | Basic 用户名／密码 | HTTP CONNECT |
-
-客户端自行选择使用哪种协议。这**不是纯 SOCKS5 监听器**：同一个地址和端口也接受经过认证的 HTTP 代理客户端。UDP 关闭（`udp: false`）。
-
-安装器在所选端口监听 IPv4 `0.0.0.0`，并以专用、不可登录的 `xray-socks5` 账户运行 Xray。配置包含一个直连出站和一个用于目标边界的黑洞出站。
-
-## 支持范围
-
-| 系统 | 接受的版本 | 架构 | 服务管理器 |
-| --- | --- | --- | --- |
-| Ubuntu | 20.04 | amd64 | systemd |
-| Ubuntu | 22.04+ | amd64、arm64 | systemd |
-| Debian | 12+ | amd64、arm64 | systemd |
-| CentOS Stream | 9+ | amd64、arm64 | systemd |
-| Alpine Linux | 3.20+ | amd64、arm64 | OpenRC |
-
-`x86_64` 对应 `amd64`，`aarch64` 对应 `arm64`。其他发行版标识和架构会被拒绝，不会直接假定兼容。
-
-**安装器接受，不等于完整生命周期已验证。** CI 在 **Ubuntu 24.04 amd64** 和 **Alpine 3.20 / 3.24 amd64** 上验证安装、配置更新、重启、崩溃恢复、协议检查和卸载。Arm64 有发布包、可执行文件验证和 Ubuntu 24.04 内存对比，没有完整服务生命周期 job；其他被接受的系统也尚无完整生命周期验证。
+[安装](#快速安装) · [管理命令](#管理命令) · [支持系统](#支持范围) · [常见问题](#常见问题) · [故障排查](#故障排查)
 
 ## 快速安装
 
 ### 1. 准备服务器
 
-- 使用 **root shell**，并确保上表中的系统原生服务管理器正常工作。
+- 使用 **root shell**，并确保[支持范围](#支持范围)表中的系统原生服务管理器正常工作。
 - 服务器需要能访问 GitHub，以下载安装器和固定版本的 Xray 发布包。
 - systemd 系统需要预先准备运行工具：`curl`、CA 证书、支持 `-Z` 的 Info-ZIP `unzip`、`file`、Python 3、`ss` 及常规账户管理工具。缺少命令时，安装器会提示名称。
 - Alpine 的运行依赖由安装器通过 `apk` 安装，发生在预检查阶段，**早于安装确认**。下载脚本本身仍需要 `curl`；缺少时可先执行 `apk add --no-cache curl ca-certificates`。
@@ -80,6 +62,20 @@ Xray `v26.3.27` 从[本仓库的 Release 镜像](https://github.com/91sexboy/One
 
 安装并验证成功后，真实终端会自动显示两种代理的连接链接。输出被重定向时会隐藏凭据，之后可在终端运行 `show` 查看。
 
+## 支持范围
+
+| 系统 | 接受的版本 | 架构 | 服务管理器 |
+| --- | --- | --- | --- |
+| Ubuntu | 20.04 | amd64 | systemd |
+| Ubuntu | 22.04+ | amd64、arm64 | systemd |
+| Debian | 12+ | amd64、arm64 | systemd |
+| CentOS Stream | 9+ | amd64、arm64 | systemd |
+| Alpine Linux | 3.20+ | amd64、arm64 | OpenRC |
+
+`x86_64` 对应 `amd64`，`aarch64` 对应 `arm64`。其他发行版标识和架构会被拒绝，不会直接假定兼容。
+
+**安装器接受，不等于完整生命周期已验证。** CI 在 **Ubuntu 24.04 amd64** 和 **Alpine 3.20 / 3.24 amd64** 上验证安装、配置更新、重启、崩溃恢复、协议检查和卸载。Arm64 有发布包、可执行文件验证和 Ubuntu 24.04 内存对比，没有完整服务生命周期 job；其他被接受的系统也尚无完整生命周期验证。
+
 ## 管理命令
 
 在已下载脚本所在目录运行以下命令。安装和管理操作需要 root。
@@ -99,6 +95,19 @@ Xray `v26.3.27` 从[本仓库的 Release 镜像](https://github.com/91sexboy/One
 语言偏好保存在 `/etc/xray-socks5.lang`，卸载代理后仍保留。保存失败时，脚本会提示本次选择只对当前调用有效；`language` 命令会在保存失败时返回失败。
 
 `status` 可以正常执行并报告服务已停止或监听状态无法验证。请阅读输出内容，不能仅凭退出码为零就认定代理可用。
+
+## `mixed` 是什么
+
+Xray-core 的 `protocol: mixed` 入站在同一个监听端口接受两种客户端协议：
+
+| 客户端协议 | 认证方式 | 用途 |
+| --- | --- | --- |
+| SOCKS5 | RFC 1929 用户名／密码 | TCP CONNECT |
+| HTTP 代理 | Basic 用户名／密码 | HTTP CONNECT |
+
+客户端自行选择使用哪种协议。这**不是纯 SOCKS5 监听器**：同一个地址和端口也接受经过认证的 HTTP 代理客户端。UDP 关闭（`udp: false`）。
+
+安装器在所选端口监听 IPv4 `0.0.0.0`，并以专用、不可登录的 `xray-socks5` 账户运行 Xray。配置包含一个直连出站和一个用于目标边界的黑洞出站。
 
 ## 连接链接与服务器地址
 
@@ -150,6 +159,32 @@ S5_SERVER_IPV4=203.0.113.10 sh socks5.sh show
 
 ## 常见问题
 
+### 如何在 Ubuntu 24.04 一键搭建 SOCKS5 代理？
+
+按[快速安装](#快速安装)操作：在 root shell 中下载 `socks5.sh` 并运行。Ubuntu 24.04 amd64 是完整生命周期已验证的目标之一，使用 systemd。
+
+### 如何在 Debian 12 搭建带用户名密码的 SOCKS5 服务器？
+
+同一条命令在 Debian 12+ 上同样适用。安装器会提示输入端口、账户名和密码（直接回车则随机生成），因此每次安装默认都带 SOCKS5 用户名／密码认证。
+
+### SOCKS5 和 HTTP 代理能否共用一个端口？
+
+可以。Xray 的 `mixed` 入站在安装器打开的同一个 TCP 端口上同时接受 SOCKS5 和 HTTP CONNECT 客户端，由客户端自行选择协议。详见 [`mixed` 是什么](#mixed-是什么)。
+
+### SOCKS5 代理是否会加密流量？
+
+不会。身份认证不等于加密，客户端到代理这一跳没有传输层加密。请在可信网络中使用，或通过另外配置的加密隧道使用。
+
+### 代理是否支持 UDP？
+
+不支持。UDP 已关闭（`udp: false`），入站只处理 TCP CONNECT。
+
+### 如何卸载 Xray SOCKS5 代理？
+
+以 root 运行 `sh socks5.sh uninstall` 并确认。它会移除受管安装、服务单元和专用账户；保存在 `/etc/xray-socks5.lang` 的语言偏好会保留。
+
+## 故障排查
+
 | 现象 | 检查方向 |
 | --- | --- |
 | 提示缺少必要命令 | 安装提示中的运行工具；发布包检查需要支持 `unzip -Z` 的 Info-ZIP。 |
@@ -164,4 +199,4 @@ S5_SERVER_IPV4=203.0.113.10 sh socks5.sh show
 
 ## 许可证
 
-安装器和测试采用 [MIT](LICENSE)；镜像的 Xray 程序保留上游 MPL-2.0 许可证和第三方声明。
+安装器和测试采用 [MIT](LICENSE)；镜像的 Xray-core 程序保留上游 MPL-2.0 许可证，详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
