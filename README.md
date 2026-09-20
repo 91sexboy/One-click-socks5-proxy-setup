@@ -1,49 +1,31 @@
-# Xray-only mixed proxy
+# One-click Xray SOCKS5 + HTTP Proxy Installer for Linux
 
 **English** | [简体中文](README.zh-CN.md)
 
 [![CI — xray-only](https://github.com/91sexboy/One-click-socks5-proxy-setup/actions/workflows/ci.yml/badge.svg?branch=xray-only)](https://github.com/91sexboy/One-click-socks5-proxy-setup)
 
-A single-file POSIX shell installer for an authenticated **SOCKS5 + HTTP proxy** on a Linux server you own or are authorised to administer.
+Deploy an authenticated **SOCKS5 + HTTP CONNECT proxy** on Ubuntu, Debian, CentOS Stream, or Alpine Linux with one POSIX shell command. A single-file installer for a Linux server you own or are authorised to administer.
 
 **One Xray process. One TCP port. One account.** No web panel, database, subscription service, or source build.
 
+- SOCKS5 and HTTP proxy on a single TCP port
+- Username/password authentication (SOCKS5 RFC 1929 and HTTP Basic)
+- Ubuntu, Debian, CentOS Stream, and Alpine Linux
+- amd64 and arm64
+- systemd and OpenRC
+- `install`, `status`, `show`, `restart`, and `uninstall` commands
+- CI-tested installation and service-lifecycle management
+- Pinned Xray release assets verified with SHA-256
+
 > **Authentication is not encryption.** The client–proxy connection carries credentials without transport encryption. Use a trusted network or a separately configured encrypted tunnel; this installer does not set one up.
 
-[Install](#quick-install) · [Commands](#commands) · [Supported systems](#supported-targets) · [Troubleshooting](#troubleshooting)
-
-## What `mixed` means
-
-Xray-core's `protocol: mixed` inbound accepts two client protocols on the same listening port:
-
-| Client protocol | Authentication | Use |
-| --- | --- | --- |
-| SOCKS5 | RFC 1929 username/password | TCP CONNECT |
-| HTTP proxy | Basic username/password | HTTP CONNECT |
-
-The client chooses which protocol to speak. This is **not a pure SOCKS5 listener**: the same endpoint also accepts authenticated HTTP proxy clients. UDP is disabled (`udp: false`).
-
-The installer binds IPv4 `0.0.0.0` on the selected port and runs Xray under the dedicated, non-login `xray-socks5` account. There is one direct outbound and one blackhole outbound for the destination boundary.
-
-## Supported targets
-
-| System | Accepted versions | Architecture | Service manager |
-| --- | --- | --- | --- |
-| Ubuntu | 20.04 | amd64 | systemd |
-| Ubuntu | 22.04+ | amd64, arm64 | systemd |
-| Debian | 12+ | amd64, arm64 | systemd |
-| CentOS Stream | 9+ | amd64, arm64 | systemd |
-| Alpine Linux | 3.20+ | amd64, arm64 | OpenRC |
-
-`x86_64` maps to `amd64`; `aarch64` maps to `arm64`. Other distribution IDs and architectures are rejected rather than assumed compatible.
-
-**Accepted does not mean lifecycle-tested.** CI exercises installation, configuration update, restart, crash recovery, protocol checks, and uninstall on **Ubuntu 24.04 amd64** and **Alpine 3.20 / 3.24 amd64**. Arm64 has asset and executable verification plus Ubuntu 24.04 memory comparisons, not a full service-lifecycle job. Other accepted systems remain lifecycle-unverified.
+[Install](#quick-install) · [Commands](#commands) · [Supported systems](#supported-targets) · [FAQ](#frequently-asked-questions) · [Troubleshooting](#troubleshooting)
 
 ## Quick install
 
 ### 1. Prepare the server
 
-- Use a **root shell** and a working native service manager from the table above.
+- Use a **root shell** and a working native service manager from the [supported systems](#supported-targets) table.
 - Ensure the server can reach GitHub to download the installer and the pinned Xray release.
 - On systemd-based systems, prepare the runtime tools first: `curl`, CA certificates, Info-ZIP `unzip` with `-Z` support, `file`, Python 3, `ss`, and the standard account-management tools. Missing commands are reported by the installer.
 - On Alpine, the installer provisions its runtime packages through `apk` during precheck, **before installation confirmation**. You still need `curl` to download the script; if missing, bootstrap it with `apk add --no-cache curl ca-certificates`.
@@ -80,6 +62,20 @@ On the first invocation without a saved language, choose `1` or Enter for Chines
 
 After successful installation and verification, a real terminal displays both connection links automatically. Redirected output hides credentials; use `show` later from a terminal.
 
+## Supported targets
+
+| System | Accepted versions | Architecture | Service manager |
+| --- | --- | --- | --- |
+| Ubuntu | 20.04 | amd64 | systemd |
+| Ubuntu | 22.04+ | amd64, arm64 | systemd |
+| Debian | 12+ | amd64, arm64 | systemd |
+| CentOS Stream | 9+ | amd64, arm64 | systemd |
+| Alpine Linux | 3.20+ | amd64, arm64 | OpenRC |
+
+`x86_64` maps to `amd64`; `aarch64` maps to `arm64`. Other distribution IDs and architectures are rejected rather than assumed compatible.
+
+**Accepted does not mean lifecycle-tested.** CI exercises installation, configuration update, restart, crash recovery, protocol checks, and uninstall on **Ubuntu 24.04 amd64** and **Alpine 3.20 / 3.24 amd64**. Arm64 has asset and executable verification plus Ubuntu 24.04 memory comparisons, not a full service-lifecycle job. Other accepted systems remain lifecycle-unverified.
+
 ## Commands
 
 Run these from the directory containing the downloaded script. Installation and management require root.
@@ -99,6 +95,19 @@ Re-running `install` is a **configuration update**, not an upgrade to the latest
 The language preference is saved in `/etc/xray-socks5.lang` and survives uninstall. If it cannot be saved, the script warns that the choice applies only to the current invocation. The `language` command reports failure if saving fails.
 
 `status` can report a stopped or unverified listener without failing as a command. Read its output; a zero exit status alone does not prove proxy availability.
+
+## What `mixed` means
+
+Xray-core's `protocol: mixed` inbound accepts two client protocols on the same listening port:
+
+| Client protocol | Authentication | Use |
+| --- | --- | --- |
+| SOCKS5 | RFC 1929 username/password | TCP CONNECT |
+| HTTP proxy | Basic username/password | HTTP CONNECT |
+
+The client chooses which protocol to speak. This is **not a pure SOCKS5 listener**: the same endpoint also accepts authenticated HTTP proxy clients. UDP is disabled (`udp: false`).
+
+The installer binds IPv4 `0.0.0.0` on the selected port and runs Xray under the dedicated, non-login `xray-socks5` account. There is one direct outbound and one blackhole outbound for the destination boundary.
 
 ## Connection links and server address
 
@@ -148,6 +157,32 @@ A separate experiment in the same jobs compares three pairs of the default profi
 
 These observations are **not a minimum-memory guarantee** for a whole server or other workloads. No hard `MemoryMax` or universal 128/256-MiB deployment budget is inferred from them; allow for the OS, other services, traffic patterns, and unmeasured startup peaks.
 
+## Frequently asked questions
+
+### How do I install a SOCKS5 proxy on Ubuntu 24.04?
+
+Follow [Quick install](#quick-install): from a root shell, download `socks5.sh` and run it. Ubuntu 24.04 amd64 is one of the lifecycle-tested targets, and it uses systemd.
+
+### How do I set up an authenticated SOCKS5 server on Debian 12?
+
+The same one command works on Debian 12+. The installer prompts for a port, username, and password (or generates them on Enter), so every install has SOCKS5 username/password authentication by default.
+
+### Can SOCKS5 and HTTP proxy clients share the same port?
+
+Yes. Xray's `mixed` inbound accepts both SOCKS5 and HTTP CONNECT clients on the one TCP port the installer opens. Each client chooses which protocol to speak. See [What `mixed` means](#what-mixed-means).
+
+### Does this SOCKS5 proxy encrypt traffic?
+
+No. Authentication is not encryption. The client–proxy hop carries credentials without transport encryption. Use it on a trusted network or through a separately configured encrypted tunnel.
+
+### Does the proxy support UDP?
+
+No. UDP is disabled (`udp: false`); the inbound handles TCP CONNECT only.
+
+### How do I uninstall the Xray SOCKS5 proxy?
+
+Run `sh socks5.sh uninstall` as root and confirm. It removes the managed installation, the service unit, and the dedicated account. The saved language preference in `/etc/xray-socks5.lang` is kept.
+
 ## Troubleshooting
 
 | Symptom | What to check |
@@ -164,4 +199,4 @@ For service diagnostics, use `systemctl status xray-socks5.service` on systemd, 
 
 ## License
 
-Installer and tests: [MIT](LICENSE). Mirrored Xray binaries retain their upstream MPL-2.0 license and third-party notices.
+Installer and tests: [MIT](LICENSE). Mirrored Xray-core binaries stay under their upstream MPL-2.0 license — see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
