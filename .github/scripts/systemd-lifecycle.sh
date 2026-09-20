@@ -135,5 +135,6 @@ install_secret=$(sed -n '2p' "$work/pass")
 update_secret=$(sed -n '2p' "$work/pass.update")
 lifecycle_no_credential_in "$work/install.log" "$install_secret" sudo
 lifecycle_no_credential_in "$work/status.log" "$install_secret" sudo
+lifecycle_no_credential_in "$work/status.log" "$update_secret" sudo
 lifecycle_no_credential_in "$work/update.log" "$install_secret" sudo
 lifecycle_no_credential_in "$work/update.log" "$update_secret" sudo
