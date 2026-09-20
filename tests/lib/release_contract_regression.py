@@ -55,7 +55,8 @@ def run_regressions(source):
         root = Path(directory)
         for name in ('tests', '.github', 'docs/adr'):
             shutil.copytree(source / name, root / name)
-        for name in ('socks5.sh', 'README.md', 'README.zh-CN.md', '.gitignore', 'LICENSE'):
+        for name in ('socks5.sh', 'README.md', 'README.zh-CN.md', '.gitignore', 'LICENSE',
+                     'THIRD_PARTY_NOTICES.md'):
             shutil.copy2(source / name, root / name)
         subprocess.run(['git', '-C', str(root), 'init', '-q'], check=True)
         subprocess.run(['git', '-C', str(root), 'add', '.'], check=True)

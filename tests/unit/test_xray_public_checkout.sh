@@ -10,7 +10,7 @@ snapshot="$S5_TEST_ROOT/public"
 mkdir "$snapshot" || exit 1
 cp -R "$ROOT/tests" "$ROOT/.github" "$ROOT/docs" "$snapshot/" || exit 1
 cp "$ROOT/socks5.sh" "$ROOT/README.md" "$ROOT/README.zh-CN.md" \
-    "$ROOT/LICENSE" "$ROOT/.gitignore" "$snapshot/" || exit 1
+    "$ROOT/LICENSE" "$ROOT/THIRD_PARTY_NOTICES.md" "$ROOT/.gitignore" "$snapshot/" || exit 1
 git -C "$snapshot" init -q || exit 1
 git -C "$snapshot" add . || exit 1
 set -- "$snapshot"/tests/unit/*.sh
