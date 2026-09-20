@@ -145,6 +145,7 @@ grep -q 'Usage: sh socks5.sh' "$work/help-after-uninstall.log"
 install_secret=$(sed -n '2p' "$work/pass")
 update_secret=$(sed -n '2p' "$work/pass.update")
 lifecycle_no_credential_in "$work/install.log" "$install_secret"
+lifecycle_no_credential_in "$work/status.log" "$install_secret"
 lifecycle_no_credential_in "$work/status.log" "$update_secret"
 lifecycle_no_credential_in "$work/update.log" "$install_secret"
 lifecycle_no_credential_in "$work/update.log" "$update_secret"
