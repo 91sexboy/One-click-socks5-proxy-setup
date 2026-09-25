@@ -152,10 +152,10 @@ assert_eq "both native gates connect through the nonloopback proxy address" 2 \
     "$(printf '%s\n' "$gates_text" | grep -c 'PROXY_HOST=192.0.2.1')"
 assert_eq "both native gates prove idempotent second uninstall" 2 \
     "$(printf '%s\n' "$gates_text" | grep -c 'uninstall-second.log')"
-assert_contains "systemd proves a fresh reinstall after cleanup" \
-    'reinstall.log' "$systemd_text"
-assert_contains "OpenRC proves a fresh reinstall after cleanup" \
-    'reinstall.log' "$alpine_text"
+assert_contains "systemd proves a fresh reinstall without a language prompt" \
+    '"$work/answers.reinstall" "$work/pass" "$work/reinstall.log"' "$systemd_text"
+assert_contains "OpenRC proves a fresh reinstall without a language prompt" \
+    '"$work/answers.reinstall" "$work/pass" 23456 0' "$alpine_text"
 
 assert_contains "OpenRC install uses the shared redacting command runner" \
     'run-socks5.sh install' "$alpine_text"

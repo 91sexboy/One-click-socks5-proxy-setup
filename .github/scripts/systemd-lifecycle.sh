@@ -134,8 +134,8 @@ if getent passwd xray-socks5 >/dev/null 2>&1 || getent group xray-socks5 >/dev/n
 sudo sh .github/scripts/run-socks5.sh uninstall \
   "$work/answers.uninstall" "$work/uninstall-second.log" "$work/pass.update" "$work/pass"
 # The repeated uninstall is idempotent; a fresh install must recreate the namespace.
-sudo sh -c 'python3 tests/protocol/terminal_install.py "$1" "$2" 23456 1 >"$3"' \
-  sh "$work/answers" "$work/pass" "$work/reinstall.log"
+sudo sh -c 'python3 tests/protocol/terminal_install.py "$1" "$2" 23456 0 >"$3"' \
+  sh "$work/answers.reinstall" "$work/pass" "$work/reinstall.log"
 sudo sh .github/scripts/run-socks5.sh uninstall \
   "$work/answers.uninstall" "$work/uninstall-reinstall.log" "$work/pass"
 sudo sh -c 'sh socks5.sh help </dev/null >"$1"' sh "$work/help-after-uninstall.log"

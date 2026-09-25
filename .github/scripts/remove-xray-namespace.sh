@@ -20,6 +20,17 @@ if exists /var/lib/xray-socks5/state || exists /var/lib/xray-socks5/uninstall ||
     printf 'y\n' >"$answers"
     chmod 0600 "$answers"
     as_root sh socks5.sh uninstall <"$answers"
+    # Production uninstall retains language preference. This script owns a
+    # disposable CI namespace, so remove the safe preference before the next gate.
+    if exists /etc/xray-socks5.lang; then
+        as_root test -f /etc/xray-socks5.lang
+        as_root test ! -L /etc/xray-socks5.lang
+        case "$(as_root stat -c '%U:%G %a' /etc/xray-socks5.lang)" in
+        'root:root 600'|'root:root 644') ;;
+        *) printf 'cleanup: unsafe language preference residue\n' >&2; exit 1 ;;
+        esac
+        as_root rm -f /etc/xray-socks5.lang
+    fi
     exit 0
 fi
 

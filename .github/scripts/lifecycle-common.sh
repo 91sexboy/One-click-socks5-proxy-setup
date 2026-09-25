@@ -10,10 +10,11 @@ lifecycle_write_fixtures() {
     printf 'ciuser\nCISecret_123~x\n' >"$_lcw/pass"
     printf 'ciuser2\nCISecret_456~y\n' >"$_lcw/pass.update"
     { printf '2\ny\n23456\n'; cat "$_lcw/pass"; } >"$_lcw/answers"
+    { printf 'y\n23456\n'; cat "$_lcw/pass"; } >"$_lcw/answers.reinstall"
     { printf 'y\n23456\n'; cat "$_lcw/pass.update"; } >"$_lcw/answers.update"
     : >"$_lcw/answers.empty"
     printf 'y\n' >"$_lcw/answers.uninstall"
-    chmod 0600 "$_lcw/answers" "$_lcw/pass" "$_lcw/answers.update" "$_lcw/pass.update" \
+    chmod 0600 "$_lcw/answers" "$_lcw/answers.reinstall" "$_lcw/pass" "$_lcw/answers.update" "$_lcw/pass.update" \
         "$_lcw/answers.empty" "$_lcw/answers.uninstall"
 }
 

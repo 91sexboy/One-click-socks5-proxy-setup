@@ -148,7 +148,7 @@ if getent passwd xray-socks5 >/dev/null 2>&1 || getent group xray-socks5 >/dev/n
 sh .github/scripts/run-socks5.sh uninstall \
   "$work/answers.uninstall" "$work/uninstall-second.log" "$work/pass.update" "$work/pass"
 python3 tests/protocol/terminal_install.py \
-  "$work/answers" "$work/pass" 23456 0 >"$work/reinstall.log"
+  "$work/answers.reinstall" "$work/pass" 23456 0 >"$work/reinstall.log"
 sh .github/scripts/run-socks5.sh uninstall \
   "$work/answers.uninstall" "$work/uninstall-reinstall.log" "$work/pass"
 sh socks5.sh help </dev/null >"$work/help-after-uninstall.log"
