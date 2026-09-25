@@ -17,23 +17,26 @@ umask 077
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 lifecycle_write_fixtures "$work"
-if ! sh socks5.sh install <"$work/answers" >"$work/install.log" 2>&1; then
-  cat "$work/install.log"
-  exit 1
-fi
+pkgs_before_install=$(apk info | sort | sha256sum)
+sh .github/scripts/run-socks5.sh install \
+  "$work/answers" "$work/install.log" "$work/pass"
 test "$(stat -c "%U:%G %a" /etc/init.d/xray-socks5)" = "root:root 755"
 test "$(stat -c "%U:%G %a" /etc/xray-socks5/config.json)" = "root:xray-socks5 640"
 test "$(stat -c "%U:%G %a" /var/lib/xray-socks5/state)" = "root:root 600"
 # SPEC 5: re-running install over an existing installation is an
 # in-place update. Rotate the credentials, keep the port, and require
 # the new identity in both the config and the state.
-python3 tests/protocol/terminal_install.py \
-  "$work/answers.update" "$work/pass.update" 23456 0 >"$work/update.log"
+sh .github/scripts/run-socks5.sh install \
+  "$work/answers.update" "$work/update.log" "$work/pass.update" "$work/pass"
 sh .github/scripts/lifecycle-update-assert.sh
 rc-service xray-socks5 status
-pkgs_before=$(apk info | sort | sha256sum)
-sh socks5.sh status </dev/null >"$work/status.log"
-sh socks5.sh restart </dev/null
+pkgs_after_install=$(apk info | sort | sha256sum)
+printf 'openrc: package-set before-install=%s after-install=%s\n' \
+  "$pkgs_before_install" "$pkgs_after_install"
+sh .github/scripts/run-socks5.sh status \
+  "$work/answers.empty" "$work/status.log" "$work/pass.update" "$work/pass"
+sh .github/scripts/run-socks5.sh restart \
+  "$work/answers.empty" "$work/restart.log" "$work/pass.update" "$work/pass"
 rc-service xray-socks5 status
 grep -q "mixed" "$work/status.log"
 # SPEC 5: OpenRC recovers a crash with the listener returning, and a
@@ -130,22 +133,25 @@ python3 tests/protocol/duplex_target.py --host 0.0.0.0 --host6 :: \
   --count-file "$work/count" --report-file "$work/report" >"$work/target.log" 2>&1 &
 lifecycle_wait_until 50 0.2 test -s "$work/target.port" || true
 test -s "$work/target.port"
-PASSFILE="$work/pass.update" PORT=23456 TARGET_PORT="$(cat "$work/target.port")" \
+test "$(python3 -c 'import json; print(json.load(open("/etc/xray-socks5/config.json"))["inbounds"][0]["listen"])')" = 0.0.0.0
+PROXY_HOST=192.0.2.1 PASSFILE="$work/pass.update" PORT=23456 TARGET_PORT="$(cat "$work/target.port")" \
   REPORT="$work/report" OUT="$work/probe" \
   sh tests/protocol/run_xray_mixed.sh
-printf "y\n" | sh socks5.sh uninstall
-test "$(apk info | sort | sha256sum)" = "$pkgs_before"
+sh .github/scripts/run-socks5.sh uninstall \
+  "$work/answers.uninstall" "$work/uninstall.log" "$work/pass.update" "$work/pass"
+test "$(apk info | sort | sha256sum)" = "$pkgs_after_install"
 test ! -e /etc/xray-socks5
 test ! -e /var/lib/xray-socks5
 test ! -e /usr/local/libexec/xray-socks5
 test ! -e /etc/init.d/xray-socks5
 test ! -e /run/xray-socks5.pid
+if getent passwd xray-socks5 >/dev/null 2>&1 || getent group xray-socks5 >/dev/null 2>&1; then exit 1; fi
+sh .github/scripts/run-socks5.sh uninstall \
+  "$work/answers.uninstall" "$work/uninstall-second.log" "$work/pass.update" "$work/pass"
+python3 tests/protocol/terminal_install.py \
+  "$work/answers.reinstall" "$work/pass" 23456 0 >"$work/reinstall.log"
+sh .github/scripts/run-socks5.sh uninstall \
+  "$work/answers.uninstall" "$work/uninstall-reinstall.log" "$work/pass"
 sh socks5.sh help </dev/null >"$work/help-after-uninstall.log"
 grep -q 'Usage: sh socks5.sh' "$work/help-after-uninstall.log"
-install_secret=$(sed -n '2p' "$work/pass")
-update_secret=$(sed -n '2p' "$work/pass.update")
-lifecycle_no_credential_in "$work/install.log" "$install_secret"
-lifecycle_no_credential_in "$work/status.log" "$install_secret"
-lifecycle_no_credential_in "$work/status.log" "$update_secret"
-lifecycle_no_credential_in "$work/update.log" "$install_secret"
-lifecycle_no_credential_in "$work/update.log" "$update_secret"
+lifecycle_assert_logs_redacted "$work"

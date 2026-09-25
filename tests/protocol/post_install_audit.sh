@@ -42,17 +42,18 @@ check() {
 
 # Modes carry the actual owner and mode into the message: "expected 640" alone
 # does not say whether the file was created wrong or changed afterwards.
-check_mode() {
+check_contract() {
     _cmlabel=$1
     _cmpath=$2
-    _cmwant=$3
+    _cmwant_owner=$3
+    _cmwant_mode=$4
     if ! _cmgot=$(stat -c '%U:%G %a' "$_cmpath" 2>/dev/null); then
         printf 'audit failed on %s: %s is missing\n' "$INIT" "$_cmlabel" >&2
         exit 1
     fi
-    if [ "${_cmgot##* }" != "$_cmwant" ]; then
-        printf 'audit failed on %s: %s is [%s], expected mode %s\n' \
-            "$INIT" "$_cmlabel" "$_cmgot" "$_cmwant" >&2
+    if [ "$_cmgot" != "$_cmwant_owner $_cmwant_mode" ]; then
+        printf 'audit failed on %s: %s is [%s], expected %s %s\n' \
+            "$INIT" "$_cmlabel" "$_cmgot" "$_cmwant_owner" "$_cmwant_mode" >&2
         exit 1
     fi
 }
@@ -65,11 +66,11 @@ check "binary is a regular file" test -f "$bin"
 check "binary is not a symlink" test ! -L "$bin"
 check "service artifact is a regular file" test -f "$unit"
 check "service artifact is not a symlink" test ! -L "$unit"
-check_mode config "$cfg" 640
-check_mode state "$state" 600
-check_mode binary "$bin" 755
-check_mode "service artifact" "$unit" "$unit_mode"
-check_mode passfile "$PASSFILE" 600
+check_contract config "$cfg" root:xray-socks5 640
+check_contract state "$state" root:root 600
+check_contract binary "$bin" root:root 755
+check_contract "service artifact" "$unit" root:root "$unit_mode"
+check_contract passfile "$PASSFILE" root:root 600
 check "passfile carries a password line" \
     test "$(sed -n '2p' "$PASSFILE" | wc -c | tr -d '[:space:]')" -gt 1
 

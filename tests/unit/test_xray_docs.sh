@@ -90,8 +90,12 @@ assert_contains "Alpine gate runs the independent protocol probe" \
     'sh tests/protocol/run_xray_mixed.sh' "$alpine_text"
 assert_contains "Alpine gate keeps credentials out of argv" '/proc/$live_pid/cmdline' "$alpine_text"
 assert_contains "Alpine gate keeps credentials out of the environment" '/proc/$live_pid/environ' "$alpine_text"
-assert_contains "Alpine gate proves no packages are installed outside install" \
-    'test "$(apk info | sort | sha256sum)" = "$pkgs_before"' "$alpine_text"
+assert_contains "Alpine gate snapshots packages before installation" \
+    'pkgs_before_install=$(apk info | sort | sha256sum)' "$alpine_text"
+assert_contains "Alpine gate records its package-set baseline" \
+    'openrc: package-set before-install=%s after-install=%s' "$alpine_text"
+assert_contains "Alpine gate proves uninstall retains installed dependencies" \
+    'test "$(apk info | sort | sha256sum)" = "$pkgs_after_install"' "$alpine_text"
 assert_contains "Alpine gate restores the config in place" \
     'cat "$work/good.json" >/etc/xray-socks5/config.json' "$alpine_text"
 assert_contains "systemd gate restores the config in place" 'cat "$1" >"$2"' "$systemd_text"
@@ -143,5 +147,29 @@ assert_eq "both native gates run the mixed gate" 2 \
     "$(printf '%s\n' "$gates_text" | grep -c 'run_xray_mixed.sh')"
 assert_eq "both native duplex targets answer at denied addresses too" 2 \
     "$(printf '%s\n' "$gates_text" | grep -c 'duplex_target.py --host 0.0.0.0 --host6 ::')"
+
+assert_eq "both native gates prove the configured production listen address" 2 \
+    "$(printf '%s\n' "$gates_text" | grep -c '\["inbounds"\]\[0\]\["listen"\]')"
+assert_eq "both native gates connect through the nonloopback proxy address" 2 \
+    "$(printf '%s\n' "$gates_text" | grep -c 'PROXY_HOST=192.0.2.1')"
+assert_eq "both native gates prove idempotent second uninstall" 2 \
+    "$(printf '%s\n' "$gates_text" | grep -c 'uninstall-second.log')"
+assert_contains "systemd proves a fresh reinstall without a language prompt" \
+    '"$work/answers.reinstall" "$work/pass" "$work/reinstall.log"' "$systemd_text"
+assert_contains "OpenRC proves a fresh reinstall without a language prompt" \
+    '"$work/answers.reinstall" "$work/pass" 23456 0' "$alpine_text"
+
+assert_contains "OpenRC install uses the shared redacting command runner" \
+    'run-socks5.sh install' "$alpine_text"
+assert_contains "systemd fixture credentials become root-owned before execution" \
+    'sudo chown root:root "$work"/answers* "$work"/pass*' "$systemd_text"
+assert_contains "systemd protocol gate reads the root-only passfile as root" \
+    'sudo env PROXY_HOST=192.0.2.1 PASSFILE="$work/pass"' "$systemd_text"
+
+assert_contains "systemd parses the protected production config as root" \
+    'sudo python3 -c' "$systemd_text"
+
+assert_contains "systemd removes root-owned probe scratch before workdir cleanup" \
+    'sudo rm -rf "$work/probe"' "$systemd_text"
 
 t_summary

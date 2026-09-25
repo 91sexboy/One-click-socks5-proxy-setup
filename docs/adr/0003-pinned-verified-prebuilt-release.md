@@ -57,3 +57,15 @@ recorded hash on every later command. See `s5_asset_select` in the
   unverified binary (fail closed).
 - No GeoIP database ever reaches disk, which is why the destination boundary uses
   literal CIDRs ([ADR-0002](0002-literal-cidr-destination-boundary.md)).
+
+## Managed-state compatibility
+
+Recorded release, commit, archive, and binary metadata identify the artifact that
+is already installed. They are not required to equal the current script's release
+pins for inspection, restart, or uninstall. A recognized older complete state is
+validated against its own recorded binary and service/config digests, while an
+update independently selects and verifies the current script's pinned candidate.
+Historical state data can therefore never satisfy current download verification.
+Unknown schemas, malformed fields, ownership drift, and digest drift fail closed
+and preserve resources; a trusted uninstall recovery record is the sole exception
+that permits resumable removal of the resources it recorded.

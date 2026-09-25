@@ -161,6 +161,7 @@ test_config_symlink() {
     assert_eq "a symlinked config is refused even with matching content" 1 "$T_STATUS"
     rm -f "$S5_CFG"
     mv "$S5_TEST_ROOT/realcfg" "$S5_CFG"
+    chmod 0640 "$S5_CFG"
     t_run s5_state_load
     assert_eq "the regular config still loads after the symlink check" 0 "$T_STATUS"
 }
@@ -267,33 +268,17 @@ test_restore_failure() {
         assert_contains "restore failure identifies retained recovery data" \
             'recovery copies retained' "$(cat "$S5_TEST_ROOT/restore.log")"
         if [ -f "$S5_TXNDIR/old.config.json" ] && [ -f "$S5_TXNDIR/old.state" ]; then
-            _restore_events=$(cat "$S5_TEST_ROOT/transcript")
+            # The next command recovers the complete pair before asking for a
+            # new update, then may proceed through the ordinary update path.
             (
                 s5_precheck() { return 0; }
                 s5_confirm_update() { printf 'update confirmation reached\n' >>"$S5_TEST_ROOT/transcript"; }
                 s5_cmd_install
             ) >"$S5_TEST_ROOT/next-install.log" 2>&1
-            assert_ne "a later install cannot overwrite pending recovery data" 0 "$?"
-            if [ "$_restore_target" = state ]; then
-                assert_contains "pending recovery is reported before asking to update" \
-                    'pending recovery directory' "$(cat "$S5_TEST_ROOT/next-install.log")"
-            fi
-            assert_eq "a later install preserves retained config backup" "$_restore_cfg" \
-                "$(t_sha256 "$S5_TXNDIR/old.config.json" 2>/dev/null)"
-            assert_eq "a later install preserves retained state backup" "$_restore_state" \
-                "$(t_sha256 "$S5_TXNDIR/old.state" 2>/dev/null)"
-            assert_eq "a later install leaves the service untouched until recovery" \
-                "$_restore_events" "$(cat "$S5_TEST_ROOT/transcript")"
-            if [ ! -f "$S5_TXNDIR/old.config.json" ] || [ ! -f "$S5_TXNDIR/old.state" ]; then
-                t_bad "a failed restore must retain both recovery backups before retry"
-                continue
-            fi
-            ( s5_update_rollback "$S5_TXNDIR/old.config.json" "$S5_TXNDIR/old.state" ) \
-                >"$S5_TEST_ROOT/retry.log" 2>&1
-            assert_eq "retained backups allow a later restore" 0 "$?"
+            assert_eq "a later install recovers and completes" 0 "$?"
+            assert_contains "recovery completes before asking to update"                 'update confirmation reached' "$(cat "$S5_TEST_ROOT/transcript")"
+            assert_file_absent "successful recovery and update remove the transaction" "$S5_TXNDIR"
             t_xray_assert_healthy
-            assert_file_absent "successful restore removes the transaction" "$S5_TXNDIR"
-            assert_eq "successful restore starts the previous port" 23456 "$(cat "$S5_TEST_ROOT/svc_active")"
         else
             t_bad "a failed restore must retain both recovery backups"
         fi
@@ -459,7 +444,7 @@ s5t_txn_case() {
     *) assert_file_absent "$_txn_fault cleanup removes the owned transaction" "$S5_TXNDIR" ;;
     esac
     case "$_txn_fault" in
-    wait) assert_file_absent "failed stop observation does not claim a running service" "$S5_TEST_ROOT/svc_active" ;;
+    wait) assert_eq "failed stop observation restores the old listener" 23456         "$(cat "$S5_TEST_ROOT/svc_active")" ;;
     restart) : ;;
     *) assert_eq "$_txn_fault leaves or restores the old listener" 23456 "$(cat "$S5_TEST_ROOT/svc_active")" ;;
     esac
@@ -555,7 +540,551 @@ operation cancelled.' "$T_OUT" ;;
     done
 }
 
-SCENARIOS='uninstall_confirmation uninstall_messages family update owned_port rejected_candidate listener_failure rejected_command publish_signal config_symlink uninstall_leftovers uninstall_residue verifier_cleanup txn_mkdir_failure txn_copy_failure txn_chmod_failure stop_failure wait_stopped_failure publication_failure new_start_failure dataplane_failure state_write_failure rollback_restart_failure restore_failure uninstall_unknown rollback_exit'
+test_uninstall_group_residue() {
+    t_xray_fixture 23456
+    s5_precheck() { return 0; }
+    printf '900\n' >"$S5_TEST_ROOT/group-exists"
+    printf 'y\n' >"$S5_TEST_ROOT/answers.uninstall"
+    t_run s5_cmd_uninstall <"$S5_TEST_ROOT/answers.uninstall"
+    assert_ne "group-only residue is not reported absent" 0 "$T_STATUS"
+    assert_file_exists "foreign group-only residue is preserved" "$S5_TEST_ROOT/group-exists"
+    rm -f "$S5_TEST_ROOT/group-exists"
+    t_run s5_cmd_uninstall <"$S5_TEST_ROOT/answers.uninstall"
+    assert_eq "clean namespace is idempotently absent after residue removal" 0 "$T_STATUS"
+    s5_install_new
+    assert_eq "fresh install succeeds after residue removal" 0 "$?"
+}
+
+s5t_uninstall_injector() {
+    [ "$1" = "$S5T_UNINSTALL_FAIL_PHASE" ] || return 0
+    [ -f "$S5_TEST_ROOT/uninstall-injected" ] && return 0
+    : >"$S5_TEST_ROOT/uninstall-injected"
+    return 79
+}
+
+test_uninstall_resume() {
+    for _urp in prepared stopped disabled service-artifact-removed config-removed \
+        binary-removed manager-reloaded account-removed state-finalizing complete; do
+        t_xray_fixture 23456
+        t_xray_install
+        s5_precheck() { return 0; }
+        printf 'y\n' >"$S5_TEST_ROOT/answers.uninstall"
+        S5T_UNINSTALL_FAIL_PHASE=$_urp
+        S5_UNINSTALL_INJECT=s5t_uninstall_injector
+        t_run s5_cmd_uninstall <"$S5_TEST_ROOT/answers.uninstall"
+        assert_ne "$_urp injection fails the first uninstall" 0 "$T_STATUS"
+        assert_file_exists "$_urp injection leaves durable recovery" "$S5_UNINSTALL_STATE"
+        unset S5_UNINSTALL_INJECT
+        t_run s5_cmd_uninstall </dev/null
+        assert_eq "$_urp recovery resumes in a fresh invocation" 0 "$T_STATUS"
+        assert_file_absent "$_urp recovery removes state namespace" "$S5_STATEDIR"
+        assert_file_absent "$_urp recovery removes binary namespace" "$S5_PREFIX"
+        assert_file_absent "$_urp recovery removes config namespace" "$S5_SYSCONFDIR"
+    done
+}
+
+s5t_uninstall_signal_injector() {
+    [ "$1" = "$S5T_UNINSTALL_SIGNAL_PHASE" ] || return 0
+    [ -f "$S5_TEST_ROOT/uninstall-signalled" ] && return 0
+    : >"$S5_TEST_ROOT/uninstall-signalled"
+    case "$S5T_UNINSTALL_SIGNAL" in
+    HUP) s5_on_signal_lock 129 ;;
+    INT) s5_on_signal_lock 130 ;;
+    TERM) s5_on_signal_lock 143 ;;
+    esac
+}
+
+test_uninstall_signal_resume() {
+    for _ursig in HUP INT TERM; do
+        t_xray_fixture 23456
+        t_xray_install
+        s5_precheck() { return 0; }
+        printf 'y\n' >"$S5_TEST_ROOT/answers.uninstall"
+        S5T_UNINSTALL_SIGNAL_PHASE=disabled
+        S5T_UNINSTALL_SIGNAL=$_ursig
+        S5_UNINSTALL_INJECT=s5t_uninstall_signal_injector
+        ( s5_cmd_uninstall <"$S5_TEST_ROOT/answers.uninstall" ) \
+            >"$S5_TEST_ROOT/uninstall-signal.log" 2>&1
+        _urs=$?
+        case "$_ursig" in HUP) _urwant=129 ;; INT) _urwant=130 ;; TERM) _urwant=143 ;; esac
+        assert_eq "$_ursig preserves its signal status" "$_urwant" "$_urs"
+        assert_file_exists "$_ursig leaves durable recovery" "$S5_UNINSTALL_STATE"
+        unset S5_UNINSTALL_INJECT
+        t_run s5_cmd_uninstall </dev/null
+        assert_eq "$_ursig recovery resumes" 0 "$T_STATUS"
+        assert_file_absent "$_ursig recovery removes state namespace" "$S5_STATEDIR"
+    done
+}
+
+test_uninstall_resume_drift() {
+    for _urd_phase in disabled service-artifact-removed config-removed; do
+        t_xray_fixture 23456
+        t_xray_install
+        s5_precheck() { return 0; }
+        printf 'y\n' >"$S5_TEST_ROOT/answers.uninstall"
+        S5T_UNINSTALL_FAIL_PHASE=$_urd_phase
+        S5_UNINSTALL_INJECT=s5t_uninstall_injector
+        t_run s5_cmd_uninstall <"$S5_TEST_ROOT/answers.uninstall"
+        assert_ne "$_urd_phase setup stops at its checkpoint" 0 "$T_STATUS"
+        unset S5_UNINSTALL_INJECT
+        case "$_urd_phase" in
+        disabled) _urd_path=$S5_SERVICE_ARTIFACT ;;
+        service-artifact-removed) _urd_path=$S5_CFG ;;
+        config-removed) _urd_path=$S5_BIN ;;
+        esac
+        printf 'foreign replacement\n' >>"$_urd_path"
+        _urd_hash=$(t_sha256 "$_urd_path")
+        t_run s5_cmd_uninstall </dev/null
+        assert_ne "$_urd_phase resume refuses replacement drift" 0 "$T_STATUS"
+        assert_eq "$_urd_phase resume preserves the replacement" "$_urd_hash" \
+            "$(t_sha256 "$_urd_path")"
+        assert_file_exists "$_urd_phase drift retains recovery evidence" "$S5_UNINSTALL_STATE"
+    done
+
+    t_xray_fixture 23456
+    t_xray_install
+    s5_precheck() { return 0; }
+    printf 'y\n' >"$S5_TEST_ROOT/answers.uninstall"
+    S5T_UNINSTALL_FAIL_PHASE=disabled
+    S5_UNINSTALL_INJECT=s5t_uninstall_injector
+    t_run s5_cmd_uninstall <"$S5_TEST_ROOT/answers.uninstall"
+    assert_ne "same-byte replacement setup stops at disabled" 0 "$T_STATUS"
+    unset S5_UNINSTALL_INJECT
+    cp "$S5_SERVICE_ARTIFACT" "$S5_TEST_ROOT/replacement-unit"
+    chmod 0644 "$S5_TEST_ROOT/replacement-unit"
+    rm "$S5_SERVICE_ARTIFACT"
+    mv "$S5_TEST_ROOT/replacement-unit" "$S5_SERVICE_ARTIFACT"
+    _urd_hash=$(t_sha256 "$S5_SERVICE_ARTIFACT")
+    t_run s5_cmd_uninstall </dev/null
+    assert_ne "resume refuses a same-byte service replacement" 0 "$T_STATUS"
+    assert_eq "resume preserves the same-byte replacement" "$_urd_hash" \
+        "$(t_sha256 "$S5_SERVICE_ARTIFACT")"
+
+    t_xray_fixture 23456
+    t_xray_install
+    s5_precheck() { return 0; }
+    printf 'y\n' >"$S5_TEST_ROOT/answers.uninstall"
+    S5T_UNINSTALL_FAIL_PHASE=account-removed
+    S5_UNINSTALL_INJECT=s5t_uninstall_injector
+    t_run s5_cmd_uninstall <"$S5_TEST_ROOT/answers.uninstall"
+    assert_ne "account-removed setup stops at its checkpoint" 0 "$T_STATUS"
+    unset S5_UNINSTALL_INJECT
+    printf '901\n' >"$S5_TEST_ROOT/group-exists"
+    t_run s5_cmd_uninstall </dev/null
+    assert_ne "resume refuses a recreated foreign group" 0 "$T_STATUS"
+    assert_file_exists "resume preserves a recreated foreign group" "$S5_TEST_ROOT/group-exists"
+    assert_file_exists "account drift retains recovery evidence" "$S5_UNINSTALL_STATE"
+}
+
+test_uninstall_phase_gap_resume() {
+    for _ugr_case in disabled:unit service-artifact-removed:config config-removed:binary account-removed:state; do
+        _ugr_phase=${_ugr_case%%:*}
+        _ugr_resource=${_ugr_case#*:}
+        t_xray_fixture 23456
+        t_xray_install
+        s5_precheck() { return 0; }
+        printf 'y\n' >"$S5_TEST_ROOT/answers.uninstall"
+        S5T_UNINSTALL_FAIL_PHASE=$_ugr_phase
+        S5_UNINSTALL_INJECT=s5t_uninstall_injector
+        t_run s5_cmd_uninstall <"$S5_TEST_ROOT/answers.uninstall"
+        assert_ne "$_ugr_phase setup stops at its checkpoint" 0 "$T_STATUS"
+        unset S5_UNINSTALL_INJECT
+        case "$_ugr_resource" in
+        unit) rm -f "$S5_SERVICE_ARTIFACT" ;;
+        config) rm -f "$S5_CFG" ;;
+        binary) rm -f "$S5_BIN" ;;
+        state) rm -f "$S5_STATE" ;;
+        esac
+        t_run s5_cmd_uninstall </dev/null
+        assert_eq "$_ugr_phase resumes when its next removal already completed" 0 "$T_STATUS"
+        assert_file_absent "$_ugr_phase gap recovery removes state namespace" "$S5_STATEDIR"
+    done
+}
+
+test_uninstall_final_window() {
+    t_xray_fixture 23456
+    t_xray_install
+    s5_precheck() { return 0; }
+    printf 'y\n' >"$S5_TEST_ROOT/answers.uninstall"
+    S5T_UNINSTALL_FAIL_PHASE=complete-moved
+    S5_UNINSTALL_INJECT=s5t_uninstall_injector
+    t_run s5_cmd_uninstall <"$S5_TEST_ROOT/answers.uninstall"
+    assert_ne "final-marker window fails the first uninstall" 0 "$T_STATUS"
+    assert_file_exists "final-marker window retains ownership evidence" "$S5_UNINSTALL_FINAL"
+    assert_file_absent "final-marker move removes the in-directory record" "$S5_UNINSTALL_STATE"
+    unset S5_UNINSTALL_INJECT
+    t_run s5_cmd_uninstall </dev/null
+    assert_eq "final-marker window resumes" 0 "$T_STATUS"
+    assert_file_absent "final-marker recovery removes the state directory" "$S5_STATEDIR"
+    assert_file_absent "final-marker recovery removes its last marker" "$S5_UNINSTALL_FINAL"
+}
+
+s5t_make_older_state() {
+    _mos_oldbin=$S5_TEST_ROOT/older-xray
+    printf '#!/bin/sh\nprintf older\\n\n' >"$_mos_oldbin"
+    chmod 0755 "$_mos_oldbin"
+    cp "$_mos_oldbin" "$S5_BIN"
+    _mos_sha=$(t_sha256 "$S5_BIN")
+    _mos_size=$(wc -c <"$S5_BIN" | tr -d '[:space:]')
+    awk -F '\t' -v sha="$_mos_sha" -v size="$_mos_size" '
+        BEGIN { OFS="\t" }
+        $1 == "release" { $2="v25.1.1" }
+        $1 == "commit" { $2="1111111111111111111111111111111111111111" }
+        $1 == "archive_size" { $2="123456" }
+        $1 == "archive_sha256" { $2="2222222222222222222222222222222222222222222222222222222222222222" }
+        $1 == "binary_size" { $2=size }
+        $1 == "binary_sha256" { $2=sha }
+        { print }
+    ' "$S5_STATE" >"$S5_STATE.next"
+    mv "$S5_STATE.next" "$S5_STATE"
+    chmod 0600 "$S5_STATE"
+}
+
+test_older_release_operations() {
+    t_xray_fixture 23999
+    t_xray_install
+    s5t_make_older_state
+    s5_precheck() { return 0; }
+    t_run s5_cmd_restart
+    assert_eq "older release restart succeeds through the operate interface" 0 "$T_STATUS"
+    assert_eq "older release restart keeps its installed listener" 23999 \
+        "$(cat "$S5_TEST_ROOT/svc_active")"
+
+    printf 'y\n' >"$S5_TEST_ROOT/answers.uninstall"
+    t_run s5_cmd_uninstall <"$S5_TEST_ROOT/answers.uninstall"
+    assert_eq "older release uninstall succeeds through the uninstall interface" 0 "$T_STATUS"
+    assert_file_absent "older release uninstall removes the namespace" "$S5_STATEDIR"
+    assert_file_absent "older release uninstall removes the binary" "$S5_BIN"
+}
+
+test_older_release_update() {
+    t_xray_fixture 23999
+    t_xray_install
+    _oru_oldbin=$S5_TEST_ROOT/older-xray
+    printf '#!/bin/sh\nprintf older\\n\n' >"$_oru_oldbin"
+    chmod 0755 "$_oru_oldbin"
+    cp "$_oru_oldbin" "$S5_BIN"
+    _oru_oldsha=$(t_sha256 "$S5_BIN")
+    awk -F '\t' -v sha="$_oru_oldsha" -v size="$(wc -c <"$S5_BIN" | tr -d '[:space:]')" '
+        BEGIN { OFS="\t" }
+        $1 == "release" { $2="v25.1.1" }
+        $1 == "commit" { $2="1111111111111111111111111111111111111111" }
+        $1 == "archive_size" { $2="123456" }
+        $1 == "archive_sha256" { $2="2222222222222222222222222222222222222222222222222222222222222222" }
+        $1 == "binary_size" { $2=size }
+        $1 == "binary_sha256" { $2=sha }
+        { print }
+    ' "$S5_STATE" >"$S5_STATE.next"
+    mv "$S5_STATE.next" "$S5_STATE"
+    chmod 0600 "$S5_STATE"
+    _oru_downloaded=0
+    s5_download_engine() {
+        _oru_downloaded=1
+        cp "$S5_TEST_ROOT/asset-xray" "$S5_BIN"
+        chmod 0755 "$S5_BIN"
+        S5_BINARY_SHA256=$S5_ASSET_BINARY_SHA256
+    }
+    s5_prompt_port() { S5_PORT=23999; return 0; }
+    s5_install_update
+    assert_eq "older release updates successfully" 0 "$?"
+    assert_eq "older release update downloads the current candidate" 1 "$_oru_downloaded"
+    assert_eq "updated state records current release" "$S5_XRAY_VERSION" "$(t_state_get release)"
+    assert_eq "updated binary matches current candidate" "$S5_ASSET_BINARY_SHA256" "$(t_sha256 "$S5_BIN")"
+    t_xray_assert_healthy
+}
+
+test_older_release_download_failure() {
+    t_xray_fixture 23999
+    t_xray_install
+    _ord_bin=$(t_sha256 "$S5_BIN")
+    _ord_cfg=$(t_sha256 "$S5_CFG")
+    awk -F '\t' '
+        BEGIN { OFS="\t" }
+        $1 == "release" { $2="v25.1.1" }
+        $1 == "commit" { $2="1111111111111111111111111111111111111111" }
+        $1 == "archive_size" { $2="123456" }
+        $1 == "archive_sha256" { $2="2222222222222222222222222222222222222222222222222222222222222222" }
+        { print }
+    ' "$S5_STATE" >"$S5_STATE.next"
+    mv "$S5_STATE.next" "$S5_STATE"
+    chmod 0600 "$S5_STATE"
+    _ord_state=$(t_sha256 "$S5_STATE")
+    s5_download_engine() { printf 'candidate bytes\n' >"$S5_BIN"; return 1; }
+    s5_prompt_port() { S5_PORT=23999; return 0; }
+    s5_install_update
+    assert_ne "older release candidate download failure aborts update" 0 "$?"
+    s5_cleanup
+    assert_eq "download failure restores the exact installed binary" "$_ord_bin" "$(t_sha256 "$S5_BIN")"
+    assert_eq "download failure preserves config" "$_ord_cfg" "$(t_sha256 "$S5_CFG")"
+    assert_eq "download failure preserves historical state" "$_ord_state" "$(t_sha256 "$S5_STATE")"
+    assert_eq "download failure never stops the old listener" 23999 "$(cat "$S5_TEST_ROOT/svc_active")"
+    assert_file_absent "download failure removes transaction evidence" "$S5_TXNDIR"
+}
+
+test_transaction_contract_drift() {
+    for _tcd_path in old.config.json old.state old.xray committed stopping; do
+        t_xray_fixture 23999
+        t_xray_install
+        mkdir -m 0700 "$S5_TXNDIR"
+        case "$_tcd_path" in
+        old.config.json) cp "$S5_CFG" "$S5_TXNDIR/old.config.json" ;;
+        old.state) cp "$S5_STATE" "$S5_TXNDIR/old.state" ;;
+        old.xray) cp "$S5_BIN" "$S5_TXNDIR/old.xray" ;;
+        committed) printf 'committed\n' >"$S5_TXN_COMMITTED" ;;
+        stopping) printf 'stopping\n' >"$S5_TXN_STOPPING" ;;
+        esac
+        chmod 0644 "$S5_TXNDIR/$_tcd_path"
+        t_run s5_transaction_recover
+        assert_ne "transaction rejects mode drift on $_tcd_path" 0 "$T_STATUS"
+        assert_file_exists "transaction preserves drifted $_tcd_path" "$S5_TXNDIR/$_tcd_path"
+    done
+
+    t_xray_fixture 23999
+    t_xray_install
+    mkdir -m 0700 "$S5_TXNDIR"
+    cp "$S5_BIN" "$S5_TXNDIR/old.xray"
+    chmod 0600 "$S5_TXNDIR/old.xray"
+    assert_mode "binary recovery backup is data-only" 600 "$S5_TXNDIR/old.xray"
+    s5_cleanup_transaction
+    assert_eq "valid binary backup cleanup succeeds" 0 "$?"
+}
+
+test_rollback_backup_drift() {
+    for _rbd_target in config state binary; do
+        t_xray_fixture 23456
+        t_xray_install
+        mkdir -m 0700 "$S5_TXNDIR"
+        cp "$S5_CFG" "$S5_TXNDIR/old.config.json"
+        cp "$S5_STATE" "$S5_TXNDIR/old.state"
+        chmod 0600 "$S5_TXNDIR/old.config.json" "$S5_TXNDIR/old.state"
+        case "$_rbd_target" in
+        config) printf 'foreign config\n' >>"$S5_TXNDIR/old.config.json" ;;
+        state) printf 'foreign\tfield\n' >>"$S5_TXNDIR/old.state" ;;
+        binary)
+            cp "$S5_BIN" "$S5_TXNDIR/old.xray"
+            chmod 0600 "$S5_TXNDIR/old.xray"
+            printf 'foreign binary\n' >>"$S5_TXNDIR/old.xray" ;;
+        esac
+        _rbd_live_cfg=$(t_sha256 "$S5_CFG")
+        _rbd_live_state=$(t_sha256 "$S5_STATE")
+        t_run s5_update_rollback "$S5_TXNDIR/old.config.json" "$S5_TXNDIR/old.state"
+        assert_ne "rollback refuses $_rbd_target backup drift" 0 "$T_STATUS"
+        assert_eq "$_rbd_target drift leaves live config unchanged" \
+            "$_rbd_live_cfg" "$(t_sha256 "$S5_CFG")"
+        assert_eq "$_rbd_target drift leaves live state unchanged" \
+            "$_rbd_live_state" "$(t_sha256 "$S5_STATE")"
+        assert_dir_exists "$_rbd_target drift retains recovery evidence" "$S5_TXNDIR"
+    done
+}
+
+test_uninstall_directory_drift() {
+    for _udd_case in state-finalizing:config state-finalizing:prefix complete-moved:state; do
+        _udd_phase=${_udd_case%%:*}
+        _udd_dir=${_udd_case#*:}
+        t_xray_fixture 23456
+        t_xray_install
+        s5_precheck() { return 0; }
+        printf 'y\n' >"$S5_TEST_ROOT/answers.uninstall"
+        S5T_UNINSTALL_FAIL_PHASE=$_udd_phase
+        S5_UNINSTALL_INJECT=s5t_uninstall_injector
+        t_run s5_cmd_uninstall <"$S5_TEST_ROOT/answers.uninstall"
+        assert_ne "$_udd_phase setup reaches directory window" 0 "$T_STATUS"
+        unset S5_UNINSTALL_INJECT
+        case "$_udd_dir" in
+        config) _udd_path=$S5_SYSCONFDIR ;;
+        prefix) _udd_path=$S5_PREFIX ;;
+        state) _udd_path=$S5_STATEDIR ;;
+        esac
+        _udd_hold=$S5_TEST_ROOT/held-$_udd_dir
+        mv "$_udd_path" "$_udd_hold"
+        case "$_udd_dir" in state) _udd_mode=0700 ;; prefix) _udd_mode=0755 ;; config) _udd_mode=0750 ;; esac
+        mkdir -m "$_udd_mode" "$_udd_path"
+        t_run s5_cmd_uninstall </dev/null
+        assert_ne "$_udd_phase refuses replaced $_udd_dir directory" 0 "$T_STATUS"
+        assert_dir_exists "$_udd_phase preserves replaced $_udd_dir directory" "$_udd_path"
+    done
+}
+
+test_transaction_all_commands() {
+    for _tac_command in status restart uninstall; do
+        t_xray_fixture 23999
+        t_xray_install
+        s5_precheck() { return 0; }
+        mkdir -m 0700 "$S5_TXNDIR"
+        cp "$S5_CFG" "$S5_TXNDIR/old.config.json"
+        cp "$S5_STATE" "$S5_TXNDIR/old.state"
+        chmod 0600 "$S5_TXNDIR/old.config.json" "$S5_TXNDIR/old.state"
+        case "$_tac_command" in
+        status) t_run s5_cmd_status ;;
+        restart) t_run s5_cmd_restart ;;
+        uninstall)
+            printf 'n\n' >"$S5_TEST_ROOT/answers.uninstall"
+            t_run s5_cmd_uninstall <"$S5_TEST_ROOT/answers.uninstall" ;;
+        esac
+        case "$_tac_command" in uninstall) assert_ne "uninstall cancellation stays nonzero" 0 "$T_STATUS" ;; *) assert_eq "$_tac_command succeeds after recovery" 0 "$T_STATUS" ;; esac
+        assert_file_absent "$_tac_command leaves no pre-stop transaction residue" "$S5_TXNDIR"
+    done
+
+    t_xray_fixture 23999
+    t_xray_install
+    mkdir -m 0700 "$S5_TXNDIR"
+    cp "$S5_CFG" "$S5_TXNDIR/old.config.json"
+    cp "$S5_STATE" "$S5_TXNDIR/old.state"
+    chmod 0600 "$S5_TXNDIR/old.config.json" "$S5_TXNDIR/old.state"
+    printf 'committed\n' >"$S5_TXN_COMMITTED"
+    chmod 0600 "$S5_TXN_COMMITTED"
+    printf 'drift\n' >>"$S5_CFG"
+    t_run s5_open_managed_state inspect
+    assert_eq "committed cleanup refuses invalid new state" 5 "$T_STATUS"
+    assert_file_exists "committed cleanup preserves old config backup on drift" "$S5_TXNDIR/old.config.json"
+    assert_file_exists "committed cleanup preserves old state backup on drift" "$S5_TXNDIR/old.state"
+    assert_file_exists "committed cleanup preserves its marker on drift" "$S5_TXN_COMMITTED"
+}
+
+test_sha256_binary_update_failure() {
+    t_xray_fixture 23999
+    t_xray_install
+    _sbu_old_bin=$(t_sha256 "$S5_BIN")
+    _sbu_old_cfg=$(t_sha256 "$S5_CFG")
+    _sbu_old_state=$(t_sha256 "$S5_STATE")
+    awk -F '\t' '
+        BEGIN { OFS="\t" }
+        $1 == "release" { $2="v25.1.1" }
+        $1 == "commit" { $2="1111111111111111111111111111111111111111" }
+        $1 == "archive_size" { $2="123456" }
+        $1 == "archive_sha256" { $2="2222222222222222222222222222222222222222222222222222222222222222" }
+        { print }
+    ' "$S5_STATE" >"$S5_STATE.next"
+    mv "$S5_STATE.next" "$S5_STATE"
+    chmod 0600 "$S5_STATE"
+    _sbu_old_state=$(t_sha256 "$S5_STATE")
+    _sbu_real_sha=/usr/bin/sha256sum
+    [ -x "$_sbu_real_sha" ] || _sbu_real_sha=/bin/sha256sum
+    _sbu_digest_fail=0
+    s5_sha256_command() {
+        if [ "$_sbu_digest_fail" = 1 ] && [ "$1" = "$S5_BIN" ]; then return 91; fi
+        "$_sbu_real_sha" "$1"
+    }
+    s5_download_engine() {
+        printf '#!/bin/sh\nprintf candidate\\n\n' >"$S5_BIN"
+        chmod 0755 "$S5_BIN"
+        _sbu_digest_fail=1
+        s5_record_digest binary "$S5_BIN" || return 1
+        S5_BINARY_SHA256=$S5_RECORDED_DIGEST
+    }
+    s5_prompt_port() { S5_PORT=23999; return 0; }
+    s5_install_update
+    assert_ne "candidate binary digest failure aborts update" 0 "$?"
+    s5_cleanup
+    assert_eq "candidate failure restores the exact old binary" "$_sbu_old_bin" "$(t_sha256 "$S5_BIN")"
+    assert_eq "candidate failure preserves config" "$_sbu_old_cfg" "$(t_sha256 "$S5_CFG")"
+    assert_eq "candidate failure preserves historical state" "$_sbu_old_state" "$(t_sha256 "$S5_STATE")"
+    assert_eq "candidate failure keeps the old listener" 23999 "$(cat "$S5_TEST_ROOT/svc_active")"
+    assert_file_absent "candidate failure removes transaction evidence" "$S5_TXNDIR"
+}
+
+test_transaction_unknown_residue() {
+    for _tur_kind in file directory symlink; do
+        t_xray_fixture 23999
+        t_xray_install
+        mkdir -m 0700 "$S5_TXNDIR"
+        cp "$S5_CFG" "$S5_TXNDIR/old.config.json"
+        cp "$S5_STATE" "$S5_TXNDIR/old.state"
+        chmod 0600 "$S5_TXNDIR/old.config.json" "$S5_TXNDIR/old.state"
+        _tur_path=$S5_TXNDIR/operator-note
+        case "$_tur_kind" in
+        file) printf 'preserve\n' >"$_tur_path" ;;
+        directory) mkdir "$_tur_path" ;;
+        symlink) ln -s "$S5_TEST_ROOT/no-target" "$_tur_path" ;;
+        esac
+        _tur_cfg=$(t_sha256 "$S5_TXNDIR/old.config.json")
+        _tur_state=$(t_sha256 "$S5_TXNDIR/old.state")
+        t_run s5_transaction_recover
+        assert_ne "unknown transaction $_tur_kind is refused" 0 "$T_STATUS"
+        assert_eq "$_tur_kind refusal preserves config recovery evidence" \
+            "$_tur_cfg" "$(t_sha256 "$S5_TXNDIR/old.config.json")"
+        assert_eq "$_tur_kind refusal preserves state recovery evidence" \
+            "$_tur_state" "$(t_sha256 "$S5_TXNDIR/old.state")"
+        if [ -e "$_tur_path" ] || [ -L "$_tur_path" ]; then t_ok; else t_bad "$_tur_kind residue was deleted"; fi
+    done
+}
+
+test_sha256_config_update_failure() {
+    t_xray_fixture 23999
+    t_xray_install
+    _sdu_cfg=$(t_sha256 "$S5_CFG")
+    _sdu_state=$(t_sha256 "$S5_STATE")
+    _sdu_real_sha=/usr/bin/sha256sum
+    [ -x "$_sdu_real_sha" ] || _sdu_real_sha=/bin/sha256sum
+    _sdu_fail=1
+    s5_sha256_command() {
+        if [ "$_sdu_fail" = 1 ] && [ "$1" = "$S5_CFG" ] &&
+            [ "$(cat "$S5_TEST_ROOT/svc_active" 2>/dev/null)" = 24777 ]; then
+            return 91
+        fi
+        "$_sdu_real_sha" "$1"
+    }
+    s5_prompt_port() { S5_PORT=24777; return 0; }
+    s5_install_update >"$S5_TEST_ROOT/update-digest.log" 2>&1
+    assert_ne "config digest failure aborts update" 0 "$?"
+    assert_contains "update digest failure has a specific diagnosis" \
+        'could not compute SHA-256 for installed artifact: config' \
+        "$(cat "$S5_TEST_ROOT/update-digest.log")"
+    assert_eq "update digest failure restores exact old config" \
+        "$_sdu_cfg" "$(t_sha256 "$S5_CFG")"
+    assert_eq "update digest failure restores exact old state" \
+        "$_sdu_state" "$(t_sha256 "$S5_STATE")"
+    assert_eq "update digest failure restores old listener" 23999 \
+        "$(cat "$S5_TEST_ROOT/svc_active")"
+    assert_file_absent "update digest rollback removes transaction" "$S5_TXNDIR"
+    _sdu_fail=0
+    t_xray_assert_healthy
+}
+
+test_update_commit_cleanup_failure() {
+    for _ucc_fault in first second rmdir; do
+        t_xray_fixture 23999
+        t_xray_install
+        _ucc_old_state=$(t_sha256 "$S5_STATE")
+        _ucc_real_rm=/usr/bin/rm
+        _ucc_real_rmdir=/usr/bin/rmdir
+        [ -x "$_ucc_real_rm" ] || _ucc_real_rm=/bin/rm
+        [ -x "$_ucc_real_rmdir" ] || _ucc_real_rmdir=/bin/rmdir
+        _ucc_fired=0
+        rm() {
+            if [ "$_ucc_fault" = first ] && [ "${2:-}" = "$S5_TXNDIR/old.config.json" ] && [ "$_ucc_fired" = 0 ]; then
+                _ucc_fired=1; return 71
+            fi
+            if [ "$_ucc_fault" = second ] && [ "${2:-}" = "$S5_TXNDIR/old.state" ] && [ "$_ucc_fired" = 0 ]; then
+                _ucc_fired=1; return 72
+            fi
+            "$_ucc_real_rm" "$@"
+        }
+        rmdir() {
+            if [ "$_ucc_fault" = rmdir ] && [ "${1:-}" = "$S5_TXNDIR" ] && [ "$_ucc_fired" = 0 ]; then
+                _ucc_fired=1; return 73
+            fi
+            "$_ucc_real_rmdir" "$@"
+        }
+        s5_prompt_port() { S5_PORT=24777; return 0; }
+        s5_install_update >"$S5_TEST_ROOT/commit-cleanup.log" 2>&1
+        assert_ne "$_ucc_fault post-commit cleanup failure is reported" 0 "$?"
+        assert_file_exists "$_ucc_fault leaves a committed marker" "$S5_TXN_COMMITTED"
+        assert_ne "$_ucc_fault keeps the new state authoritative" \
+            "$_ucc_old_state" "$(t_sha256 "$S5_STATE")"
+        assert_eq "$_ucc_fault leaves the new listener active" 24777 \
+            "$(cat "$S5_TEST_ROOT/svc_active")"
+        assert_contains "$_ucc_fault explains delete-only retry" \
+            'next operation will retry cleanup' "$(cat "$S5_TEST_ROOT/commit-cleanup.log")"
+        _ucc_fired=1
+        s5_transaction_recover
+        assert_eq "$_ucc_fault cleanup retries deterministically" 0 "$?"
+        assert_file_absent "$_ucc_fault retry removes transaction" "$S5_TXNDIR"
+        t_xray_assert_healthy
+    done
+}
+
+SCENARIOS='uninstall_confirmation uninstall_messages family update owned_port rejected_candidate listener_failure rejected_command publish_signal config_symlink uninstall_leftovers uninstall_residue verifier_cleanup txn_mkdir_failure txn_copy_failure txn_chmod_failure stop_failure wait_stopped_failure publication_failure new_start_failure dataplane_failure state_write_failure rollback_restart_failure restore_failure uninstall_unknown rollback_exit uninstall_group_residue uninstall_resume uninstall_signal_resume uninstall_resume_drift uninstall_phase_gap_resume uninstall_final_window older_release_operations older_release_update older_release_download_failure transaction_contract_drift rollback_backup_drift uninstall_directory_drift transaction_all_commands transaction_unknown_residue sha256_binary_update_failure sha256_config_update_failure update_commit_cleanup_failure'
 if [ "$#" -eq 0 ]; then
     # Expand the fixed scenario words into the default argument list.
     # shellcheck disable=SC2086

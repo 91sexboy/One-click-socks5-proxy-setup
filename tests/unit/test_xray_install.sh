@@ -483,7 +483,36 @@ test_cleanup_stop_failure() {
     done
 }
 
-SCENARIOS='cleanup_stop_failure account_creation_failure account_lifecycle install config_corrupt binary_corrupt unit_corrupt account_corrupt cleanup_temps openrc_runtime locks download_cleanup download_remove_failure download_remove_zh download_release_failure download_candidate_failure download_candidate_remove_failure download_signal'
+s5t_digest_failure_install() {
+    _sdf_target=$1
+    t_xray_fixture 23456
+    _sdf_real_sha256_command=$(command -v sha256sum)
+    s5_sha256_command() {
+        case "$_sdf_target:$1" in
+        unit:"$S5_SERVICE_ARTIFACT" | config:"$S5_CFG") return 91 ;;
+        esac
+        "$_sdf_real_sha256_command" "$1"
+    }
+    s5_install_new >"$S5_TEST_ROOT/sha-install.log" 2>&1
+    _sdf_status=$?
+    assert_ne "$_sdf_target digest failure aborts fresh installation" 0 "$_sdf_status"
+    assert_contains "$_sdf_target digest failure has a specific diagnosis" \
+        'could not compute SHA-256 for installed artifact' "$(cat "$S5_TEST_ROOT/sha-install.log")"
+    assert_not_contains "$_sdf_target digest failure prints no credential card" \
+        socks5:// "$(cat "$S5_TEST_ROOT/sha-install.log")"
+    assert_file_absent "$_sdf_target digest failure writes no successful state" "$S5_STATE"
+    s5_cleanup
+    assert_file_absent "$_sdf_target digest cleanup removes config" "$S5_CFG"
+    assert_file_absent "$_sdf_target digest cleanup removes binary" "$S5_BIN"
+    assert_file_absent "$_sdf_target digest cleanup removes service artifact" "$S5_SERVICE_ARTIFACT"
+    assert_file_absent "$_sdf_target digest cleanup removes the service account" "$S5_TEST_ROOT/user-exists"
+    assert_file_absent "$_sdf_target digest cleanup removes the service group" "$S5_TEST_ROOT/group-exists"
+}
+
+test_sha256_unit_failure() { s5t_digest_failure_install unit; }
+test_sha256_config_install_failure() { s5t_digest_failure_install config; }
+
+SCENARIOS='cleanup_stop_failure account_creation_failure account_lifecycle install config_corrupt binary_corrupt unit_corrupt account_corrupt cleanup_temps openrc_runtime locks download_cleanup download_remove_failure download_remove_zh download_release_failure download_candidate_failure download_candidate_remove_failure download_signal sha256_unit_failure sha256_config_install_failure'
 if [ "$#" -eq 0 ]; then
     # Expand the fixed scenario words into the default argument list.
     # shellcheck disable=SC2086

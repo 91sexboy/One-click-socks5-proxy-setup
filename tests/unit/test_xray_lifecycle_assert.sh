@@ -87,4 +87,34 @@ assert_eq "native-control driver has nonprivileged regression coverage" 0 "$T_ST
 if [ "$T_STATUS" -ne 0 ]; then printf '%s\n' "$T_OUT" >&2; fi
 assert_contains "control regression completes without running native services" \
     'checks passed (no native lifecycle run)' "$T_OUT"
+# The shared lifecycle log contract names every management command and both
+# credential generations where they could coexist. Removing any log pair must
+# make the assertion fail rather than silently reducing coverage.
+# shellcheck source=/dev/null
+. "$S5_REPO_ROOT/.github/scripts/lifecycle-common.sh"
+_lacwork=$S5_TEST_ROOT/log-contract
+mkdir -p "$_lacwork"
+printf 'olduser\nOld_secret~1\n' >"$_lacwork/pass"
+printf 'newuser\nNew_secret~2\n' >"$_lacwork/pass.update"
+for _laclog in install update status restart uninstall uninstall-second reinstall uninstall-reinstall; do
+    : >"$_lacwork/$_laclog.log"
+done
+t_run lifecycle_assert_logs_redacted "$_lacwork"
+assert_eq "complete lifecycle log contract passes" 0 "$T_STATUS"
+printf 'Old_secret~1\n' >"$_lacwork/restart.log"
+t_run lifecycle_assert_logs_redacted "$_lacwork"
+assert_ne "restart log is checked against the old credential" 0 "$T_STATUS"
+: >"$_lacwork/restart.log"
+printf 'New_secret~2\n' >"$_lacwork/uninstall.log"
+t_run lifecycle_assert_logs_redacted "$_lacwork"
+assert_ne "uninstall log is checked against the rotated credential" 0 "$T_STATUS"
+_lac_pair='newuser:New_secret~2'
+_lac_encoded=$(printf '%s' "$_lac_pair" | base64 | tr -d '\n')
+printf '%s\n' "$_lac_pair" >"$_lacwork/uninstall.log"
+t_run lifecycle_assert_logs_redacted "$_lacwork"
+assert_ne "uninstall log is checked against the credential pair" 0 "$T_STATUS"
+printf '%s\n' "$_lac_encoded" >"$_lacwork/uninstall.log"
+t_run lifecycle_assert_logs_redacted "$_lacwork"
+assert_ne "uninstall log is checked against the encoded credential pair" 0 "$T_STATUS"
+
 t_summary

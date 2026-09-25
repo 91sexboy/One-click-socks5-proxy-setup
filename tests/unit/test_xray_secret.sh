@@ -41,10 +41,29 @@ s5t_build_tree() {
 }
 
 s5t_audit() {
+    mkdir -p "$S5_TEST_ROOT/audit-bin"
+    cat >"$S5_TEST_ROOT/audit-bin/stat" <<'STAT'
+#!/bin/sh
+if [ "$1" = -c ] && [ "$2" = '%U:%G %a' ]; then
+    mode=$(/usr/bin/stat -c %a "$3") || exit
+    case "$3" in
+    */etc/xray-socks5/config.json) owner=${S5T_CONFIG_OWNER:-root:xray-socks5} ;;
+    *) owner=${S5T_ROOT_OWNER:-root:root} ;;
+    esac
+    printf '%s %s\n' "$owner" "$mode"
+else
+    exec /usr/bin/stat "$@"
+fi
+STAT
+    chmod 0755 "$S5_TEST_ROOT/audit-bin/stat"
     # Split configured multiword interpreters such as busybox sh.
     # shellcheck disable=SC2086
-    T_OUT=$(${S5_TEST_SHELL:-sh} "$ROOT/tests/protocol/post_install_audit.sh" \
-        "$FAKE" "$S5_TEST_ROOT/pass" 2>&1) && T_STATUS=0 || T_STATUS=$?
+    T_OUT=$(PATH="$S5_TEST_ROOT/audit-bin:$PATH" ${S5_TEST_SHELL:-sh} -c '
+        audit=$1; shift
+        stat() { "$S5_TEST_ROOT/audit-bin/stat" "$@"; }
+        . "$audit"
+    ' audit "$ROOT/tests/protocol/post_install_audit.sh" "$FAKE" "$S5_TEST_ROOT/pass" 2>&1) &&
+        T_STATUS=0 || T_STATUS=$?
     return 0
 }
 
@@ -52,6 +71,19 @@ s5t_build_tree
 s5t_audit
 assert_eq "a clean namespace passes the audit" 0 "$T_STATUS"
 s5t_secret_absent "a passing audit prints no credential" "$T_OUT"
+
+S5T_CONFIG_OWNER=root:root
+export S5T_CONFIG_OWNER
+s5t_build_tree
+s5t_audit
+assert_ne "wrong config group fails the audit" 0 "$T_STATUS"
+unset S5T_CONFIG_OWNER
+S5T_ROOT_OWNER=operator:operator
+export S5T_ROOT_OWNER
+s5t_build_tree
+s5t_audit
+assert_ne "wrong root-owned artifact identity fails the audit" 0 "$T_STATUS"
+unset S5T_ROOT_OWNER
 
 s5t_build_tree
 printf 'proxy started for %s\n' "$SECRET" >"$FAKE/var/log/leak.log"
@@ -157,7 +189,7 @@ s5t_secret_absent "run-socks5.sh redacts the status and journal dumps on failure
 # credentials. Never include captured output or credentials in a failing assertion.
 s5t_runner_no_secret() {
     case "$2" in
-        *"$SECRET"* | *ciuser*) t_bad "$1: credential reached output" ;;
+        *"$SECRET"*) t_bad "$1: credential reached output" ;;
         *) t_ok ;;
     esac
 }
@@ -178,6 +210,10 @@ exit 0
 EOF
 s5t_runner_capture
 assert_eq "successful wrapped command retains zero status" 0 "$_runstatus"
+_pair_encoded=$(printf '%s' "ciuser:$SECRET" | base64 | tr -d '\n')
+assert_not_contains "success output redacts username/password pair" "ciuser:$SECRET" "$_runstdout$_runstderr"
+assert_not_contains "success output redacts encoded credential pair" "$_pair_encoded" "$_runstdout$_runstderr"
+assert_contains "username alone remains operator-visible" ciuser "$_runstdout"
 s5t_runner_no_secret "success stdout is redacted before replay" "$_runstdout"
 s5t_runner_no_secret "success stderr is redacted before replay" "$_runstderr"
 case "$_runstdout" in
@@ -208,7 +244,10 @@ _realawk=$(command -v awk)
 printf '#!/bin/sh\nprintf "%%s\\n" "$@" >>"%s/argv"\nexec "%s" "$@"\n' \
     "$_rundir" "$_realawk" >"$_rundir/bin/awk"
 chmod 0755 "$_rundir/bin/awk"
+_s5t_saved_shell=${S5_TEST_SHELL:-sh}
+S5_TEST_SHELL='sh'
 s5t_runner_capture
+S5_TEST_SHELL=$_s5t_saved_shell
 s5t_runner_no_secret "redaction commands keep credentials out of argv" "$(cat "$_rundir/argv")"
 # Error diagnostics are filtered too, even when shell redirection cannot open
 # the answers file. Credentials are never used as a command argument.
@@ -254,7 +293,7 @@ s5t_runner_generations() {
 s5t_runner_both_hidden() {
     s5t_runner_no_secret "$1" "$2"
     case "$2" in
-        *_rotated* | *-next*) t_bad "$1: longer credential only partially redacted" ;;
+        *_rotated*) t_bad "$1: longer password only partially redacted" ;;
         *) t_ok ;;
     esac
 }

@@ -107,25 +107,129 @@ mkdir -p "$S5_TEST_ROOT/bin"
 t_stub sudo <<'SUDO'
 #!/bin/sh
 printf '%s\n' "$*" >>"$S5_TEST_ROOT/cleanup-calls"
-if [ "$1" = rm ]; then
-    [ "$2" != "$S5_CLEANUP_FAIL" ] || exit 71
-    exit 0
-fi
-exit 1
+case "$1:$2" in
+systemctl:show)
+    if [ -f "$S5_TEST_ROOT/cleanup-unit-deleted" ]; then printf 'not-found\n';
+    else printf '%s\n' "${S5_CLEANUP_LOAD_STATE:-not-found}"; fi ;;
+systemctl:stop) [ "${S5_CLEANUP_FAIL:-}" != stop ] || exit 71 ;;
+systemctl:is-active)
+    case "${S5_CLEANUP_ACTIVE_STATE:-inactive}" in
+    inactive) printf 'inactive\n'; exit 3 ;;
+    unknown) printf 'unknown\n'; exit 4 ;;
+    active) printf 'active\n'; exit 0 ;;
+    esac ;;
+systemctl:is-enabled) printf 'not-found\n'; exit 1 ;;
+systemctl:disable|systemctl:daemon-reload) ;;
+pgrep:-u)
+    if [ "${S5_CLEANUP_PROCESS:-absent}" = active ] &&
+        ! grep -q '^systemctl stop ' "$S5_TEST_ROOT/cleanup-calls"; then exit 0; fi
+    exit 1 ;;
+test:-e)
+    [ "${S5_CLEANUP_SHAPE:-}" = unsafe-unit ] && [ "$3" = /etc/systemd/system/xray-socks5.service ] && exit 0
+    exit 1 ;;
+test:-L) exit 1 ;;
+test:-f)
+    [ "${S5_CLEANUP_SHAPE:-}" = unsafe-unit ] && [ "$3" = /etc/systemd/system/xray-socks5.service ] && exit 0
+    exit 1 ;;
+stat:-c)
+    [ "${S5_CLEANUP_SHAPE:-}" = unsafe-unit ] && printf 'root:root 666\n' && exit 0
+    exit 1 ;;
+getent:passwd)
+    [ -f "$S5_TEST_ROOT/cleanup-user-deleted" ] && exit 2
+    case "${S5_CLEANUP_ACCOUNT:-absent}" in
+    foreign) printf 'xray-socks5:x:900:900::/home/foreign:/bin/sh\n'; exit 0 ;;
+    ordinary) printf 'xray-socks5:x:1900:1900::/nonexistent:/usr/sbin/nologin\n'; exit 0 ;;
+    owned) printf 'xray-socks5:x:900:900::/nonexistent:/usr/sbin/nologin\n'; exit 0 ;;
+    *) exit 2 ;;
+    esac ;;
+getent:group)
+    [ -f "$S5_TEST_ROOT/cleanup-group-deleted" ] && exit 2
+    case "${S5_CLEANUP_ACCOUNT:-absent}" in
+    foreign|owned) printf 'xray-socks5:x:900:\n'; exit 0 ;;
+    ordinary) printf 'xray-socks5:x:1900:\n'; exit 0 ;;
+    *) exit 2 ;;
+    esac ;;
+userdel:*) : >"$S5_TEST_ROOT/cleanup-user-deleted" ;;
+groupdel:*) : >"$S5_TEST_ROOT/cleanup-group-deleted" ;;
+rm:*)
+    [ "${3:-}" != /etc/systemd/system/xray-socks5.service ] || : >"$S5_TEST_ROOT/cleanup-unit-deleted" ;;
+*) ;;
+esac
+exit 0
 SUDO
-for cleanup_failure in -rf -f none; do
+for cleanup_failure in none stop; do
+    rm -f "$S5_TEST_ROOT/cleanup-user-deleted" "$S5_TEST_ROOT/cleanup-group-deleted" \
+        "$S5_TEST_ROOT/cleanup-unit-deleted"
     : >"$S5_TEST_ROOT/cleanup-calls"
     # Split a configured multiword shell such as busybox sh.
-    # shellcheck disable=SC2086
-    t_run env PATH="$S5_TEST_ROOT/bin:$PATH" S5_CLEANUP_FAIL="$cleanup_failure" \
+    _cleanup_load=not-found
+    [ "$cleanup_failure" != stop ] || _cleanup_load=loaded
+# shellcheck disable=SC2086
+t_run env PATH="$S5_TEST_ROOT/bin:$PATH" S5_CLEANUP_FAIL="$cleanup_failure" \
+        S5_CLEANUP_LOAD_STATE="$_cleanup_load" \
         ${S5_TEST_SHELL:-sh} "$S5_REPO_ROOT/.github/scripts/remove-xray-namespace.sh"
     if [ "$cleanup_failure" = none ]; then
-        assert_eq "cleanup tolerates absent service and accounts" 0 "$T_STATUS"
+        assert_eq "cleanup tolerates a genuinely absent namespace" 0 "$T_STATUS"
+        assert_contains "cleanup verifies the manager namespace is absent" \
+            'systemctl show xray-socks5.service -p LoadState --value' \
+            "$(cat "$S5_TEST_ROOT/cleanup-calls")"
     else
-        assert_eq "cleanup propagates rm $cleanup_failure failure" 71 "$T_STATUS"
-        assert_not_contains "cleanup stops before removing accounts after rm failure" userdel "$(cat "$S5_TEST_ROOT/cleanup-calls")"
+        assert_eq "cleanup propagates stop failure" 71 "$T_STATUS"
+        assert_not_contains "stop failure preserves files and accounts" 'rm -rf' \
+            "$(cat "$S5_TEST_ROOT/cleanup-calls")"
+        assert_not_contains "stop failure preserves accounts" userdel \
+            "$(cat "$S5_TEST_ROOT/cleanup-calls")"
     fi
 done
+
+: >"$S5_TEST_ROOT/cleanup-calls"
+# shellcheck disable=SC2086
+t_run env PATH="$S5_TEST_ROOT/bin:$PATH" S5_CLEANUP_LOAD_STATE=loaded \
+    S5_CLEANUP_ACTIVE_STATE=unknown ${S5_TEST_SHELL:-sh} \
+    "$S5_REPO_ROOT/.github/scripts/remove-xray-namespace.sh"
+assert_ne "cleanup rejects an unobservable stopped state" 0 "$T_STATUS"
+assert_not_contains "unknown stopped state preserves files" 'rm -f /etc/systemd/system' \
+    "$(cat "$S5_TEST_ROOT/cleanup-calls")"
+
+: >"$S5_TEST_ROOT/cleanup-calls"
+# shellcheck disable=SC2086
+t_run env PATH="$S5_TEST_ROOT/bin:$PATH" S5_CLEANUP_LOAD_STATE=not-found \
+    S5_CLEANUP_ACCOUNT=foreign ${S5_TEST_SHELL:-sh} \
+    "$S5_REPO_ROOT/.github/scripts/remove-xray-namespace.sh"
+assert_ne "cleanup refuses a foreign same-named account" 0 "$T_STATUS"
+assert_not_contains "foreign account refusal precedes file deletion" 'rm -rf' \
+    "$(cat "$S5_TEST_ROOT/cleanup-calls")"
+
+: >"$S5_TEST_ROOT/cleanup-calls"
+# shellcheck disable=SC2086
+t_run env PATH="$S5_TEST_ROOT/bin:$PATH" S5_CLEANUP_LOAD_STATE=not-found \
+    S5_CLEANUP_ACCOUNT=ordinary ${S5_TEST_SHELL:-sh} \
+    "$S5_REPO_ROOT/.github/scripts/remove-xray-namespace.sh"
+assert_ne "cleanup refuses a non-system same-named account" 0 "$T_STATUS"
+assert_not_contains "ordinary account refusal precedes file deletion" 'rm -rf' \
+    "$(cat "$S5_TEST_ROOT/cleanup-calls")"
+
+: >"$S5_TEST_ROOT/cleanup-calls"
+# shellcheck disable=SC2086
+t_run env PATH="$S5_TEST_ROOT/bin:$PATH" S5_CLEANUP_LOAD_STATE=not-found \
+    S5_CLEANUP_SHAPE=unsafe-unit ${S5_TEST_SHELL:-sh} \
+    "$S5_REPO_ROOT/.github/scripts/remove-xray-namespace.sh"
+assert_ne "cleanup refuses a service unit mode drift" 0 "$T_STATUS"
+assert_not_contains "unit mode refusal precedes file deletion" 'rm -f /etc/systemd/system' \
+    "$(cat "$S5_TEST_ROOT/cleanup-calls")"
+
+rm -f "$S5_TEST_ROOT/cleanup-user-deleted" "$S5_TEST_ROOT/cleanup-group-deleted" \
+        "$S5_TEST_ROOT/cleanup-unit-deleted"
+: >"$S5_TEST_ROOT/cleanup-calls"
+    # shellcheck disable=SC2086
+    t_run env PATH="$S5_TEST_ROOT/bin:$PATH" S5_CLEANUP_LOAD_STATE=loaded \
+    S5_CLEANUP_ACCOUNT=owned S5_CLEANUP_PROCESS=active ${S5_TEST_SHELL:-sh} \
+    "$S5_REPO_ROOT/.github/scripts/remove-xray-namespace.sh"
+assert_eq "cleanup stops an owned service before checking orphan processes" 0 "$T_STATUS"
+_cleanup_stop_line=$(grep -n '^systemctl stop ' "$S5_TEST_ROOT/cleanup-calls" | cut -d: -f1)
+_cleanup_pgrep_line=$(grep -n '^pgrep -u ' "$S5_TEST_ROOT/cleanup-calls" | cut -d: -f1)
+if [ -n "$_cleanup_stop_line" ] && [ -n "$_cleanup_pgrep_line" ] &&
+    [ "$_cleanup_stop_line" -lt "$_cleanup_pgrep_line" ]; then t_ok; else t_bad "process check ran before stop"; fi
 
 t_run python3 - "$S5_REPO_ROOT/.github/scripts/memory-peak-check.py" <<'PY'
 import contextlib

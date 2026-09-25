@@ -20,8 +20,7 @@ lifecycle_cleanup_namespace() {
 lifecycle_cleanup_init
 chmod 0700 "$work"
 lifecycle_write_fixtures "$work"
-: >"$work/answers.empty"
-printf 'y\n' >"$work/answers.uninstall"
+sudo chown root:root "$work"/answers* "$work"/pass*
 sudo sh -c 'python3 tests/protocol/terminal_install.py "$1" "$2" 23456 1 >"$3"' \
   sh "$work/answers" "$work/pass" "$work/install.log"
 printf 'lifecycle: install-ok\n'
@@ -46,12 +45,6 @@ import socket
 s = socket.create_connection(('127.0.0.1', 23456), 5)
 s.close()
 PY
-sudo sh .github/scripts/run-socks5.sh status \
-  "$work/answers.empty" "$work/status.log" "$work/pass"
-printf 'lifecycle: status-ok\n'
-# run-socks5.sh already replayed this log through its credential filter.
-sudo grep -q 'mixed' "$work/status.log"
-printf 'lifecycle: status-content-ok\n'
 sudo sh .github/scripts/run-socks5.sh restart \
   "$work/answers.empty" "$work/restart.log" "$work/pass"
 printf 'lifecycle: restart-command-ok\n'
@@ -103,9 +96,13 @@ python3 tests/protocol/duplex_target.py --host 0.0.0.0 --host6 :: --ready-file "
 target_pid=$!
 lifecycle_wait_until 50 0.1 test -s "$work/target.port" || true
 target_port=$(cat "$work/target.port")
-PASSFILE="$work/pass" PORT=23456 TARGET_PORT="$target_port" \
+test "$(sudo python3 -c 'import json; print(json.load(open("/etc/xray-socks5/config.json"))["inbounds"][0]["listen"])')" = 0.0.0.0
+sudo env PROXY_HOST=192.0.2.1 PASSFILE="$work/pass" PORT=23456 TARGET_PORT="$target_port" \
   REPORT="$work/report" OUT="$work/probe" \
   sh tests/protocol/run_xray_mixed.sh
+# The root-run probe owns only this output directory; remove it after all
+# counter reconciliation so the unprivileged EXIT trap can remove the workdir.
+sudo rm -rf "$work/probe"
 sudo sh tests/protocol/post_install_audit.sh / "$work/pass" systemd
 printf 'lifecycle: audit-ok\n'
 # SPEC 5: re-running install over an existing installation is an
@@ -114,6 +111,11 @@ printf 'lifecycle: audit-ok\n'
 sudo sh .github/scripts/run-socks5.sh install \
   "$work/answers.update" "$work/update.log" "$work/pass.update" "$work/pass"
 printf 'lifecycle: update-ok\n'
+sudo sh .github/scripts/run-socks5.sh status \
+  "$work/answers.empty" "$work/status.log" "$work/pass.update" "$work/pass"
+printf 'lifecycle: status-ok\n'
+sudo grep -q 'mixed' "$work/status.log"
+printf 'lifecycle: status-content-ok\n'
 sudo sh .github/scripts/lifecycle-update-assert.sh
 sudo systemctl is-active --quiet xray-socks5.service
 sudo sh tests/protocol/post_install_audit.sh / "$work/pass.update" systemd
@@ -129,12 +131,16 @@ sudo sh .github/scripts/run-socks5.sh uninstall \
 test ! -e /etc/xray-socks5
 test ! -e /var/lib/xray-socks5
 test ! -e /usr/local/libexec/xray-socks5
+test ! -e /etc/systemd/system/xray-socks5.service
+if sudo systemctl is-enabled --quiet xray-socks5.service; then exit 1; fi
+if getent passwd xray-socks5 >/dev/null 2>&1 || getent group xray-socks5 >/dev/null 2>&1; then exit 1; fi
+sudo sh .github/scripts/run-socks5.sh uninstall \
+  "$work/answers.uninstall" "$work/uninstall-second.log" "$work/pass.update" "$work/pass"
+# The repeated uninstall is idempotent; a fresh install must recreate the namespace.
+sudo sh -c 'python3 tests/protocol/terminal_install.py "$1" "$2" 23456 0 >"$3"' \
+  sh "$work/answers.reinstall" "$work/pass" "$work/reinstall.log"
+sudo sh .github/scripts/run-socks5.sh uninstall \
+  "$work/answers.uninstall" "$work/uninstall-reinstall.log" "$work/pass"
 sudo sh -c 'sh socks5.sh help </dev/null >"$1"' sh "$work/help-after-uninstall.log"
 sudo grep -q 'Usage: sh socks5.sh' "$work/help-after-uninstall.log"
-install_secret=$(sed -n '2p' "$work/pass")
-update_secret=$(sed -n '2p' "$work/pass.update")
-lifecycle_no_credential_in "$work/install.log" "$install_secret" sudo
-lifecycle_no_credential_in "$work/status.log" "$install_secret" sudo
-lifecycle_no_credential_in "$work/status.log" "$update_secret" sudo
-lifecycle_no_credential_in "$work/update.log" "$install_secret" sudo
-lifecycle_no_credential_in "$work/update.log" "$update_secret" sudo
+lifecycle_assert_logs_redacted "$work" sudo

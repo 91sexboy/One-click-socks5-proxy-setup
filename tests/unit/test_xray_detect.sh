@@ -69,4 +69,20 @@ S5_OSRELEASE="$S5_TEST_ROOT/absent-os-release"
 t_run s5_detect_platform
 assert_ne "an absent os-release is refused" 0 "$T_STATUS"
 
+# Equal-width numeric fields are compared lexically, not through signed shell
+# arithmetic, so values around and beyond 64-bit limits behave identically.
+for _dvcase in \
+    922337203685477580:922337203685477579:0 \
+    999999999999999999:922337203685477580:0 \
+    999999999999999999:100000000000000000:0 \
+    100000000000000000:999999999999999999:1 \
+    184467440737095516:184467440737095516:0; do
+    _dvleft=${_dvcase%%:*}
+    _dvrest=${_dvcase#*:}
+    _dvright=${_dvrest%%:*}
+    _dvwant=${_dvrest##*:}
+    t_run s5_ver_ge "$_dvleft" "$_dvright"
+    assert_eq "version comparison $_dvleft >= $_dvright" "$_dvwant" "$T_STATUS"
+done
+
 t_summary

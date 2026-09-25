@@ -84,6 +84,29 @@ assert_eq "random port generation succeeds" 0 "$_rprc"
 s5_valid_port "$_rp"; _rpv=$?
 assert_eq "the generated random port is valid" 0 "$_rpv"
 
+# Rejection sampling is tested with deterministic od bytes: rejected values must
+# not bias output, accepted endpoints remain in range, and retries are bounded.
+_od_real=$(command -v od)
+od() { printf '255 0 2\n'; }
+assert_eq "random strings discard the uneven byte tail" ac "$(s5_random_string 2 abc)"
+_od_values=$S5_TEST_ROOT/od-values
+printf '0\n40000\n40001\n1\n' >"$_od_values"
+od() {
+    _od_value=$(sed -n '1p' "$_od_values")
+    sed '1d' "$_od_values" >"$_od_values.next"
+    mv "$_od_values.next" "$_od_values"
+    printf '%s\n' "$_od_value"
+}
+assert_eq "random port accepts the lower bound" 20000 "$(s5_random_port)"
+assert_eq "random port accepts the upper bound" 60000 "$(s5_random_port)"
+assert_eq "random port rejects an out-of-range draw before retry" 20001 "$(s5_random_port)"
+: >"$_od_values"
+_i=0
+while [ "$_i" -lt 64 ]; do printf '65535\n' >>"$_od_values"; _i=$((_i + 1)); done
+t_run s5_random_port
+assert_ne "random port retry exhaustion fails" 0 "$T_STATUS"
+unset -f od
+
 # An update leaves S5_PORT holding the port the running service owns; a blank
 # answer must keep it rather than rotate to a random one (SPEC 5: the port the
 # service already owns is accepted, ownership verified through the listener).
@@ -107,13 +130,22 @@ S5_USERNAME=alice
 S5_PASSWORD='Secret_123~x'
 S5_SECRET=$S5_PASSWORD
 S5_LISTEN=127.0.0.1
-mkdir -p "$S5_SYSCONFDIR" "$S5_STATEDIR"
+mkdir -p "$S5_SYSCONFDIR" "$S5_STATEDIR" "$S5_PREFIX"
 config=$(s5_config_render)
 printf '%s\n' "$config" >"$S5_CFG"
 S5_CONFIG_SHA256=$(t_sha256 "$S5_CFG")
 S5_ARCHNAME=amd64
-s5_asset_select
+printf '#!/bin/sh\nexit 0\n' >"$S5_BIN"
+chmod 0755 "$S5_BIN"
+t_use_asset_fixture() { :; }
+S5_ASSET_NAME=Xray-linux-64.zip
+S5_ASSET_SIZE=17
+S5_ASSET_SHA256=$(t_sha256 "$S5_BIN")
+S5_ASSET_BINARY_SIZE=$(wc -c <"$S5_BIN" | tr -d '[:space:]')
+S5_ASSET_BINARY_SHA256=$(t_sha256 "$S5_BIN")
+S5_BINARY_SHA256=$S5_ASSET_BINARY_SHA256
 S5_INIT=systemd
+S5_OS_FAMILY=debian
 S5_ACCOUNT_UID=900
 S5_ACCOUNT_GID=900
 mkdir -p "$S5_UNITDIR"
