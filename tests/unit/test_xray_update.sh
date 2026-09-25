@@ -719,6 +719,44 @@ test_uninstall_final_window() {
     assert_file_absent "final-marker recovery removes its last marker" "$S5_UNINSTALL_FINAL"
 }
 
+s5t_make_older_state() {
+    _mos_oldbin=$S5_TEST_ROOT/older-xray
+    printf '#!/bin/sh\nprintf older\\n\n' >"$_mos_oldbin"
+    chmod 0755 "$_mos_oldbin"
+    cp "$_mos_oldbin" "$S5_BIN"
+    _mos_sha=$(t_sha256 "$S5_BIN")
+    _mos_size=$(wc -c <"$S5_BIN" | tr -d '[:space:]')
+    awk -F '\t' -v sha="$_mos_sha" -v size="$_mos_size" '
+        BEGIN { OFS="\t" }
+        $1 == "release" { $2="v25.1.1" }
+        $1 == "commit" { $2="1111111111111111111111111111111111111111" }
+        $1 == "archive_size" { $2="123456" }
+        $1 == "archive_sha256" { $2="2222222222222222222222222222222222222222222222222222222222222222" }
+        $1 == "binary_size" { $2=size }
+        $1 == "binary_sha256" { $2=sha }
+        { print }
+    ' "$S5_STATE" >"$S5_STATE.next"
+    mv "$S5_STATE.next" "$S5_STATE"
+    chmod 0600 "$S5_STATE"
+}
+
+test_older_release_operations() {
+    t_xray_fixture 23999
+    t_xray_install
+    s5t_make_older_state
+    s5_precheck() { return 0; }
+    t_run s5_cmd_restart
+    assert_eq "older release restart succeeds through the operate interface" 0 "$T_STATUS"
+    assert_eq "older release restart keeps its installed listener" 23999 \
+        "$(cat "$S5_TEST_ROOT/svc_active")"
+
+    printf 'y\n' >"$S5_TEST_ROOT/answers.uninstall"
+    t_run s5_cmd_uninstall <"$S5_TEST_ROOT/answers.uninstall"
+    assert_eq "older release uninstall succeeds through the uninstall interface" 0 "$T_STATUS"
+    assert_file_absent "older release uninstall removes the namespace" "$S5_STATEDIR"
+    assert_file_absent "older release uninstall removes the binary" "$S5_BIN"
+}
+
 test_older_release_update() {
     t_xray_fixture 23999
     t_xray_install
@@ -1013,7 +1051,7 @@ test_update_commit_cleanup_failure() {
     done
 }
 
-SCENARIOS='uninstall_confirmation uninstall_messages family update owned_port rejected_candidate listener_failure rejected_command publish_signal config_symlink uninstall_leftovers uninstall_residue verifier_cleanup txn_mkdir_failure txn_copy_failure txn_chmod_failure stop_failure wait_stopped_failure publication_failure new_start_failure dataplane_failure state_write_failure rollback_restart_failure restore_failure uninstall_unknown rollback_exit uninstall_group_residue uninstall_resume uninstall_signal_resume uninstall_resume_drift uninstall_phase_gap_resume uninstall_final_window older_release_update older_release_download_failure transaction_contract_drift rollback_backup_drift uninstall_directory_drift transaction_all_commands sha256_binary_update_failure sha256_config_update_failure update_commit_cleanup_failure'
+SCENARIOS='uninstall_confirmation uninstall_messages family update owned_port rejected_candidate listener_failure rejected_command publish_signal config_symlink uninstall_leftovers uninstall_residue verifier_cleanup txn_mkdir_failure txn_copy_failure txn_chmod_failure stop_failure wait_stopped_failure publication_failure new_start_failure dataplane_failure state_write_failure rollback_restart_failure restore_failure uninstall_unknown rollback_exit uninstall_group_residue uninstall_resume uninstall_signal_resume uninstall_resume_drift uninstall_phase_gap_resume uninstall_final_window older_release_operations older_release_update older_release_download_failure transaction_contract_drift rollback_backup_drift uninstall_directory_drift transaction_all_commands sha256_binary_update_failure sha256_config_update_failure update_commit_cleanup_failure'
 if [ "$#" -eq 0 ]; then
     # Expand the fixed scenario words into the default argument list.
     # shellcheck disable=SC2086

@@ -58,8 +58,12 @@ STAT
     chmod 0755 "$S5_TEST_ROOT/audit-bin/stat"
     # Split configured multiword interpreters such as busybox sh.
     # shellcheck disable=SC2086
-    T_OUT=$(PATH="$S5_TEST_ROOT/audit-bin:$PATH" ${S5_TEST_SHELL:-sh} "$ROOT/tests/protocol/post_install_audit.sh" \
-        "$FAKE" "$S5_TEST_ROOT/pass" 2>&1) && T_STATUS=0 || T_STATUS=$?
+    T_OUT=$(PATH="$S5_TEST_ROOT/audit-bin:$PATH" ${S5_TEST_SHELL:-sh} -c '
+        audit=$1; shift
+        stat() { "$S5_TEST_ROOT/audit-bin/stat" "$@"; }
+        . "$audit"
+    ' audit "$ROOT/tests/protocol/post_install_audit.sh" "$FAKE" "$S5_TEST_ROOT/pass" 2>&1) &&
+        T_STATUS=0 || T_STATUS=$?
     return 0
 }
 
@@ -240,7 +244,10 @@ _realawk=$(command -v awk)
 printf '#!/bin/sh\nprintf "%%s\\n" "$@" >>"%s/argv"\nexec "%s" "$@"\n' \
     "$_rundir" "$_realawk" >"$_rundir/bin/awk"
 chmod 0755 "$_rundir/bin/awk"
+_s5t_saved_shell=${S5_TEST_SHELL:-sh}
+S5_TEST_SHELL=sh
 s5t_runner_capture
+S5_TEST_SHELL=$_s5t_saved_shell
 s5t_runner_no_secret "redaction commands keep credentials out of argv" "$(cat "$_rundir/argv")"
 # Error diagnostics are filtered too, even when shell redirection cannot open
 # the answers file. Credentials are never used as a command argument.
