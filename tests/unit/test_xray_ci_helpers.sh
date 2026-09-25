@@ -112,7 +112,13 @@ systemctl:show)
     if [ -f "$S5_TEST_ROOT/cleanup-unit-deleted" ]; then printf 'not-found\n';
     else printf '%s\n' "${S5_CLEANUP_LOAD_STATE:-not-found}"; fi ;;
 systemctl:stop) [ "${S5_CLEANUP_FAIL:-}" != stop ] || exit 71 ;;
-systemctl:is-active|systemctl:is-enabled) exit 3 ;;
+systemctl:is-active)
+    case "${S5_CLEANUP_ACTIVE_STATE:-inactive}" in
+    inactive) printf 'inactive\n'; exit 3 ;;
+    unknown) printf 'unknown\n'; exit 4 ;;
+    active) printf 'active\n'; exit 0 ;;
+    esac ;;
+systemctl:is-enabled) printf 'not-found\n'; exit 1 ;;
 systemctl:disable|systemctl:daemon-reload) ;;
 pgrep:-u)
     if [ "${S5_CLEANUP_PROCESS:-absent}" = active ] &&
@@ -175,6 +181,14 @@ for cleanup_failure in none stop; do
             "$(cat "$S5_TEST_ROOT/cleanup-calls")"
     fi
 done
+
+: >"$S5_TEST_ROOT/cleanup-calls"
+t_run env PATH="$S5_TEST_ROOT/bin:$PATH" S5_CLEANUP_LOAD_STATE=loaded \
+    S5_CLEANUP_ACTIVE_STATE=unknown ${S5_TEST_SHELL:-sh} \
+    "$S5_REPO_ROOT/.github/scripts/remove-xray-namespace.sh"
+assert_ne "cleanup rejects an unobservable stopped state" 0 "$T_STATUS"
+assert_not_contains "unknown stopped state preserves files" 'rm -f /etc/systemd/system' \
+    "$(cat "$S5_TEST_ROOT/cleanup-calls")"
 
 : >"$S5_TEST_ROOT/cleanup-calls"
 t_run env PATH="$S5_TEST_ROOT/bin:$PATH" S5_CLEANUP_LOAD_STATE=not-found \

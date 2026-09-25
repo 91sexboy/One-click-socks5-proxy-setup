@@ -155,10 +155,12 @@ load_state=$(manager_load_state || printf unknown)
 case "$load_state" in
 loaded)
     as_root systemctl stop xray-socks5.service
-    if as_root systemctl is-active --quiet xray-socks5.service; then
-        printf 'cleanup: service remains active\n' >&2
-        exit 1
-    fi
+    active_state=$(as_root systemctl is-active xray-socks5.service 2>/dev/null || true)
+    case "$active_state" in
+    inactive|failed) ;;
+    active|activating|reloading|deactivating) printf 'cleanup: service remains active\n' >&2; exit 1 ;;
+    *) printf 'cleanup: stopped service state is unobservable\n' >&2; exit 1 ;;
+    esac
     as_root systemctl disable xray-socks5.service
     ;;
 not-found) ;;
@@ -192,7 +194,8 @@ as_root systemctl daemon-reload
 [ "$(manager_load_state || printf unknown)" = not-found ] || {
     printf 'cleanup: service registration residue remains\n' >&2; exit 1;
 }
-if as_root systemctl is-enabled --quiet xray-socks5.service; then
-    printf 'cleanup: service enablement residue remains\n' >&2
+enabled_state=$(as_root systemctl is-enabled xray-socks5.service 2>/dev/null || true)
+[ "$enabled_state" = not-found ] || {
+    printf 'cleanup: service enablement residue remains or is unobservable\n' >&2
     exit 1
-fi
+}
