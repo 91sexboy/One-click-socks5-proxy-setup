@@ -169,4 +169,7 @@ assert_contains "systemd protocol gate reads the root-only passfile as root" \
 assert_contains "systemd parses the protected production config as root" \
     'sudo python3 -c' "$systemd_text"
 
+assert_contains "systemd removes root-owned probe scratch before workdir cleanup" \
+    'sudo rm -rf "$work/probe"' "$systemd_text"
+
 t_summary
