@@ -65,7 +65,7 @@ def line_executes(line, command):
             for token in (' || ', ';', '|', 'if ', 'echo '))
 
 
-def entry(job, command):
+def entry(job, command, step_name=None):
     matches = []
     occurrences = 0
     for step in job['steps']:
@@ -87,6 +87,9 @@ def entry(job, command):
             matches.append(step)
     require(len(matches) == 1 and occurrences == 1,
             'expected one executable entrypoint: ' + command)
+    if step_name is not None:
+        require(matches[0].get('name') == step_name,
+                'entrypoint is in the wrong step: ' + command)
     return matches[0]
 
 
@@ -122,7 +125,7 @@ def check(workflow):
             {('ubuntu-24.04', shell) for shell in ('sh', 'dash', 'bash', 'busybox sh')},
             'unit: all four shell implementations required')
     require(jobs['unit']['runs-on'] == '${{ matrix.shell.runner }}', 'unit: runner binding changed')
-    require(entry(jobs['unit'], 'sh tests/run.sh').get('env', {}).get('S5_TEST_SHELL') ==
+    require(entry(jobs['unit'], 'sh tests/run.sh', 'Unit suite').get('env', {}).get('S5_TEST_SHELL') ==
             '${{ matrix.shell.command }}', 'unit: shell binding changed')
     for name in ('openrc-integration', 'openrc-assertion-controls'):
         images = matrix(jobs[name], 'image')

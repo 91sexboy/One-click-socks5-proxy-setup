@@ -66,13 +66,20 @@ class WorkflowContractTests(unittest.TestCase):
             'and-dead': 'false && sh tests/run.sh',
             'swallowed': 'sh tests/run.sh || true',
             'duplicate': 'sh tests/run.sh\nsh tests/run.sh',
+            'wrong-step': 'sh tests/run.sh',
         }
         for label, replacement in mutations.items():
             with self.subTest(mutation=label):
                 changed = copy.deepcopy(self.workflow)
                 step = next(step for step in changed['jobs']['unit']['steps']
                             if 'sh tests/run.sh' in step.get('run', ''))
-                step['run'] = replacement
+                if label == 'wrong-step':
+                    syntax = next(item for item in changed['jobs']['unit']['steps']
+                                  if item.get('name') == 'Syntax')
+                    syntax['run'] = replacement
+                    step['run'] = 'printf "unit suite displaced\n"'
+                else:
+                    step['run'] = replacement
                 result = self.run_oracle(changed)
                 self.assertNotEqual(result.returncode, 0, label)
                 self.assertIn('workflow contract:', result.stderr)

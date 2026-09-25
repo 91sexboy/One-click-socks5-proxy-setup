@@ -53,6 +53,34 @@ if exists /var/lib/xray-socks5/transaction; then
     done
 fi
 
+# Prove account ownership before touching files. A user/group pair without a
+# state record is accepted only in the exact installer-created CI shape.
+if identity_state passwd xray-socks5; then user_state=0; else user_state=$?; fi
+if identity_state group xray-socks5; then group_state=0; else group_state=$?; fi
+[ "$user_state" -ne 2 ] && [ "$group_state" -ne 2 ] || {
+    printf 'cleanup: account identity lookup failed\n' >&2; exit 1;
+}
+[ "$user_state:$group_state" != 1:0 ] || {
+    printf 'cleanup: refusing group-only residue without ownership evidence\n' >&2; exit 1;
+}
+if [ "$user_state" = 0 ]; then
+    [ "$group_state" = 0 ] || { printf 'cleanup: service group is missing\n' >&2; exit 1; }
+    account=$(as_root getent passwd xray-socks5)
+    IFS=: read -r account_name _ name_uid name_gid _ home shell <<EOF
+$account
+EOF
+    [ "$account_name:$home:$shell" = xray-socks5:/nonexistent:/usr/sbin/nologin ] || {
+        printf 'cleanup: refusing foreign service account\n' >&2; exit 1;
+    }
+    group=$(as_root getent group xray-socks5)
+    IFS=: read -r group_name _ group_gid members <<EOF
+$group
+EOF
+    [ "$group_name:$name_gid:$members" = "xray-socks5:$group_gid:" ] || {
+        printf 'cleanup: refusing foreign service group\n' >&2; exit 1;
+    }
+fi
+
 load_state=$(manager_load_state || printf unknown)
 case "$load_state" in
 loaded)
@@ -73,26 +101,7 @@ for dir in /etc/xray-socks5 /var/lib/xray-socks5 /usr/local/libexec/xray-socks5;
 done
 as_root rm -f /etc/xray-socks5.lang
 
-if identity_state passwd xray-socks5; then user_state=0; else user_state=$?; fi
-if identity_state group xray-socks5; then group_state=0; else group_state=$?; fi
-[ "$user_state" -ne 2 ] && [ "$group_state" -ne 2 ] || {
-    printf 'cleanup: account identity lookup failed\n' >&2; exit 1;
-}
-if [ "$user_state" = 0 ]; then
-    account=$(as_root getent passwd xray-socks5)
-    IFS=: read -r _ name_uid name_gid _ home shell <<EOF
-$account
-EOF
-    [ "$home:$shell" = /nonexistent:/usr/sbin/nologin ] || {
-        printf 'cleanup: refusing foreign service account\n' >&2; exit 1;
-    }
-    group=$(as_root getent group xray-socks5)
-    IFS=: read -r _ _ group_gid _ <<EOF
-$group
-EOF
-    [ "$name_gid" = "$group_gid" ] || { printf 'cleanup: account/group mismatch\n' >&2; exit 1; }
-    as_root userdel xray-socks5
-fi
+if [ "$user_state" = 0 ]; then as_root userdel xray-socks5; fi
 if [ "$group_state" = 0 ]; then as_root groupdel xray-socks5; fi
 if identity_state passwd xray-socks5; then _icu=0; else _icu=$?; fi
 if identity_state group xray-socks5; then _icg=0; else _icg=$?; fi

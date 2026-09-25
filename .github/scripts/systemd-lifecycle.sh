@@ -21,8 +21,6 @@ lifecycle_cleanup_init
 chmod 0700 "$work"
 lifecycle_write_fixtures "$work"
 sudo chown root:root "$work"/answers* "$work"/pass*
-: >"$work/answers.empty"
-printf 'y\n' >"$work/answers.uninstall"
 sudo sh -c 'python3 tests/protocol/terminal_install.py "$1" "$2" 23456 1 >"$3"' \
   sh "$work/answers" "$work/pass" "$work/install.log"
 printf 'lifecycle: install-ok\n'
