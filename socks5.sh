@@ -988,7 +988,7 @@ s5_fetch_archive() {
 # Info-ZIP reads these variables as implicit command-line options. Keep each
 # invocation deterministic without changing the caller's shell environment.
 s5_unzip() {
-    UNZIP= UNZIPOPT= ZIPINFO= ZIPINFOOPT= unzip "$@"
+    UNZIP='' UNZIPOPT='' ZIPINFO='' ZIPINFOOPT='' unzip "$@"
 }
 
 s5_verify_archive_members() {
