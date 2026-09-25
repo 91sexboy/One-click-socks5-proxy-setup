@@ -113,7 +113,16 @@ systemctl:stop) [ "${S5_CLEANUP_FAIL:-}" != stop ] || exit 71 ;;
 systemctl:is-active|systemctl:is-enabled) exit 3 ;;
 systemctl:disable|systemctl:daemon-reload) ;;
 pgrep:-u) exit 1 ;;
-test:-e|test:-L) exit 1 ;;
+test:-e)
+    [ "${S5_CLEANUP_SHAPE:-}" = unsafe-unit ] && [ "$3" = /etc/systemd/system/xray-socks5.service ] && exit 0
+    exit 1 ;;
+test:-L) exit 1 ;;
+test:-f)
+    [ "${S5_CLEANUP_SHAPE:-}" = unsafe-unit ] && [ "$3" = /etc/systemd/system/xray-socks5.service ] && exit 0
+    exit 1 ;;
+stat:-c)
+    [ "${S5_CLEANUP_SHAPE:-}" = unsafe-unit ] && printf 'root:root 666\n' && exit 0
+    exit 1 ;;
 getent:passwd)
     case "${S5_CLEANUP_ACCOUNT:-absent}" in
     foreign) printf 'xray-socks5:x:900:900::/home/foreign:/bin/sh\n'; exit 0 ;;
@@ -169,6 +178,14 @@ t_run env PATH="$S5_TEST_ROOT/bin:$PATH" S5_CLEANUP_LOAD_STATE=not-found \
     "$S5_REPO_ROOT/.github/scripts/remove-xray-namespace.sh"
 assert_ne "cleanup refuses a non-system same-named account" 0 "$T_STATUS"
 assert_not_contains "ordinary account refusal precedes file deletion" 'rm -rf' \
+    "$(cat "$S5_TEST_ROOT/cleanup-calls")"
+
+: >"$S5_TEST_ROOT/cleanup-calls"
+t_run env PATH="$S5_TEST_ROOT/bin:$PATH" S5_CLEANUP_LOAD_STATE=not-found \
+    S5_CLEANUP_SHAPE=unsafe-unit ${S5_TEST_SHELL:-sh} \
+    "$S5_REPO_ROOT/.github/scripts/remove-xray-namespace.sh"
+assert_ne "cleanup refuses a service unit mode drift" 0 "$T_STATUS"
+assert_not_contains "unit mode refusal precedes file deletion" 'rm -f /etc/systemd/system' \
     "$(cat "$S5_TEST_ROOT/cleanup-calls")"
 
 t_run python3 - "$S5_REPO_ROOT/.github/scripts/memory-peak-check.py" <<'PY'

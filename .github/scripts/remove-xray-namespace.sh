@@ -13,6 +13,22 @@ identity_state() {
     case $? in 0) return 0 ;; 2) return 1 ;; *) return 2 ;; esac
 }
 
+path_contract() {
+    _pc_path=$1
+    _pc_type=$2
+    _pc_allowed=$3
+    as_root test ! -L "$_pc_path" || return 1
+    case "$_pc_type" in
+    file) as_root test -f "$_pc_path" ;;
+    dir) as_root test -d "$_pc_path" ;;
+    *) return 1 ;;
+    esac || return 1
+    _pc_actual=$(as_root stat -c '%U:%G %a' "$_pc_path") || return 1
+    case "|$_pc_allowed|" in *"|$_pc_actual|"*) return 0 ;; esac
+    printf 'cleanup: unsafe ownership or mode on %s\n' "$_pc_path" >&2
+    return 1
+}
+
 if exists /var/lib/xray-socks5/state || exists /var/lib/xray-socks5/uninstall ||
    exists /var/lib/.xray-socks5-uninstall; then
     answers=$(mktemp)
@@ -104,6 +120,43 @@ EOF
         printf 'cleanup: refusing foreign service group\n' >&2; exit 1;
     }
 fi
+
+if exists /etc/systemd/system/xray-socks5.service; then
+    path_contract /etc/systemd/system/xray-socks5.service file 'root:root 644'
+fi
+if exists /usr/local/libexec/xray-socks5; then
+    path_contract /usr/local/libexec/xray-socks5 dir 'root:root 700|root:root 755'
+fi
+if exists /usr/local/libexec/xray-socks5/xray; then
+    path_contract /usr/local/libexec/xray-socks5/xray file 'root:root 755'
+fi
+if exists /etc/xray-socks5; then
+    path_contract /etc/xray-socks5 dir 'root:root 700|root:xray-socks5 750'
+fi
+if exists /etc/xray-socks5/config.json; then
+    path_contract /etc/xray-socks5/config.json file 'root:xray-socks5 640'
+fi
+for path in /etc/xray-socks5/.s5new.*; do
+    if exists "$path"; then path_contract "$path" file 'root:xray-socks5 640'; fi
+done
+for path in /etc/xray-socks5/.s5tmp.*; do
+    if exists "$path"; then path_contract "$path" file 'root:root 600|root:xray-socks5 640'; fi
+done
+if exists /var/lib/xray-socks5; then
+    path_contract /var/lib/xray-socks5 dir 'root:root 700'
+fi
+if exists /var/lib/xray-socks5/transaction; then
+    path_contract /var/lib/xray-socks5/transaction dir 'root:root 700'
+    for path in /var/lib/xray-socks5/transaction/* /var/lib/xray-socks5/transaction/.[!.]*; do
+        if exists "$path"; then path_contract "$path" file 'root:root 600'; fi
+    done
+fi
+for path in /var/lib/xray-socks5/.s5state.* /var/lib/xray-socks5/.s5tmp.*; do
+    if exists "$path"; then path_contract "$path" file 'root:root 600'; fi
+done
+for path in /usr/local/libexec/xray-socks5/.xray.*; do
+    if exists "$path"; then path_contract "$path" file 'root:root 755'; fi
+done
 
 load_state=$(manager_load_state || printf unknown)
 case "$load_state" in
