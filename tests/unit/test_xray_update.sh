@@ -976,6 +976,32 @@ test_sha256_binary_update_failure() {
     assert_file_absent "candidate failure removes transaction evidence" "$S5_TXNDIR"
 }
 
+test_transaction_unknown_residue() {
+    for _tur_kind in file directory symlink; do
+        t_xray_fixture 23999
+        t_xray_install
+        mkdir -m 0700 "$S5_TXNDIR"
+        cp "$S5_CFG" "$S5_TXNDIR/old.config.json"
+        cp "$S5_STATE" "$S5_TXNDIR/old.state"
+        chmod 0600 "$S5_TXNDIR/old.config.json" "$S5_TXNDIR/old.state"
+        _tur_path=$S5_TXNDIR/operator-note
+        case "$_tur_kind" in
+        file) printf 'preserve\n' >"$_tur_path" ;;
+        directory) mkdir "$_tur_path" ;;
+        symlink) ln -s "$S5_TEST_ROOT/no-target" "$_tur_path" ;;
+        esac
+        _tur_cfg=$(t_sha256 "$S5_TXNDIR/old.config.json")
+        _tur_state=$(t_sha256 "$S5_TXNDIR/old.state")
+        t_run s5_transaction_recover
+        assert_ne "unknown transaction $_tur_kind is refused" 0 "$T_STATUS"
+        assert_eq "$_tur_kind refusal preserves config recovery evidence" \
+            "$_tur_cfg" "$(t_sha256 "$S5_TXNDIR/old.config.json")"
+        assert_eq "$_tur_kind refusal preserves state recovery evidence" \
+            "$_tur_state" "$(t_sha256 "$S5_TXNDIR/old.state")"
+        if [ -e "$_tur_path" ] || [ -L "$_tur_path" ]; then t_ok; else t_bad "$_tur_kind residue was deleted"; fi
+    done
+}
+
 test_sha256_config_update_failure() {
     t_xray_fixture 23999
     t_xray_install
@@ -1051,7 +1077,7 @@ test_update_commit_cleanup_failure() {
     done
 }
 
-SCENARIOS='uninstall_confirmation uninstall_messages family update owned_port rejected_candidate listener_failure rejected_command publish_signal config_symlink uninstall_leftovers uninstall_residue verifier_cleanup txn_mkdir_failure txn_copy_failure txn_chmod_failure stop_failure wait_stopped_failure publication_failure new_start_failure dataplane_failure state_write_failure rollback_restart_failure restore_failure uninstall_unknown rollback_exit uninstall_group_residue uninstall_resume uninstall_signal_resume uninstall_resume_drift uninstall_phase_gap_resume uninstall_final_window older_release_operations older_release_update older_release_download_failure transaction_contract_drift rollback_backup_drift uninstall_directory_drift transaction_all_commands sha256_binary_update_failure sha256_config_update_failure update_commit_cleanup_failure'
+SCENARIOS='uninstall_confirmation uninstall_messages family update owned_port rejected_candidate listener_failure rejected_command publish_signal config_symlink uninstall_leftovers uninstall_residue verifier_cleanup txn_mkdir_failure txn_copy_failure txn_chmod_failure stop_failure wait_stopped_failure publication_failure new_start_failure dataplane_failure state_write_failure rollback_restart_failure restore_failure uninstall_unknown rollback_exit uninstall_group_residue uninstall_resume uninstall_signal_resume uninstall_resume_drift uninstall_phase_gap_resume uninstall_final_window older_release_operations older_release_update older_release_download_failure transaction_contract_drift rollback_backup_drift uninstall_directory_drift transaction_all_commands transaction_unknown_residue sha256_binary_update_failure sha256_config_update_failure update_commit_cleanup_failure'
 if [ "$#" -eq 0 ]; then
     # Expand the fixed scenario words into the default argument list.
     # shellcheck disable=SC2086

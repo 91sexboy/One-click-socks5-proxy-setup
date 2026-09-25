@@ -1844,6 +1844,14 @@ s5_transaction_contract() {
         [ -e "$_stc_path" ] || [ -L "$_stc_path" ] || continue
         s5_path_contract "$_stc_path" file root:root 600 || return 1
     done
+    for _stc_path in "$S5_TXNDIR"/* "$S5_TXNDIR"/.[!.]* "$S5_TXNDIR"/..?*; do
+        [ -e "$_stc_path" ] || [ -L "$_stc_path" ] || continue
+        case "$_stc_path" in
+        "$S5_TXNDIR/old.config.json"|"$S5_TXNDIR/old.state"|"$S5_TXNDIR/old.xray"| \
+        "$S5_TXN_COMMITTED"|"$S5_TXN_STOPPING"|"$S5_TXNDIR"/.s5new.*|"$S5_TXNDIR"/.s5tmp.*) ;;
+        *) return 1 ;;
+        esac
+    done
     return 0
 }
 
