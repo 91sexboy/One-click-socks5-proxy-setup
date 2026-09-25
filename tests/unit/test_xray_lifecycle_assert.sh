@@ -108,5 +108,13 @@ assert_ne "restart log is checked against the old credential" 0 "$T_STATUS"
 printf 'New_secret~2\n' >"$_lacwork/uninstall.log"
 t_run lifecycle_assert_logs_redacted "$_lacwork"
 assert_ne "uninstall log is checked against the rotated credential" 0 "$T_STATUS"
+_lac_pair='newuser:New_secret~2'
+_lac_encoded=$(printf '%s' "$_lac_pair" | base64 | tr -d '\n')
+printf '%s\n' "$_lac_pair" >"$_lacwork/uninstall.log"
+t_run lifecycle_assert_logs_redacted "$_lacwork"
+assert_ne "uninstall log is checked against the credential pair" 0 "$T_STATUS"
+printf '%s\n' "$_lac_encoded" >"$_lacwork/uninstall.log"
+t_run lifecycle_assert_logs_redacted "$_lacwork"
+assert_ne "uninstall log is checked against the encoded credential pair" 0 "$T_STATUS"
 
 t_summary

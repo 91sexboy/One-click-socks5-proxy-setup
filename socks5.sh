@@ -2910,7 +2910,11 @@ s5_uninstall_verify_recovery() {
 }
 
 s5_uninstall_preflight() {
-    for _supdir in "$S5_PREFIX" "$S5_SYSCONFDIR" "$S5_STATEDIR" "$S5_TXNDIR"; do
+    if [ -e "$S5_TXNDIR" ] || [ -L "$S5_TXNDIR" ]; then
+        s5_msg_err uninstall.residue "$S5_TXNDIR"
+        return 1
+    fi
+    for _supdir in "$S5_PREFIX" "$S5_SYSCONFDIR" "$S5_STATEDIR"; do
         [ -e "$_supdir" ] || [ -L "$_supdir" ] || continue
         if [ ! -d "$_supdir" ] || [ -L "$_supdir" ]; then
             s5_msg_err uninstall.residue "$_supdir"

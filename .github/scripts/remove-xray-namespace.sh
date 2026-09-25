@@ -72,6 +72,13 @@ EOF
     [ "$account_name:$home:$shell" = xray-socks5:/nonexistent:/usr/sbin/nologin ] || {
         printf 'cleanup: refusing foreign service account\n' >&2; exit 1;
     }
+    process_status=0
+    as_root pgrep -u "$name_uid" >/dev/null 2>&1 || process_status=$?
+    case "$process_status" in
+    0) printf 'cleanup: service account still owns a process\n' >&2; exit 1 ;;
+    1) ;;
+    *) printf 'cleanup: process ownership is unobservable\n' >&2; exit 1 ;;
+    esac
     group=$(as_root getent group xray-socks5)
     IFS=: read -r group_name _ group_gid members <<EOF
 $group
@@ -112,3 +119,7 @@ as_root systemctl daemon-reload
 [ "$(manager_load_state || printf unknown)" = not-found ] || {
     printf 'cleanup: service registration residue remains\n' >&2; exit 1;
 }
+if as_root systemctl is-enabled --quiet xray-socks5.service; then
+    printf 'cleanup: service enablement residue remains\n' >&2
+    exit 1
+fi

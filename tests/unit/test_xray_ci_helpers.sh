@@ -110,8 +110,9 @@ printf '%s\n' "$*" >>"$S5_TEST_ROOT/cleanup-calls"
 case "$1:$2" in
 systemctl:show) printf '%s\n' "${S5_CLEANUP_LOAD_STATE:-not-found}" ;;
 systemctl:stop) [ "${S5_CLEANUP_FAIL:-}" != stop ] || exit 71 ;;
-systemctl:is-active) exit 3 ;;
+systemctl:is-active|systemctl:is-enabled) exit 3 ;;
 systemctl:disable|systemctl:daemon-reload) ;;
+pgrep:-u) exit 1 ;;
 test:-e|test:-L) exit 1 ;;
 getent:passwd)
     case "${S5_CLEANUP_ACCOUNT:-absent}" in
