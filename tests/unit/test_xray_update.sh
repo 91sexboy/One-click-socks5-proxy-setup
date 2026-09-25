@@ -645,6 +645,25 @@ test_uninstall_resume_drift() {
     t_xray_install
     s5_precheck() { return 0; }
     printf 'y\n' >"$S5_TEST_ROOT/answers.uninstall"
+    S5T_UNINSTALL_FAIL_PHASE=disabled
+    S5_UNINSTALL_INJECT=s5t_uninstall_injector
+    t_run s5_cmd_uninstall <"$S5_TEST_ROOT/answers.uninstall"
+    assert_ne "same-byte replacement setup stops at disabled" 0 "$T_STATUS"
+    unset S5_UNINSTALL_INJECT
+    cp "$S5_SERVICE_ARTIFACT" "$S5_TEST_ROOT/replacement-unit"
+    chmod 0644 "$S5_TEST_ROOT/replacement-unit"
+    rm "$S5_SERVICE_ARTIFACT"
+    mv "$S5_TEST_ROOT/replacement-unit" "$S5_SERVICE_ARTIFACT"
+    _urd_hash=$(t_sha256 "$S5_SERVICE_ARTIFACT")
+    t_run s5_cmd_uninstall </dev/null
+    assert_ne "resume refuses a same-byte service replacement" 0 "$T_STATUS"
+    assert_eq "resume preserves the same-byte replacement" "$_urd_hash" \
+        "$(t_sha256 "$S5_SERVICE_ARTIFACT")"
+
+    t_xray_fixture 23456
+    t_xray_install
+    s5_precheck() { return 0; }
+    printf 'y\n' >"$S5_TEST_ROOT/answers.uninstall"
     S5T_UNINSTALL_FAIL_PHASE=account-removed
     S5_UNINSTALL_INJECT=s5t_uninstall_injector
     t_run s5_cmd_uninstall <"$S5_TEST_ROOT/answers.uninstall"
@@ -838,8 +857,9 @@ test_uninstall_directory_drift() {
         prefix) _udd_path=$S5_PREFIX ;;
         state) _udd_path=$S5_STATEDIR ;;
         esac
-        rmdir "$_udd_path"
-        case "$_udd_dir" in state|prefix) _udd_mode=0750 ;; *) _udd_mode=0755 ;; esac
+        _udd_hold=$S5_TEST_ROOT/held-$_udd_dir
+        mv "$_udd_path" "$_udd_hold"
+        case "$_udd_dir" in state) _udd_mode=0700 ;; prefix) _udd_mode=0755 ;; config) _udd_mode=0750 ;; esac
         mkdir -m "$_udd_mode" "$_udd_path"
         t_run s5_cmd_uninstall </dev/null
         assert_ne "$_udd_phase refuses replaced $_udd_dir directory" 0 "$T_STATUS"
