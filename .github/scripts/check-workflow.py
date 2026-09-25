@@ -12,7 +12,8 @@ CHECKOUT = 'actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09'
 UPLOADER = 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02'
 JOBS = {'lint', 'unit', 'xray-assets', 'xray-mixed', 'xray-systemd', 'openrc-integration',
         'systemd-assertion-controls', 'openrc-assertion-controls', 'memory-report'}
-IMAGES = {'alpine:3.20', 'alpine:3.24'}
+LIFECYCLE_IMAGES = {'alpine:3.20', 'alpine:3.22', 'alpine:3.24'}
+CONTROL_IMAGES = {'alpine:3.20', 'alpine:3.24'}
 MUTATIONS = {'fail', 'skip', 'unreachable', 'swallow'}
 RUNNERS = {('ubuntu-24.04', 'amd64'), ('ubuntu-24.04-arm', 'arm64')}
 
@@ -130,7 +131,9 @@ def check(workflow):
             '${{ matrix.shell.command }}', 'unit: shell binding changed')
     for name in ('openrc-integration', 'openrc-assertion-controls'):
         images = matrix(jobs[name], 'image')
-        require(len(images) == 2 and set(images) == IMAGES, name + ': both Alpine versions required')
+        expected_images = LIFECYCLE_IMAGES if name == 'openrc-integration' else CONTROL_IMAGES
+        require(len(images) == len(expected_images) and set(images) == expected_images,
+                name + ': required Alpine versions changed')
         command = ('sh /src/.github/scripts/alpine-lifecycle.sh' if name == 'openrc-integration'
                    else 'python3 .github/scripts/lifecycle-assert-control.py openrc')
         step = entry(jobs[name], command)

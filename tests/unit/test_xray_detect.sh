@@ -54,6 +54,8 @@ centos-stream-10 amd64 el:systemd
 alpine-3.19 amd64 reject
 alpine-3.20 amd64 alpine:openrc
 alpine-3.20 arm64 alpine:openrc
+alpine-3.22 amd64 alpine:openrc
+alpine-3.22 arm64 alpine:openrc
 alpine-3.24 amd64 alpine:openrc
 rhel-9 amd64 reject
 rocky-9 amd64 reject

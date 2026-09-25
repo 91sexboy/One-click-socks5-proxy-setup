@@ -985,12 +985,18 @@ s5_fetch_archive() {
     [ "$(s5_sha256 "$1")" = "$S5_ASSET_SHA256" ] || { s5_msg_err asset.invalid sha256; return 1; }
 }
 
+# Info-ZIP reads these variables as implicit command-line options. Keep each
+# invocation deterministic without changing the caller's shell environment.
+s5_unzip() {
+    UNZIP='' UNZIPOPT='' ZIPINFO='' ZIPINFOOPT='' unzip "$@"
+}
+
 s5_verify_archive_members() {
     # $1: the accepted archive. $2: scratch path for its member listing. Refuse any
     # archive that is not exactly {xray, geoip.dat, geosite.dat, LICENSE, README.md},
     # carries a path-bearing or traversing member name, or holds a member whose Unix
     # mode is not a regular 10xx file.
-    unzip -Z1 "$1" >"$2" 2>/dev/null || { s5_msg_err asset.invalid members; return 1; }
+    s5_unzip -Z1 "$1" >"$2" 2>/dev/null || { s5_msg_err asset.invalid members; return 1; }
     [ "$(grep -cxF xray "$2" || true)" = 1 ] || { s5_msg_err asset.invalid members; return 1; }
     for _svam_entry in geoip.dat geosite.dat LICENSE README.md; do
         [ "$(grep -cxF "$_svam_entry" "$2" || true)" = 1 ] || { s5_msg_err asset.invalid members; return 1; }
@@ -999,7 +1005,7 @@ s5_verify_archive_members() {
     while IFS= read -r _svam_entry; do
         case "$_svam_entry" in '' | */* | *..* | *\\*) s5_msg_err asset.invalid members; return 1 ;; esac
     done <"$2"
-    if ! unzip -Z -v "$1" 2>/dev/null |
+    if ! s5_unzip -Z -v "$1" 2>/dev/null |
         awk '/Unix file attributes/ { seen++; if ($4 !~ /^\(10[0-7]/) bad=1 }
              END { exit (seen == 5 && !bad) ? 0 : 1 }'; then
         s5_msg_err asset.invalid members
@@ -1011,7 +1017,7 @@ s5_extract_binary() {
     # $1: the verified archive. $2: scratch path for the extracted xray. Accept the
     # binary only at the pinned size and SHA-256 and an arch-matching ELF type, then
     # install it atomically at $S5_BIN and record its digest.
-    unzip -p "$1" xray >"$2" 2>/dev/null || return 1
+    s5_unzip -p "$1" xray >"$2" 2>/dev/null || return 1
     [ "$(s5_bytecount "$2")" = "$S5_ASSET_BINARY_SIZE" ] || { s5_msg_err asset.invalid binary-size; return 1; }
     [ "$(s5_sha256 "$2")" = "$S5_ASSET_BINARY_SHA256" ] || { s5_msg_err asset.invalid binary-sha256; return 1; }
     chmod 0755 "$2" || return 1
@@ -2087,7 +2093,7 @@ s5_install_runtime_dependencies() {
 # banner is proof, and accepting both keeps an unusual Info-ZIP build from being
 # refused.
 s5_unzip_lists_members() {
-    if _suzl=$(unzip -Z 2>&1); then
+    if _suzl=$(s5_unzip -Z 2>&1); then
         _suzl=''
         return 0
     fi

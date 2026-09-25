@@ -119,6 +119,28 @@ assert_eq "the installed xray is the verified member" "$S5T_BIN_SHA256" \
     "$(t_sha256 "$S5_BIN")"
 assert_mode "the installed xray is executable" 755 "$S5_BIN"
 
+# Info-ZIP treats UNZIP and UNZIPOPT as leading command-line options. `-aa`
+# forces text conversion and used to alter binary bytes while `unzip -p` still
+# exited zero. Production must isolate every archive operation from those
+# inherited settings without modifying the caller's environment.
+UNZIP=-aa
+export UNZIP
+s5t_asset_run good
+assert_eq "UNZIP options cannot alter accepted xray bytes" 0 "$T_STATUS"
+assert_eq "UNZIP-isolated extraction installs the verified member" "$S5T_BIN_SHA256" \
+    "$(t_sha256 "$S5_BIN")"
+assert_eq "the caller's UNZIP value is preserved" -aa "$UNZIP"
+unset UNZIP
+
+UNZIPOPT=-aa
+export UNZIPOPT
+s5t_asset_run good
+assert_eq "UNZIPOPT options cannot alter accepted xray bytes" 0 "$T_STATUS"
+assert_eq "UNZIPOPT-isolated extraction installs the verified member" "$S5T_BIN_SHA256" \
+    "$(t_sha256 "$S5_BIN")"
+assert_eq "the caller's UNZIPOPT value is preserved" -aa "$UNZIPOPT"
+unset UNZIPOPT
+
 s5t_asset_reject noxray "an archive with no xray member" members
 s5t_asset_reject duplicate "an archive with a duplicate xray member" members
 s5t_asset_reject extra "an archive with an unexpected extra member" members

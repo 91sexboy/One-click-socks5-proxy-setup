@@ -44,6 +44,7 @@ class WorkflowContractTests(unittest.TestCase):
             'shell-binding': lambda jobs: jobs['unit']['steps'][-1]['env'].update({'S5_TEST_SHELL': 'sh'}),
             'control-mutation': lambda jobs: jobs['openrc-assertion-controls']['strategy']['matrix']['mutation'].pop(),
             'control-image': lambda jobs: jobs['openrc-assertion-controls']['strategy']['matrix']['image'].pop(),
+            'lifecycle-image': lambda jobs: jobs['openrc-integration']['strategy']['matrix']['image'].pop(),
             'control-needs': lambda jobs: jobs['systemd-assertion-controls'].pop('needs'),
             'upload-path': lambda jobs: jobs['memory-report']['steps'][-1]['with'].update({'path': '**/*'}),
             'upload-missing': lambda jobs: jobs['memory-report']['steps'][-1]['with'].update({'if-no-files-found': 'warn'}),

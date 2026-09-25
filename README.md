@@ -74,7 +74,7 @@ After successful installation and verification, a real terminal displays both co
 
 `x86_64` maps to `amd64`; `aarch64` maps to `arm64`. Other distribution IDs and architectures are rejected rather than assumed compatible.
 
-**Accepted does not mean lifecycle-tested.** CI exercises installation, configuration update, restart, crash recovery, protocol checks, and uninstall on **Ubuntu 24.04 amd64** and **Alpine 3.20 / 3.24 amd64**. Arm64 has asset and executable verification plus Ubuntu 24.04 memory comparisons, not a full service-lifecycle job. Other accepted systems remain lifecycle-unverified.
+**Accepted does not mean lifecycle-tested.** CI exercises installation, configuration update, restart, crash recovery, protocol checks, and uninstall on **Ubuntu 24.04 amd64** and **Alpine 3.20 / 3.22 / 3.24 amd64**. Arm64 has asset and executable verification plus Ubuntu 24.04 memory comparisons, not a full service-lifecycle job. Other accepted systems remain lifecycle-unverified.
 
 ## Commands
 

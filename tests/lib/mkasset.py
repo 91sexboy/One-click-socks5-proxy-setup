@@ -20,7 +20,7 @@ def stub_xray():
     header[:7] = b"\x7fELF\x02\x01\x01"
     struct.pack_into("<HHI", header, 16, 2, 0x3E, 1)
     struct.pack_into("<H", header, 52, 64)
-    return bytes(header)
+    return bytes(header) + b"synthetic\r\ntext\nbytes\r\n"
 
 
 def members(case, binary):
