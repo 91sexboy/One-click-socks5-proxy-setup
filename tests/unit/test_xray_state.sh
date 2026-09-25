@@ -282,4 +282,18 @@ for _soc_case in healthy config-owner config-group binary-owner state-owner unit
     fi
 done
 
+t_xray_fixture 23456
+mkdir -p "$S5_STATEDIR" "$S5_SYSCONFDIR" "$S5_PREFIX" "$S5_UNITDIR"
+cp "$S5_TEST_ROOT/asset-xray" "$S5_BIN"
+chmod 0755 "$S5_BIN"
+s5_asset_select
+S5_BINARY_SHA256=1111111111111111111111111111111111111111111111111111111111111111
+S5_CONFIG_SHA256=2222222222222222222222222222222222222222222222222222222222222222
+S5_UNIT_SHA256=3333333333333333333333333333333333333333333333333333333333333333
+S5_ACCOUNT_UID=900
+S5_ACCOUNT_GID=900
+t_run s5_state_write
+assert_ne "state writer refuses a binary digest that is not the current pin" 0 "$T_STATUS"
+assert_file_absent "wrong binary metadata writes no state" "$S5_STATE"
+
 t_summary

@@ -1310,6 +1310,10 @@ s5_state_parse_file() {
 s5_state_parse() { s5_state_parse_file "$S5_STATE"; }
 
 s5_state_write() {
+    [ "$S5_BINARY_SHA256" = "$S5_ASSET_BINARY_SHA256" ] || return 1
+    s5_valid_sha256 "$S5_BINARY_SHA256" || return 1
+    [ "$(s5_bytecount "$S5_BIN" 2>/dev/null)" = "$S5_ASSET_BINARY_SIZE" ] || return 1
+    [ "$(s5_sha256 "$S5_BIN" 2>/dev/null)" = "$S5_BINARY_SHA256" ] || return 1
     s5_atomic_write "$S5_STATE" root:root 0600 <<STATE
 schema	1
 engine	xray
