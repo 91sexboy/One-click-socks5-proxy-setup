@@ -92,6 +92,8 @@ assert_contains "Alpine gate keeps credentials out of argv" '/proc/$live_pid/cmd
 assert_contains "Alpine gate keeps credentials out of the environment" '/proc/$live_pid/environ' "$alpine_text"
 assert_contains "Alpine gate snapshots packages before installation" \
     'pkgs_before_install=$(apk info | sort | sha256sum)' "$alpine_text"
+assert_contains "Alpine gate records its package-set baseline" \
+    'openrc: package-set before-install=%s after-install=%s' "$alpine_text"
 assert_contains "Alpine gate proves uninstall retains installed dependencies" \
     'test "$(apk info | sort | sha256sum)" = "$pkgs_after_install"' "$alpine_text"
 assert_contains "Alpine gate restores the config in place" \

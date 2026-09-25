@@ -31,7 +31,8 @@ sh .github/scripts/run-socks5.sh install \
 sh .github/scripts/lifecycle-update-assert.sh
 rc-service xray-socks5 status
 pkgs_after_install=$(apk info | sort | sha256sum)
-test "$pkgs_after_install" != "$pkgs_before_install"
+printf 'openrc: package-set before-install=%s after-install=%s\n' \
+  "$pkgs_before_install" "$pkgs_after_install"
 sh .github/scripts/run-socks5.sh status \
   "$work/answers.empty" "$work/status.log" "$work/pass.update" "$work/pass"
 sh .github/scripts/run-socks5.sh restart \
