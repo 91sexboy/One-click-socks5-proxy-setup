@@ -105,13 +105,6 @@ EOF
     [ "$name_uid" -lt 1000 ] && [ "$name_gid" -lt 1000 ] || {
         printf 'cleanup: refusing non-system service account\n' >&2; exit 1;
     }
-    process_status=0
-    as_root pgrep -u "$name_uid" >/dev/null 2>&1 || process_status=$?
-    case "$process_status" in
-    0) printf 'cleanup: service account still owns a process\n' >&2; exit 1 ;;
-    1) ;;
-    *) printf 'cleanup: process ownership is unobservable\n' >&2; exit 1 ;;
-    esac
     group=$(as_root getent group xray-socks5)
     IFS=: read -r group_name _ group_gid members <<EOF
 $group
@@ -171,6 +164,16 @@ loaded)
 not-found) ;;
 *) printf 'cleanup: service manager state is unobservable\n' >&2; exit 1 ;;
 esac
+
+if [ "$user_state" = 0 ]; then
+    process_status=0
+    as_root pgrep -u "$name_uid" >/dev/null 2>&1 || process_status=$?
+    case "$process_status" in
+    0) printf 'cleanup: service account still owns a process\n' >&2; exit 1 ;;
+    1) ;;
+    *) printf 'cleanup: process ownership is unobservable\n' >&2; exit 1 ;;
+    esac
+fi
 
 as_root rm -f /etc/systemd/system/xray-socks5.service
 for dir in /etc/xray-socks5 /var/lib/xray-socks5 /usr/local/libexec/xray-socks5; do

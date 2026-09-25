@@ -108,11 +108,16 @@ t_stub sudo <<'SUDO'
 #!/bin/sh
 printf '%s\n' "$*" >>"$S5_TEST_ROOT/cleanup-calls"
 case "$1:$2" in
-systemctl:show) printf '%s\n' "${S5_CLEANUP_LOAD_STATE:-not-found}" ;;
+systemctl:show)
+    if [ -f "$S5_TEST_ROOT/cleanup-unit-deleted" ]; then printf 'not-found\n';
+    else printf '%s\n' "${S5_CLEANUP_LOAD_STATE:-not-found}"; fi ;;
 systemctl:stop) [ "${S5_CLEANUP_FAIL:-}" != stop ] || exit 71 ;;
 systemctl:is-active|systemctl:is-enabled) exit 3 ;;
 systemctl:disable|systemctl:daemon-reload) ;;
-pgrep:-u) exit 1 ;;
+pgrep:-u)
+    if [ "${S5_CLEANUP_PROCESS:-absent}" = active ] &&
+        ! grep -q '^systemctl stop ' "$S5_TEST_ROOT/cleanup-calls"; then exit 0; fi
+    exit 1 ;;
 test:-e)
     [ "${S5_CLEANUP_SHAPE:-}" = unsafe-unit ] && [ "$3" = /etc/systemd/system/xray-socks5.service ] && exit 0
     exit 1 ;;
@@ -124,6 +129,7 @@ stat:-c)
     [ "${S5_CLEANUP_SHAPE:-}" = unsafe-unit ] && printf 'root:root 666\n' && exit 0
     exit 1 ;;
 getent:passwd)
+    [ -f "$S5_TEST_ROOT/cleanup-user-deleted" ] && exit 2
     case "${S5_CLEANUP_ACCOUNT:-absent}" in
     foreign) printf 'xray-socks5:x:900:900::/home/foreign:/bin/sh\n'; exit 0 ;;
     ordinary) printf 'xray-socks5:x:1900:1900::/nonexistent:/usr/sbin/nologin\n'; exit 0 ;;
@@ -131,17 +137,23 @@ getent:passwd)
     *) exit 2 ;;
     esac ;;
 getent:group)
+    [ -f "$S5_TEST_ROOT/cleanup-group-deleted" ] && exit 2
     case "${S5_CLEANUP_ACCOUNT:-absent}" in
     foreign|owned) printf 'xray-socks5:x:900:\n'; exit 0 ;;
     ordinary) printf 'xray-socks5:x:1900:\n'; exit 0 ;;
     *) exit 2 ;;
     esac ;;
-rm:*) ;;
+userdel:*) : >"$S5_TEST_ROOT/cleanup-user-deleted" ;;
+groupdel:*) : >"$S5_TEST_ROOT/cleanup-group-deleted" ;;
+rm:*)
+    [ "${3:-}" != /etc/systemd/system/xray-socks5.service ] || : >"$S5_TEST_ROOT/cleanup-unit-deleted" ;;
 *) ;;
 esac
 exit 0
 SUDO
 for cleanup_failure in none stop; do
+    rm -f "$S5_TEST_ROOT/cleanup-user-deleted" "$S5_TEST_ROOT/cleanup-group-deleted" \
+        "$S5_TEST_ROOT/cleanup-unit-deleted"
     : >"$S5_TEST_ROOT/cleanup-calls"
     # Split a configured multiword shell such as busybox sh.
     # shellcheck disable=SC2086
@@ -187,6 +199,18 @@ t_run env PATH="$S5_TEST_ROOT/bin:$PATH" S5_CLEANUP_LOAD_STATE=not-found \
 assert_ne "cleanup refuses a service unit mode drift" 0 "$T_STATUS"
 assert_not_contains "unit mode refusal precedes file deletion" 'rm -f /etc/systemd/system' \
     "$(cat "$S5_TEST_ROOT/cleanup-calls")"
+
+rm -f "$S5_TEST_ROOT/cleanup-user-deleted" "$S5_TEST_ROOT/cleanup-group-deleted" \
+        "$S5_TEST_ROOT/cleanup-unit-deleted"
+: >"$S5_TEST_ROOT/cleanup-calls"
+t_run env PATH="$S5_TEST_ROOT/bin:$PATH" S5_CLEANUP_LOAD_STATE=loaded \
+    S5_CLEANUP_ACCOUNT=owned S5_CLEANUP_PROCESS=active ${S5_TEST_SHELL:-sh} \
+    "$S5_REPO_ROOT/.github/scripts/remove-xray-namespace.sh"
+assert_eq "cleanup stops an owned service before checking orphan processes" 0 "$T_STATUS"
+_cleanup_stop_line=$(grep -n '^systemctl stop ' "$S5_TEST_ROOT/cleanup-calls" | cut -d: -f1)
+_cleanup_pgrep_line=$(grep -n '^pgrep -u ' "$S5_TEST_ROOT/cleanup-calls" | cut -d: -f1)
+if [ -n "$_cleanup_stop_line" ] && [ -n "$_cleanup_pgrep_line" ] &&
+    [ "$_cleanup_stop_line" -lt "$_cleanup_pgrep_line" ]; then t_ok; else t_bad "process check ran before stop"; fi
 
 t_run python3 - "$S5_REPO_ROOT/.github/scripts/memory-peak-check.py" <<'PY'
 import contextlib
