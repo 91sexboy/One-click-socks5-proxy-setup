@@ -1028,6 +1028,9 @@ s5_extract_binary() {
     _seb_temp=$(mktemp "$S5_PREFIX/.xray.XXXXXX") || return 1
     chmod 0755 "$_seb_temp" || { rm -f "$_seb_temp"; return 1; }
     cat "$2" >"$_seb_temp" || { rm -f "$_seb_temp"; return 1; }
+    if [ "${S5_SKIP_OWNERSHIP:-0}" != 1 ]; then
+        chown root:root "$_seb_temp" || { rm -f "$_seb_temp"; return 1; }
+    fi
     mv -f "$_seb_temp" "$S5_BIN" || { rm -f "$_seb_temp"; return 1; }
     S5_CREATED_BIN=1
     s5_record_digest binary "$S5_BIN" || return 1
@@ -2375,6 +2378,7 @@ s5_install_update() {
     chmod 0600 "$_sioldcfg" "$_sioldstate" || return 1
     if [ "$S5_UPDATE_NEEDS_BINARY" = 1 ]; then
         cp "$S5_BIN" "$_sioldbin" || return 1
+        if [ "${S5_SKIP_OWNERSHIP:-0}" != 1 ]; then chown root:root "$_sioldbin" || return 1; fi
         chmod 0600 "$_sioldbin" || return 1
         S5_CREATED_BIN=0
         S5_BINARY_REPLACED=1

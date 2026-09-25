@@ -903,6 +903,41 @@ test_transaction_all_commands() {
     assert_file_exists "committed cleanup preserves its marker on drift" "$S5_TXN_COMMITTED"
 }
 
+test_sha256_binary_update_failure() {
+    t_xray_fixture 23999
+    t_xray_install
+    _sbu_old_bin=$(t_sha256 "$S5_BIN")
+    _sbu_old_cfg=$(t_sha256 "$S5_CFG")
+    _sbu_old_state=$(t_sha256 "$S5_STATE")
+    awk -F '\t' '
+        BEGIN { OFS="\t" }
+        $1 == "release" { $2="v25.1.1" }
+        $1 == "commit" { $2="1111111111111111111111111111111111111111" }
+        $1 == "archive_size" { $2="123456" }
+        $1 == "archive_sha256" { $2="2222222222222222222222222222222222222222222222222222222222222222" }
+        { print }
+    ' "$S5_STATE" >"$S5_STATE.next"
+    mv "$S5_STATE.next" "$S5_STATE"
+    chmod 0600 "$S5_STATE"
+    _sbu_old_state=$(t_sha256 "$S5_STATE")
+    s5_download_engine() {
+        printf '#!/bin/sh\nprintf candidate\\n\n' >"$S5_BIN"
+        chmod 0755 "$S5_BIN"
+        s5_record_digest binary "$S5_BIN" || return 1
+        S5_BINARY_SHA256=$S5_RECORDED_DIGEST
+        return 91
+    }
+    s5_prompt_port() { S5_PORT=23999; return 0; }
+    s5_install_update
+    assert_ne "candidate binary digest/download failure aborts update" 0 "$?"
+    s5_cleanup
+    assert_eq "candidate failure restores the exact old binary" "$_sbu_old_bin" "$(t_sha256 "$S5_BIN")"
+    assert_eq "candidate failure preserves config" "$_sbu_old_cfg" "$(t_sha256 "$S5_CFG")"
+    assert_eq "candidate failure preserves historical state" "$_sbu_old_state" "$(t_sha256 "$S5_STATE")"
+    assert_eq "candidate failure keeps the old listener" 23999 "$(cat "$S5_TEST_ROOT/svc_active")"
+    assert_file_absent "candidate failure removes transaction evidence" "$S5_TXNDIR"
+}
+
 test_sha256_config_update_failure() {
     t_xray_fixture 23999
     t_xray_install
@@ -978,7 +1013,7 @@ test_update_commit_cleanup_failure() {
     done
 }
 
-SCENARIOS='uninstall_confirmation uninstall_messages family update owned_port rejected_candidate listener_failure rejected_command publish_signal config_symlink uninstall_leftovers uninstall_residue verifier_cleanup txn_mkdir_failure txn_copy_failure txn_chmod_failure stop_failure wait_stopped_failure publication_failure new_start_failure dataplane_failure state_write_failure rollback_restart_failure restore_failure uninstall_unknown rollback_exit uninstall_group_residue uninstall_resume uninstall_signal_resume uninstall_resume_drift uninstall_phase_gap_resume uninstall_final_window older_release_update older_release_download_failure transaction_contract_drift rollback_backup_drift uninstall_directory_drift transaction_all_commands sha256_config_update_failure update_commit_cleanup_failure'
+SCENARIOS='uninstall_confirmation uninstall_messages family update owned_port rejected_candidate listener_failure rejected_command publish_signal config_symlink uninstall_leftovers uninstall_residue verifier_cleanup txn_mkdir_failure txn_copy_failure txn_chmod_failure stop_failure wait_stopped_failure publication_failure new_start_failure dataplane_failure state_write_failure rollback_restart_failure restore_failure uninstall_unknown rollback_exit uninstall_group_residue uninstall_resume uninstall_signal_resume uninstall_resume_drift uninstall_phase_gap_resume uninstall_final_window older_release_update older_release_download_failure transaction_contract_drift rollback_backup_drift uninstall_directory_drift transaction_all_commands sha256_binary_update_failure sha256_config_update_failure update_commit_cleanup_failure'
 if [ "$#" -eq 0 ]; then
     # Expand the fixed scenario words into the default argument list.
     # shellcheck disable=SC2086
