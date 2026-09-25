@@ -90,7 +90,7 @@ Run these from the directory containing the downloaded script. Installation and 
 | `sh socks5.sh language` | Choose and save a different interface language |
 | `sh socks5.sh help` | Show command usage |
 
-An installation made by an older supported script release remains available to `status`, `show`, `restart`, update, and uninstall after this script's release pins change. Recorded metadata verifies the installed binary; an update independently verifies the current pinned download.
+An installation made by an older supported script release remains available to `status`, `show`, `restart`, update, and uninstall after this script's release pins change. `status` reports the installed release, not the current download candidate. Recorded metadata verifies the installed binary; an update independently verifies the current pinned download.
 
 Re-running `install` is a **configuration update**, not an upgrade to the latest Xray release. On update, pressing Enter for the port keeps the verified currently owned port; pressing Enter for the username or password generates a new value. New-install confirmation defaults to yes; update and uninstall default to no.
 

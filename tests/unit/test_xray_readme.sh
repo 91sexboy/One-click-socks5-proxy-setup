@@ -44,12 +44,16 @@ for _doc in README.md README.zh-CN.md; do
             'blank port keeps the current port only after its listener is verified' "$_doctext"
         assert_contains "English update docs rotate blank credentials" \
             'Blank username and password answers generate new values' "$_doctext"
+        assert_contains "English status docs report installed release" \
+            '`status` reports the installed release' "$_doctext"
         ;;
     README.zh-CN.md)
         assert_contains "Chinese update docs retain a verified blank port" \
             '更新时端口留空，仅在确认当前监听器属于本次安装后保留原端口' "$_doctext"
         assert_contains "Chinese update docs rotate blank credentials" \
             '账户名或密码留空会生成新值' "$_doctext"
+        assert_contains "Chinese status docs report installed release" \
+            '`status` 报告的是已安装版本' "$_doctext"
         ;;
     esac
 done

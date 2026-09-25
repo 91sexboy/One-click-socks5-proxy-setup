@@ -210,6 +210,14 @@ awk -F '\t' 'BEGIN { OFS="\t" }
 ' "$S5_TEST_ROOT/valid-state" >"$S5_STATE"
 s5t_state_expect "a supported older installed release remains loadable" 0
 assert_eq "the state seam reports the installed release" v25.1.1 "$S5_INSTALLED_RELEASE"
+s5_service_state() { return 1; }
+s5_listener_state() { return 1; }
+s5_lock_acquire() { S5_LOCK_HELD=1; return 0; }
+s5_lock_release() { S5_LOCK_HELD=0; return 0; }
+s5_precheck() { return 0; }
+t_run s5_cmd_status
+assert_contains "status reports the installed historical release"     'Xray version: v25.1.1' "$T_OUT"
+assert_not_contains "status does not substitute the current candidate release"     "Xray version: $S5_XRAY_VERSION" "$T_OUT"
 s5_asset_select
 assert_eq "current candidate selection remains on the script release" Xray-linux-64.zip "$S5_ASSET_NAME"
 assert_eq "current candidate digest is not replaced by historical state" "$S5T_BIN_SHA256" "$S5_ASSET_BINARY_SHA256"
