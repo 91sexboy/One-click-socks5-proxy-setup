@@ -316,15 +316,28 @@ s5_precheck status >/dev/null 2>&1
 # there while a function shadows the applet in all three shells.
 unzip() {
     [ "$1" = -Z ] || return 0
+    if [ -n "${UNZIP:-}${UNZIPOPT:-}${ZIPINFO:-}${ZIPINFOOPT:-}" ]; then
+        printf 'inherited Info-ZIP options were not isolated\n' >&2
+        return 9
+    fi
     case "$(cat "$S5_TEST_ROOT/unzip-mode" 2>/dev/null)" in
     busybox) printf 'unzip: invalid option -- %s\n' "'Z'" >&2; return 1 ;;
     banner) printf 'ZipInfo 3.00 of 20 April 2009, by the Info-ZIP group.\n'; return 2 ;;
     *) printf 'ZipInfo 3.00 of 20 April 2009, by the Info-ZIP group.\n'; return 0 ;;
     esac
 }
+UNZIP=-aa
+UNZIPOPT=-aa
+ZIPINFO=-h
+ZIPINFOOPT=-h
+export UNZIP UNZIPOPT ZIPINFO ZIPINFOOPT
 printf 'infozip\n' >"$S5_TEST_ROOT/unzip-mode"
 s5_unzip_lists_members
-assert_eq "an Info-ZIP unzip lists members" 0 "$?"
+assert_eq "an Info-ZIP unzip lists members with inherited options isolated" 0 "$?"
+assert_eq "the capability probe preserves UNZIP" -aa "$UNZIP"
+assert_eq "the capability probe preserves UNZIPOPT" -aa "$UNZIPOPT"
+assert_eq "the capability probe preserves ZIPINFO" -h "$ZIPINFO"
+assert_eq "the capability probe preserves ZIPINFOOPT" -h "$ZIPINFOOPT"
 printf 'banner\n' >"$S5_TEST_ROOT/unzip-mode"
 s5_unzip_lists_members
 assert_eq "a nonzero status with the zipinfo banner still counts" 0 "$?"
@@ -341,6 +354,7 @@ assert_eq "status never needs the member listing" 0 "$_pcss"
 printf 'infozip\n' >"$S5_TEST_ROOT/unzip-mode"
 _pcinstall=$(s5_precheck install 2>&1) && _pcis=0 || _pcis=$?
 assert_eq "install accepts an unzip that lists members" 0 "$_pcis"
+unset UNZIP UNZIPOPT ZIPINFO ZIPINFOOPT
 
 # SPEC 5 runs the service through the platform's native manager, so install and
 # update must require that manager up front like every other command does. The
