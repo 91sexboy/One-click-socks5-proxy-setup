@@ -444,7 +444,7 @@ s5t_txn_case() {
     *) assert_file_absent "$_txn_fault cleanup removes the owned transaction" "$S5_TXNDIR" ;;
     esac
     case "$_txn_fault" in
-    wait) assert_file_absent "failed stop observation does not claim a running service" "$S5_TEST_ROOT/svc_active" ;;
+    wait) assert_eq "failed stop observation restores the old listener" 23456         "$(cat "$S5_TEST_ROOT/svc_active")" ;;
     restart) : ;;
     *) assert_eq "$_txn_fault leaves or restores the old listener" 23456 "$(cat "$S5_TEST_ROOT/svc_active")" ;;
     esac
@@ -792,6 +792,61 @@ test_transaction_contract_drift() {
     assert_eq "valid binary backup cleanup succeeds" 0 "$?"
 }
 
+test_rollback_backup_drift() {
+    for _rbd_target in config state binary; do
+        t_xray_fixture 23456
+        t_xray_install
+        mkdir -m 0700 "$S5_TXNDIR"
+        cp "$S5_CFG" "$S5_TXNDIR/old.config.json"
+        cp "$S5_STATE" "$S5_TXNDIR/old.state"
+        chmod 0600 "$S5_TXNDIR/old.config.json" "$S5_TXNDIR/old.state"
+        case "$_rbd_target" in
+        config) printf 'foreign config\n' >>"$S5_TXNDIR/old.config.json" ;;
+        state) printf 'foreign\tfield\n' >>"$S5_TXNDIR/old.state" ;;
+        binary)
+            cp "$S5_BIN" "$S5_TXNDIR/old.xray"
+            chmod 0600 "$S5_TXNDIR/old.xray"
+            printf 'foreign binary\n' >>"$S5_TXNDIR/old.xray" ;;
+        esac
+        _rbd_live_cfg=$(t_sha256 "$S5_CFG")
+        _rbd_live_state=$(t_sha256 "$S5_STATE")
+        t_run s5_update_rollback "$S5_TXNDIR/old.config.json" "$S5_TXNDIR/old.state"
+        assert_ne "rollback refuses $_rbd_target backup drift" 0 "$T_STATUS"
+        assert_eq "$_rbd_target drift leaves live config unchanged" \
+            "$_rbd_live_cfg" "$(t_sha256 "$S5_CFG")"
+        assert_eq "$_rbd_target drift leaves live state unchanged" \
+            "$_rbd_live_state" "$(t_sha256 "$S5_STATE")"
+        assert_dir_exists "$_rbd_target drift retains recovery evidence" "$S5_TXNDIR"
+    done
+}
+
+test_uninstall_directory_drift() {
+    for _udd_case in state-finalizing:config state-finalizing:prefix complete-moved:state; do
+        _udd_phase=${_udd_case%%:*}
+        _udd_dir=${_udd_case#*:}
+        t_xray_fixture 23456
+        t_xray_install
+        s5_precheck() { return 0; }
+        printf 'y\n' >"$S5_TEST_ROOT/answers.uninstall"
+        S5T_UNINSTALL_FAIL_PHASE=$_udd_phase
+        S5_UNINSTALL_INJECT=s5t_uninstall_injector
+        t_run s5_cmd_uninstall <"$S5_TEST_ROOT/answers.uninstall"
+        assert_ne "$_udd_phase setup reaches directory window" 0 "$T_STATUS"
+        unset S5_UNINSTALL_INJECT
+        case "$_udd_dir" in
+        config) _udd_path=$S5_SYSCONFDIR ;;
+        prefix) _udd_path=$S5_PREFIX ;;
+        state) _udd_path=$S5_STATEDIR ;;
+        esac
+        rmdir "$_udd_path"
+        case "$_udd_dir" in state|prefix) _udd_mode=0750 ;; *) _udd_mode=0755 ;; esac
+        mkdir -m "$_udd_mode" "$_udd_path"
+        t_run s5_cmd_uninstall </dev/null
+        assert_ne "$_udd_phase refuses replaced $_udd_dir directory" 0 "$T_STATUS"
+        assert_dir_exists "$_udd_phase preserves replaced $_udd_dir directory" "$_udd_path"
+    done
+}
+
 test_sha256_config_update_failure() {
     t_xray_fixture 23999
     t_xray_install
@@ -867,7 +922,7 @@ test_update_commit_cleanup_failure() {
     done
 }
 
-SCENARIOS='uninstall_confirmation uninstall_messages family update owned_port rejected_candidate listener_failure rejected_command publish_signal config_symlink uninstall_leftovers uninstall_residue verifier_cleanup txn_mkdir_failure txn_copy_failure txn_chmod_failure stop_failure wait_stopped_failure publication_failure new_start_failure dataplane_failure state_write_failure rollback_restart_failure restore_failure uninstall_unknown rollback_exit uninstall_group_residue uninstall_resume uninstall_signal_resume uninstall_resume_drift uninstall_phase_gap_resume uninstall_final_window older_release_update older_release_download_failure transaction_contract_drift sha256_config_update_failure update_commit_cleanup_failure'
+SCENARIOS='uninstall_confirmation uninstall_messages family update owned_port rejected_candidate listener_failure rejected_command publish_signal config_symlink uninstall_leftovers uninstall_residue verifier_cleanup txn_mkdir_failure txn_copy_failure txn_chmod_failure stop_failure wait_stopped_failure publication_failure new_start_failure dataplane_failure state_write_failure rollback_restart_failure restore_failure uninstall_unknown rollback_exit uninstall_group_residue uninstall_resume uninstall_signal_resume uninstall_resume_drift uninstall_phase_gap_resume uninstall_final_window older_release_update older_release_download_failure transaction_contract_drift rollback_backup_drift uninstall_directory_drift sha256_config_update_failure update_commit_cleanup_failure'
 if [ "$#" -eq 0 ]; then
     # Expand the fixed scenario words into the default argument list.
     # shellcheck disable=SC2086

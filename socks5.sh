@@ -1256,7 +1256,7 @@ UNIT
 # Emit one value per line in this fixed order only after the whole schema passes.
 # Values cannot contain tabs/newlines; read -r consumes them as data, never code.
 # The legacy schema omits family, represented by an empty line in that slot.
-s5_state_parse() {
+s5_state_parse_file() {
     awk -F '\t' '
         BEGIN {
             count=split("schema engine release commit asset archive_size archive_sha256 binary_size binary_sha256 protocol auth udp listen port username os arch family init account_uid account_gid config_sha256 unit_sha256 status", keys, " ")
@@ -1280,8 +1280,10 @@ s5_state_parse() {
             if (!valid) exit 1
             for (i=1; i<=count; i++) print values[keys[i]]
         }
-    ' "$S5_STATE" 2>/dev/null
+    ' "$1" 2>/dev/null
 }
+
+s5_state_parse() { s5_state_parse_file "$S5_STATE"; }
 
 s5_state_write() {
     s5_atomic_write "$S5_STATE" root:root 0600 <<STATE
@@ -1929,7 +1931,8 @@ s5_cleanup() {
         s5_cleanup_own_temps "$S5_STATEDIR" || true
         # Recovery copies remain until both files have been restored, including
         # when a signal interrupts publication or only one backup is readable.
-        if [ "$S5_CONFIG_REPLACED" = 1 ] || [ "$S5_BINARY_REPLACED" = 1 ]; then
+        if [ "$S5_CONFIG_REPLACED" = 1 ] || [ "$S5_BINARY_REPLACED" = 1 ] ||
+            [ "$S5_SERVICE_TOUCHED" = 1 ]; then
             s5_update_rollback "$S5_TXNDIR/old.config.json" "$S5_TXNDIR/old.state" || true
         elif [ "$S5_CREATED_TRANSACTION" = 1 ]; then
             # Before binary replacement/service stop/publication the live files
@@ -2128,6 +2131,72 @@ s5_confirm() {
 s5_confirm_install() { s5_confirm install; }
 s5_confirm_update() { s5_confirm update; }
 
+s5_transaction_verify_rollback() {
+    s5_transaction_contract || return 1
+    _stvr_fields=$(s5_state_parse_file "$S5_TXNDIR/old.state") || return 1
+    {
+        IFS= read -r _stvr_schema
+        IFS= read -r _stvr_engine
+        IFS= read -r _stvr_release
+        IFS= read -r _stvr_commit
+        IFS= read -r _stvr_asset
+        IFS= read -r _stvr_archive_size
+        IFS= read -r _stvr_archive_sha
+        IFS= read -r _stvr_binary_size
+        IFS= read -r _stvr_binary_sha
+        IFS= read -r _stvr_protocol
+        IFS= read -r _stvr_auth
+        IFS= read -r _stvr_udp
+        IFS= read -r _stvr_listen
+        IFS= read -r _stvr_port
+        IFS= read -r _stvr_username
+        IFS= read -r _stvr_os
+        IFS= read -r _stvr_arch
+        IFS= read -r _stvr_family
+        IFS= read -r _stvr_init
+        IFS= read -r _stvr_uid
+        IFS= read -r _stvr_gid
+        IFS= read -r _stvr_config_sha
+        IFS= read -r _stvr_unit_sha
+        IFS= read -r _stvr_status
+    } <<ROLLBACK_FIELDS
+$_stvr_fields
+ROLLBACK_FIELDS
+    _stvr_fields=''
+    case "$_stvr_schema" in 1 | legacy) ;; *) return 1 ;; esac
+    [ "$_stvr_engine:$_stvr_protocol:$_stvr_auth:$_stvr_udp:$_stvr_status" =         xray:mixed:password:false:complete ] || return 1
+    s5_valid_release "$_stvr_release" || return 1
+    [ "${#_stvr_commit}" -eq 40 ] || return 1
+    case "$_stvr_commit" in *[!0-9a-fA-F]*) return 1 ;; esac
+    case "$_stvr_arch:$_stvr_asset" in
+    amd64:Xray-linux-64.zip | arm64:Xray-linux-arm64-v8a.zip) ;;
+    *) return 1 ;;
+    esac
+    s5_valid_decimal "$_stvr_archive_size" && s5_valid_sha256 "$_stvr_archive_sha" &&
+        s5_valid_decimal "$_stvr_binary_size" && s5_valid_sha256 "$_stvr_binary_sha" &&
+        s5_valid_sha256 "$_stvr_config_sha" && s5_valid_sha256 "$_stvr_unit_sha" || return 1
+    s5_valid_port "$_stvr_port" && s5_valid_username "$_stvr_username" &&
+        s5_ipv4_is_canonical "$_stvr_listen" || return 1
+    [ "${_stvr_family:-debian}:$_stvr_init" = "$S5_OS_FAMILY:$S5_INIT" ] || return 1
+    s5_valid_decimal "$_stvr_uid" && s5_valid_decimal "$_stvr_gid" || return 1
+    _stvr_saved_uid=$S5_ACCOUNT_UID
+    _stvr_saved_gid=$S5_ACCOUNT_GID
+    S5_ACCOUNT_UID=$_stvr_uid
+    S5_ACCOUNT_GID=$_stvr_gid
+    s5_account_identity
+    _stvr_account_status=$?
+    S5_ACCOUNT_UID=$_stvr_saved_uid
+    S5_ACCOUNT_GID=$_stvr_saved_gid
+    [ "$_stvr_account_status" -eq 0 ] || return 1
+    [ "$(s5_sha256 "$S5_SERVICE_ARTIFACT" 2>/dev/null)" = "$_stvr_unit_sha" ] || return 1
+    [ "$(s5_sha256 "$S5_TXNDIR/old.config.json" 2>/dev/null)" = "$_stvr_config_sha" ] || return 1
+    _stvr_binary=$S5_BIN
+    [ ! -e "$S5_TXNDIR/old.xray" ] || _stvr_binary=$S5_TXNDIR/old.xray
+    [ "$(s5_bytecount "$_stvr_binary" 2>/dev/null)" = "$_stvr_binary_size" ] || return 1
+    [ "$(s5_sha256 "$_stvr_binary" 2>/dev/null)" = "$_stvr_binary_sha" ] || return 1
+    return 0
+}
+
 s5_restore_transaction() {
     _srtcfg=$1
     _srtstate=$2
@@ -2139,6 +2208,10 @@ s5_restore_transaction() {
 # Explicit failure and EXIT cleanup share the same recovery policy. A failed
 # restore leaves the publication flag set so later cleanup cannot discard backups.
 s5_update_rollback() {
+    s5_transaction_verify_rollback || {
+        s5_msg_err transaction.restore "$S5_TXNDIR"
+        return 1
+    }
     if ! s5_restore_transaction "$1" "$2"; then
         s5_msg_err transaction.restore "$S5_TXNDIR"
         return 1
@@ -2681,16 +2754,30 @@ s5_uninstall_verify_recovery() {
     if [ "$S5_INIT" = openrc ]; then _suvr_unit_mode=755; _suvr_unit_type=exec; fi
     # Directories that should remain are always checked before their contents.
     case "$S5_UNINSTALL_PHASE" in
-    prepared|stopped|disabled|service-artifact-removed|config-removed|binary-removed|manager-reloaded|account-removed)
+    prepared|stopped|disabled|service-artifact-removed|config-removed|binary-removed|manager-reloaded|account-removed|state-finalizing)
         s5_path_contract "$S5_STATEDIR" dir root:root 700 || return 1 ;;
+    complete)
+        if [ -e "$S5_STATEDIR" ] || [ -L "$S5_STATEDIR" ]; then
+            s5_path_contract "$S5_STATEDIR" dir root:root 700 || return 1
+        fi ;;
     esac
     case "$S5_UNINSTALL_PHASE" in
     prepared|stopped|disabled|service-artifact-removed|config-removed)
         s5_path_contract "$S5_PREFIX" dir root:root 755 || return 1 ;;
+    binary-removed|manager-reloaded|account-removed|state-finalizing)
+        if [ -e "$S5_PREFIX" ] || [ -L "$S5_PREFIX" ]; then
+            s5_path_contract "$S5_PREFIX" dir root:root 755 || return 1
+        fi ;;
+    *) s5_uninstall_expect_absent "$S5_PREFIX" || return 1 ;;
     esac
     case "$S5_UNINSTALL_PHASE" in
     prepared|stopped|disabled|service-artifact-removed)
         s5_path_contract "$S5_SYSCONFDIR" dir "root:$S5_SERVICE_GROUP" 750 || return 1 ;;
+    config-removed|binary-removed|manager-reloaded|account-removed|state-finalizing)
+        if [ -e "$S5_SYSCONFDIR" ] || [ -L "$S5_SYSCONFDIR" ]; then
+            s5_path_contract "$S5_SYSCONFDIR" dir "root:$S5_SERVICE_GROUP" 750 || return 1
+        fi ;;
+    *) s5_uninstall_expect_absent "$S5_SYSCONFDIR" || return 1 ;;
     esac
     case "$S5_UNINSTALL_PHASE" in
     prepared|stopped)
