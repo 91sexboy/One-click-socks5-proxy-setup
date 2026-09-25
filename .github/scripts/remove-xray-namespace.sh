@@ -83,6 +83,12 @@ EOF
     [ "$account_name:$home:$shell" = xray-socks5:/nonexistent:/usr/sbin/nologin ] || {
         printf 'cleanup: refusing foreign service account\n' >&2; exit 1;
     }
+    case "$name_uid:$name_gid" in *[!0-9:]*|*::*|:*|*:)
+        printf 'cleanup: invalid service account identity\n' >&2; exit 1 ;;
+    esac
+    [ "$name_uid" -lt 1000 ] && [ "$name_gid" -lt 1000 ] || {
+        printf 'cleanup: refusing non-system service account\n' >&2; exit 1;
+    }
     process_status=0
     as_root pgrep -u "$name_uid" >/dev/null 2>&1 || process_status=$?
     case "$process_status" in

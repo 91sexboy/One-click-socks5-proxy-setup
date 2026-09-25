@@ -117,12 +117,14 @@ test:-e|test:-L) exit 1 ;;
 getent:passwd)
     case "${S5_CLEANUP_ACCOUNT:-absent}" in
     foreign) printf 'xray-socks5:x:900:900::/home/foreign:/bin/sh\n'; exit 0 ;;
+    ordinary) printf 'xray-socks5:x:1900:1900::/nonexistent:/usr/sbin/nologin\n'; exit 0 ;;
     owned) printf 'xray-socks5:x:900:900::/nonexistent:/usr/sbin/nologin\n'; exit 0 ;;
     *) exit 2 ;;
     esac ;;
 getent:group)
     case "${S5_CLEANUP_ACCOUNT:-absent}" in
     foreign|owned) printf 'xray-socks5:x:900:\n'; exit 0 ;;
+    ordinary) printf 'xray-socks5:x:1900:\n'; exit 0 ;;
     *) exit 2 ;;
     esac ;;
 rm:*) ;;
@@ -159,6 +161,14 @@ t_run env PATH="$S5_TEST_ROOT/bin:$PATH" S5_CLEANUP_LOAD_STATE=not-found \
     "$S5_REPO_ROOT/.github/scripts/remove-xray-namespace.sh"
 assert_ne "cleanup refuses a foreign same-named account" 0 "$T_STATUS"
 assert_not_contains "foreign account refusal precedes file deletion" 'rm -rf' \
+    "$(cat "$S5_TEST_ROOT/cleanup-calls")"
+
+: >"$S5_TEST_ROOT/cleanup-calls"
+t_run env PATH="$S5_TEST_ROOT/bin:$PATH" S5_CLEANUP_LOAD_STATE=not-found \
+    S5_CLEANUP_ACCOUNT=ordinary ${S5_TEST_SHELL:-sh} \
+    "$S5_REPO_ROOT/.github/scripts/remove-xray-namespace.sh"
+assert_ne "cleanup refuses a non-system same-named account" 0 "$T_STATUS"
+assert_not_contains "ordinary account refusal precedes file deletion" 'rm -rf' \
     "$(cat "$S5_TEST_ROOT/cleanup-calls")"
 
 t_run python3 - "$S5_REPO_ROOT/.github/scripts/memory-peak-check.py" <<'PY'
