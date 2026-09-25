@@ -97,7 +97,7 @@ target_pid=$!
 lifecycle_wait_until 50 0.1 test -s "$work/target.port" || true
 target_port=$(cat "$work/target.port")
 test "$(python3 -c 'import json; print(json.load(open("/etc/xray-socks5/config.json"))["inbounds"][0]["listen"])')" = 0.0.0.0
-PROXY_HOST=192.0.2.1 PASSFILE="$work/pass" PORT=23456 TARGET_PORT="$target_port" \
+sudo env PROXY_HOST=192.0.2.1 PASSFILE="$work/pass" PORT=23456 TARGET_PORT="$target_port" \
   REPORT="$work/report" OUT="$work/probe" \
   sh tests/protocol/run_xray_mixed.sh
 sudo sh tests/protocol/post_install_audit.sh / "$work/pass" systemd

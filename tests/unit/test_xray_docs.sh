@@ -159,5 +159,7 @@ assert_contains "OpenRC install uses the shared redacting command runner" \
     'run-socks5.sh install' "$alpine_text"
 assert_contains "systemd fixture credentials become root-owned before execution" \
     'sudo chown root:root "$work"/answers* "$work"/pass*' "$systemd_text"
+assert_contains "systemd protocol gate reads the root-only passfile as root" \
+    'sudo env PROXY_HOST=192.0.2.1 PASSFILE="$work/pass"' "$systemd_text"
 
 t_summary
