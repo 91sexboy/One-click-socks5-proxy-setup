@@ -58,7 +58,7 @@ On the first invocation without a saved language, choose `1` or Enter for Chines
 | Username | 12 random characters | 3–32 ASCII letters, digits, `_`, `-` |
 | Password | 32 random characters | 12–128 ASCII letters, digits, `.`, `_`, `~`, `-` |
 
-**The password is visible while you type it.** A new installation refuses an occupied port. During an update, reusing the existing port is allowed only when its listener belongs to this installation.
+**The password is visible while you type it.** The table describes a fresh install. During an update, a blank port keeps the current port only after its listener is verified as belonging to this installation; an explicit port uses the normal free-or-owned checks. Blank username and password answers generate new values.
 
 After successful installation and verification, a real terminal displays both connection links automatically. Redirected output hides credentials; use `show` later from a terminal.
 
@@ -90,7 +90,9 @@ Run these from the directory containing the downloaded script. Installation and 
 | `sh socks5.sh language` | Choose and save a different interface language |
 | `sh socks5.sh help` | Show command usage |
 
-Re-running `install` is a **configuration update**, not an upgrade to the latest Xray release. Pressing Enter generates new input values; it does not keep the previous credentials or port. New-install confirmation defaults to yes; update and uninstall default to no.
+An installation made by an older supported script release remains available to `status`, `show`, `restart`, update, and uninstall after this script's release pins change. Recorded metadata verifies the installed binary; an update independently verifies the current pinned download.
+
+Re-running `install` is a **configuration update**, not an upgrade to the latest Xray release. On update, pressing Enter for the port keeps the verified currently owned port; pressing Enter for the username or password generates a new value. New-install confirmation defaults to yes; update and uninstall default to no.
 
 The language preference is saved in `/etc/xray-socks5.lang` and survives uninstall. If it cannot be saved, the script warns that the choice applies only to the current invocation. The `language` command reports failure if saving fails.
 

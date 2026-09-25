@@ -107,23 +107,38 @@ mkdir -p "$S5_TEST_ROOT/bin"
 t_stub sudo <<'SUDO'
 #!/bin/sh
 printf '%s\n' "$*" >>"$S5_TEST_ROOT/cleanup-calls"
-if [ "$1" = rm ]; then
-    [ "$2" != "$S5_CLEANUP_FAIL" ] || exit 71
-    exit 0
-fi
-exit 1
+case "$1:$2" in
+systemctl:show) printf '%s\n' "${S5_CLEANUP_LOAD_STATE:-not-found}" ;;
+systemctl:stop) [ "${S5_CLEANUP_FAIL:-}" != stop ] || exit 71 ;;
+systemctl:is-active) exit 3 ;;
+systemctl:disable|systemctl:daemon-reload) ;;
+test:-e|test:-L) exit 1 ;;
+getent:passwd|getent:group) exit 2 ;;
+rm:*) ;;
+*) ;;
+esac
+exit 0
 SUDO
-for cleanup_failure in -rf -f none; do
+for cleanup_failure in none stop; do
     : >"$S5_TEST_ROOT/cleanup-calls"
     # Split a configured multiword shell such as busybox sh.
     # shellcheck disable=SC2086
+    _cleanup_load=not-found
+    [ "$cleanup_failure" != stop ] || _cleanup_load=loaded
     t_run env PATH="$S5_TEST_ROOT/bin:$PATH" S5_CLEANUP_FAIL="$cleanup_failure" \
+        S5_CLEANUP_LOAD_STATE="$_cleanup_load" \
         ${S5_TEST_SHELL:-sh} "$S5_REPO_ROOT/.github/scripts/remove-xray-namespace.sh"
     if [ "$cleanup_failure" = none ]; then
-        assert_eq "cleanup tolerates absent service and accounts" 0 "$T_STATUS"
+        assert_eq "cleanup tolerates a genuinely absent namespace" 0 "$T_STATUS"
+        assert_contains "cleanup verifies the manager namespace is absent" \
+            'systemctl show xray-socks5.service -p LoadState --value' \
+            "$(cat "$S5_TEST_ROOT/cleanup-calls")"
     else
-        assert_eq "cleanup propagates rm $cleanup_failure failure" 71 "$T_STATUS"
-        assert_not_contains "cleanup stops before removing accounts after rm failure" userdel "$(cat "$S5_TEST_ROOT/cleanup-calls")"
+        assert_eq "cleanup propagates stop failure" 71 "$T_STATUS"
+        assert_not_contains "stop failure preserves files and accounts" 'rm -rf' \
+            "$(cat "$S5_TEST_ROOT/cleanup-calls")"
+        assert_not_contains "stop failure preserves accounts" userdel \
+            "$(cat "$S5_TEST_ROOT/cleanup-calls")"
     fi
 done
 

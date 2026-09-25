@@ -40,7 +40,7 @@ for f in "$UNIT_DIR"/*.sh; do
     if out=$(env -u S5_TEST_MODE -u S5_TEST_ROOT -u S5_LIB_ONLY \
         -u S5_ASSUME_ROOT -u S5_SKIP_OWNERSHIP -u S5_PORT_PROBE \
         -u S5_LISTENER_PROBE -u S5_TEST_ASSET_PATH -u S5_TEST_ADDR_PATH \
-        -u S5_OSRELEASE -u S5_LISTEN -u S5_PROTOCOL_VERIFY \
+        -u S5_OSRELEASE -u S5_LISTEN -u S5_PROTOCOL_VERIFY -u S5_UNINSTALL_INJECT \
         S5_SRC="$ROOT/socks5.sh" S5_REPO_ROOT="$ROOT" \
         $SHELL_UNDER_TEST "$f" 2>&1); then
         st=0

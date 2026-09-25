@@ -17,7 +17,7 @@ set -- "$snapshot"/tests/unit/*.sh
 expected_files=$(sed -n 's/^EXPECTED_UNIT_FILES=//p' "$snapshot/tests/run.sh")
 assert_eq "public unit file count agrees with the runner guard" "$expected_files" "$#"
 
-for doc in CLAUDE.md CONTEXT.md SPEC.md todo.md; do
+for doc in CLAUDE.md CONTEXT.md SPEC.md todo.md TODO.md; do
     assert_file_absent "public checkout has no $doc" "$snapshot/$doc"
     t_run git -C "$snapshot" check-ignore -q -- "$doc"
     assert_eq "$doc stays ignored" 0 "$T_STATUS"

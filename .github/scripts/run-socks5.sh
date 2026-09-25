@@ -27,11 +27,18 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 for _credential_file do
     if [ ! -f "$_credential_file" ] ||
-        ! awk 'NR <= 2 {print; if (length($0) == 0) bad = 1} END {exit (NR < 2 || bad) ? 1 : 0}' \
+        ! awk 'NR == 2 {print} NR <= 2 && length($0) == 0 {bad = 1} END {exit (NR < 2 || bad) ? 1 : 0}' \
             "$_credential_file" >>"$_pat" 2>/dev/null; then
         printf 'runner: unreadable or incomplete credential file\n' >&2
         exit 2
     fi
+    _user=$(sed -n '1p' "$_credential_file") || exit 2
+    _pass=$(sed -n '2p' "$_credential_file") || exit 2
+    _pair=$_user:$_pass
+    printf '%s\n' "$_pair" >>"$_pat" || exit 2
+    printf '%s' "$_pair" | base64 | tr -d '\n' >>"$_pat" || exit 2
+    printf '\n' >>"$_pat" || exit 2
+    _user=''; _pass=''; _pair=''
 done
 redact() {
     # Match the longest literal at each position, without filtering replacement

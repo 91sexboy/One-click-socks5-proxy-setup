@@ -28,7 +28,7 @@ s5t_state_expect() {
     assert_eq "$1" "$2" "$_tse_status"
 }
 
-s5t_state_expect "current 23-field state loads" 0
+s5t_state_expect "current 24-field state loads" 0
 assert_eq "the recorded port loads" 23456 "$S5_PORT"
 assert_eq "the recorded username loads" alice "$S5_USERNAME"
 assert_eq "the detected backend survives state loading" debian:systemd "$S5_OS_FAMILY:$S5_INIT"
@@ -46,14 +46,15 @@ S5_OS_FAMILY=el
 s5t_state_expect "legacy Debian state is refused on a detected EL host" 1
 
 # A previous load must never cache either metadata or integrity results.
-for _tskey in engine release commit asset archive_size archive_sha256 binary_size \
+for _tskey in schema engine release commit asset archive_size archive_sha256 binary_size \
     binary_sha256 protocol auth udp listen port username os arch family init \
     account_uid account_gid config_sha256 unit_sha256 status; do
     s5t_state_reset
     awk -F '\t' -v key="$_tskey" '$1 != key' "$S5_TEST_ROOT/valid-state" >"$S5_STATE"
-    if [ "$_tskey" != family ]; then
-        s5t_state_expect "missing $_tskey is refused" 1
-    fi
+    case "$_tskey" in
+    family|schema) s5t_state_expect "missing $_tskey is recognized as legacy" 0 ;;
+    *) s5t_state_expect "missing $_tskey is refused" 1 ;;
+    esac
     s5t_state_reset
     awk -F '\t' -v key="$_tskey" '{ print; if ($1 == key) print }' \
         "$S5_TEST_ROOT/valid-state" >"$S5_STATE"
@@ -77,13 +78,22 @@ for _tsbad in unknown blank-line extra-column duplicate-key; do
     s5t_state_expect "$_tsbad is refused" 1
 done
 
-for _tsfield in engine:other release:other commit:other asset:other archive_size:1 \
-    archive_sha256:bad binary_size:1 binary_sha256:bad protocol:socks auth:none udp:true \
+
+s5t_state_reset
+s5t_state_field schema 2
+s5t_state_expect "unknown schema is classified unsupported" 4
+
+for _tsfield in engine:other release:other commit:other asset:other archive_size:bad \
+    archive_sha256:bad binary_size:bad binary_sha256:bad protocol:socks auth:none udp:true \
     listen:999.1.2.3 port:1023 username:bad! arch:unknown family:alpine init:openrc \
     account_uid:901 account_gid:901 unit_sha256:bad status:partial; do
     s5t_state_reset
     s5t_state_field "${_tsfield%%:*}" "${_tsfield#*:}"
-    s5t_state_expect "invalid ${_tsfield%%:*} is refused" 1
+    if [ "${_tsfield%%:*}" = status ]; then
+        s5t_state_expect "unsupported status is classified separately" 4
+    else
+        s5t_state_expect "invalid ${_tsfield%%:*} is refused" 1
+    fi
 done
 
 s5t_state_reset
@@ -164,5 +174,55 @@ s5t_state_expect "changed service group GID is refused" 1
 printf '900\n' >"$S5_TEST_ROOT/group-exists"
 printf 'changed\n' >>"$S5_BIN"
 s5t_state_expect "external executable edit is refused" 1
+
+# Installed identity is independent of the current download candidate. A valid
+# older release remains operable while a later update still selects current pins.
+s5t_state_reset
+cp "$S5_TEST_ROOT/asset-xray" "$S5_BIN"
+chmod 755 "$S5_PREFIX" "$S5_BIN"
+chmod 750 "$S5_SYSCONFDIR"
+chmod 640 "$S5_CFG"
+chmod 700 "$S5_STATEDIR"
+chmod 600 "$S5_STATE"
+chmod 644 "$S5_SERVICE_ARTIFACT"
+printf '900\n' >"$S5_TEST_ROOT/user-exists"
+printf '900\n' >"$S5_TEST_ROOT/group-exists"
+awk -F '\t' 'BEGIN { OFS="\t" }
+    $1 == "release" { $2="v25.1.1" }
+    $1 == "commit" { $2="1111111111111111111111111111111111111111" }
+    $1 == "archive_size" { $2="123456" }
+    $1 == "archive_sha256" { $2="2222222222222222222222222222222222222222222222222222222222222222" }
+    { print }
+' "$S5_TEST_ROOT/valid-state" >"$S5_STATE"
+s5t_state_expect "a supported older installed release remains loadable" 0
+assert_eq "the state seam reports the installed release" v25.1.1 "$S5_INSTALLED_RELEASE"
+s5_asset_select
+assert_eq "current candidate selection remains on the script release" Xray-linux-64.zip "$S5_ASSET_NAME"
+assert_eq "current candidate digest is not replaced by historical state" "$S5T_BIN_SHA256" "$S5_ASSET_BINARY_SHA256"
+
+# Mode checks are independent of hashes. Every mutation uses unchanged bytes.
+for _tsmode_case in \
+    config:644 config:666 prefix:775 confdir:755 statedir:755 binary:775 unit:664; do
+    s5t_state_reset
+    _tswhich=${_tsmode_case%%:*}
+    _tsmode=${_tsmode_case#*:}
+    case "$_tswhich" in
+    config) _tspath=$S5_CFG ;;
+    prefix) _tspath=$S5_PREFIX ;;
+    confdir) _tspath=$S5_SYSCONFDIR ;;
+    statedir) _tspath=$S5_STATEDIR ;;
+    binary) _tspath=$S5_BIN ;;
+    unit) _tspath=$S5_SERVICE_ARTIFACT ;;
+    esac
+    chmod "$_tsmode" "$_tspath"
+    s5t_state_expect "$_tswhich mode $_tsmode is refused" 1
+    case "$_tswhich" in
+    config) chmod 640 "$_tspath" ;;
+    prefix|binary) chmod 755 "$_tspath" ;;
+    confdir) chmod 750 "$_tspath" ;;
+    statedir) chmod 700 "$_tspath" ;;
+    unit) chmod 644 "$_tspath" ;;
+    esac
+done
 
 t_summary

@@ -27,9 +27,66 @@ def body(step):
                      if line.strip() and not line.lstrip().startswith('#')).replace('\\\n', ' ')
 
 
+def executable_lines(step):
+    """Return simple executable lines; reject dead/suppressed required calls.
+
+    Required entrypoints are intentionally standalone commands. Shell constructs
+    such as echo, conditionals, &&, ||, substitutions and pipelines are not
+    equivalent evidence that the command executes and propagates failure.
+    """
+    result = []
+    for raw in step.get('run', '').splitlines():
+        line = raw.strip()
+        if not line or line.startswith('#') or line in ('|', '>'):
+            continue
+        if line.endswith('\\'):
+            line = line[:-1].rstrip()
+        # A quoted sh -c body is executable; inspect its physical command lines
+        # while retaining the same dead/suppressed-form rejection.
+        if line.startswith("sh -c '"):
+            line = line[7:].strip()
+        if line.endswith("'"):
+            line = line[:-1].rstrip()
+        result.append(line)
+    return result
+
+
+def line_executes(line, command):
+    if line == command:
+        return True
+    # A required command may take a fixed environment-sourced argument. It must
+    # still be the command at the start of its own line, with no control operator.
+    if line.startswith(command + ' ') and not any(token in line for token in
+            (' && ', ' || ', ';', '|', 'if ', 'echo ')):
+        return True
+    # A leading setup command in a chain is still executed and gates the required
+    # command through &&; a required command on the right would be conditional.
+    return line.endswith(' && ' + command) and not any(token in line[:-len(command)]
+            for token in (' || ', ';', '|', 'if ', 'echo '))
+
+
 def entry(job, command):
-    matches = [step for step in job['steps'] if command in body(step)]
-    require(len(matches) == 1, 'expected one executable entrypoint: ' + command)
+    matches = []
+    occurrences = 0
+    for step in job['steps']:
+        text = body(step)
+        lines = executable_lines(step)
+        dangerous = any(pattern in text for pattern in (
+            'echo ' + command, 'if false; then', 'false && ' + command,
+            command + ' || true'))
+        count = sum(line_executes(line, command) for line in lines)
+        # A multiline if false puts the command on an exact physical line, but
+        # the enclosing construct still makes it dead.
+        if dangerous:
+            count = 0
+            if command in text:
+                occurrences += 1
+        else:
+            occurrences += count
+        if count:
+            matches.append(step)
+    require(len(matches) == 1 and occurrences == 1,
+            'expected one executable entrypoint: ' + command)
     return matches[0]
 
 
@@ -107,7 +164,7 @@ def check(workflow):
     entry(lint, 'python3 tests/lib/workflow_contract_regression.py')
     entry(lint, 'sh .github/scripts/lint-workflow-shell.sh')
     entry(lint, 'python3 tests/protocol/arity_audit.py')
-    entry(lint, 'apt-get install -y python3-yaml')
+    entry(lint, 'sudo apt-get update && sudo apt-get install -y python3-yaml')
     return len(jobs)
 
 

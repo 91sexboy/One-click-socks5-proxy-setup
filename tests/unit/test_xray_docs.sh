@@ -144,4 +144,20 @@ assert_eq "both native gates run the mixed gate" 2 \
 assert_eq "both native duplex targets answer at denied addresses too" 2 \
     "$(printf '%s\n' "$gates_text" | grep -c 'duplex_target.py --host 0.0.0.0 --host6 ::')"
 
+assert_eq "both native gates prove the configured production listen address" 2 \
+    "$(printf '%s\n' "$gates_text" | grep -c '\["inbounds"\]\[0\]\["listen"\]')"
+assert_eq "both native gates connect through the nonloopback proxy address" 2 \
+    "$(printf '%s\n' "$gates_text" | grep -c 'PROXY_HOST=192.0.2.1')"
+assert_eq "both native gates prove idempotent second uninstall" 2 \
+    "$(printf '%s\n' "$gates_text" | grep -c 'uninstall-second.log')"
+assert_contains "systemd proves a fresh reinstall after cleanup" \
+    'reinstall.log' "$systemd_text"
+assert_contains "OpenRC proves a fresh reinstall after cleanup" \
+    'reinstall.log' "$alpine_text"
+
+assert_contains "OpenRC install uses the shared redacting command runner" \
+    'run-socks5.sh install' "$alpine_text"
+assert_contains "systemd fixture credentials become root-owned before execution" \
+    'sudo chown root:root "$work"/answers* "$work"/pass*' "$systemd_text"
+
 t_summary

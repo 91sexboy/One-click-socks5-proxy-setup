@@ -58,6 +58,25 @@ class WorkflowContractTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0, label)
                 self.assertIn('workflow contract:', result.stderr)
 
+    def test_textual_noop_entrypoints_are_rejected(self):
+        mutations = {
+            'echo': 'echo sh tests/run.sh',
+            'comment': '# sh tests/run.sh\ntrue',
+            'unreachable': 'if false; then\n  sh tests/run.sh\nfi',
+            'and-dead': 'false && sh tests/run.sh',
+            'swallowed': 'sh tests/run.sh || true',
+            'duplicate': 'sh tests/run.sh\nsh tests/run.sh',
+        }
+        for label, replacement in mutations.items():
+            with self.subTest(mutation=label):
+                changed = copy.deepcopy(self.workflow)
+                step = next(step for step in changed['jobs']['unit']['steps']
+                            if 'sh tests/run.sh' in step.get('run', ''))
+                step['run'] = replacement
+                result = self.run_oracle(changed)
+                self.assertNotEqual(result.returncode, 0, label)
+                self.assertIn('workflow contract:', result.stderr)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -38,6 +38,20 @@ for _doc in README.md README.zh-CN.md; do
     assert_contains "$_doc links to the other language" "$_doclanguage" "$_doctext"
     assert_contains "$_doc links to the verified local release mirror" \
         "($_docrepo/releases/tag/xray-v26.3.27)" "$_doctext"
+    case "$_doc" in
+    README.md)
+        assert_contains "English update docs retain a verified blank port" \
+            'blank port keeps the current port only after its listener is verified' "$_doctext"
+        assert_contains "English update docs rotate blank credentials" \
+            'Blank username and password answers generate new values' "$_doctext"
+        ;;
+    README.zh-CN.md)
+        assert_contains "Chinese update docs retain a verified blank port" \
+            '更新时端口留空，仅在确认当前监听器属于本次安装后保留原端口' "$_doctext"
+        assert_contains "Chinese update docs rotate blank credentials" \
+            '账户名或密码留空会生成新值' "$_doctext"
+        ;;
+    esac
 done
 
 t_run python3 -O - "$ROOT" <<'PY'

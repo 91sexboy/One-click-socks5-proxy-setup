@@ -11,7 +11,10 @@ lifecycle_write_fixtures() {
     printf 'ciuser2\nCISecret_456~y\n' >"$_lcw/pass.update"
     { printf '2\ny\n23456\n'; cat "$_lcw/pass"; } >"$_lcw/answers"
     { printf 'y\n23456\n'; cat "$_lcw/pass.update"; } >"$_lcw/answers.update"
-    chmod 0600 "$_lcw/answers" "$_lcw/pass" "$_lcw/answers.update" "$_lcw/pass.update"
+    : >"$_lcw/answers.empty"
+    printf 'y\n' >"$_lcw/answers.uninstall"
+    chmod 0600 "$_lcw/answers" "$_lcw/pass" "$_lcw/answers.update" "$_lcw/pass.update" \
+        "$_lcw/answers.empty" "$_lcw/answers.uninstall"
 }
 
 lifecycle_wait_until() {
@@ -39,4 +42,27 @@ lifecycle_no_credential_in() {
     *) printf 'the credential check on %s failed with status %s\n' "$_lcn_file" "$_lcn_status" >&2 ;;
     esac
     return 1
+}
+
+lifecycle_assert_logs_redacted() {
+    _lalr_work=$1
+    shift
+    if [ "$#" -gt 0 ]; then
+        _lalr_install=$("$@" sed -n '2p' "$_lalr_work/pass") || return 1
+        _lalr_update=$("$@" sed -n '2p' "$_lalr_work/pass.update") || return 1
+    else
+        _lalr_install=$(sed -n '2p' "$_lalr_work/pass") || return 1
+        _lalr_update=$(sed -n '2p' "$_lalr_work/pass.update") || return 1
+    fi
+    # Each command log is checked against every credential generation that
+    # existed when the command ran. This list is the shared lifecycle contract.
+    lifecycle_no_credential_in "$_lalr_work/install.log" "$_lalr_install" "$@" || return 1
+    for _lalr_log in update.log status.log restart.log uninstall.log uninstall-second.log; do
+        lifecycle_no_credential_in "$_lalr_work/$_lalr_log" "$_lalr_install" "$@" || return 1
+        lifecycle_no_credential_in "$_lalr_work/$_lalr_log" "$_lalr_update" "$@" || return 1
+    done
+    # Reinstall rotates back to the install fixture, so its own log and the final
+    # uninstall may contain that username by design but neither password.
+    lifecycle_no_credential_in "$_lalr_work/reinstall.log" "$_lalr_install" "$@" || return 1
+    lifecycle_no_credential_in "$_lalr_work/uninstall-reinstall.log" "$_lalr_install" "$@" || return 1
 }

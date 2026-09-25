@@ -12,6 +12,7 @@ TARGET_PORT=${TARGET_PORT:?TARGET_PORT must be set}
 REPORT=${REPORT:?REPORT must be set}
 OUT=${OUT:?OUT must be set}
 PROBE=${PROBE:-$(dirname "$0")/xray_mixed.py}
+PROXY_HOST=${PROXY_HOST:-127.0.0.1}
 # SPEC 6's local target sits outside the SPEC 3 destination boundary, so the
 # boundary holds in full while the data-plane cases run. The denied host is where
 # the same target also listens, which is what makes a bypass visible.
@@ -26,7 +27,7 @@ DENIED_HOSTNAME=${DENIED_HOSTNAME:-denied-target.test}
 [ "$(stat -c '%a' "$PASSFILE" 2>/dev/null)" = 600 ] || exit 2
 mkdir -p "$OUT" || exit 2
 
-if ! python3 "$PROBE" --host 127.0.0.1 --port "$PORT" \
+if ! python3 "$PROBE" --host "$PROXY_HOST" --port "$PORT" \
     --target-host "$TARGET_HOST" --target-port "$TARGET_PORT" \
     --target-hostname "$TARGET_HOSTNAME" --target-ipv6 "$TARGET_IPV6" \
     --denied-host "$DENIED_HOST" --denied-hostname "$DENIED_HOSTNAME" \
