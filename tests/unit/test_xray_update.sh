@@ -616,6 +616,47 @@ test_uninstall_signal_resume() {
     done
 }
 
+test_uninstall_resume_drift() {
+    for _urd_phase in disabled service-artifact-removed config-removed; do
+        t_xray_fixture 23456
+        t_xray_install
+        s5_precheck() { return 0; }
+        printf 'y\n' >"$S5_TEST_ROOT/answers.uninstall"
+        S5T_UNINSTALL_FAIL_PHASE=$_urd_phase
+        S5_UNINSTALL_INJECT=s5t_uninstall_injector
+        t_run s5_cmd_uninstall <"$S5_TEST_ROOT/answers.uninstall"
+        assert_ne "$_urd_phase setup stops at its checkpoint" 0 "$T_STATUS"
+        unset S5_UNINSTALL_INJECT
+        case "$_urd_phase" in
+        disabled) _urd_path=$S5_SERVICE_ARTIFACT ;;
+        service-artifact-removed) _urd_path=$S5_CFG ;;
+        config-removed) _urd_path=$S5_BIN ;;
+        esac
+        printf 'foreign replacement\n' >>"$_urd_path"
+        _urd_hash=$(t_sha256 "$_urd_path")
+        t_run s5_cmd_uninstall </dev/null
+        assert_ne "$_urd_phase resume refuses replacement drift" 0 "$T_STATUS"
+        assert_eq "$_urd_phase resume preserves the replacement" "$_urd_hash" \
+            "$(t_sha256 "$_urd_path")"
+        assert_file_exists "$_urd_phase drift retains recovery evidence" "$S5_UNINSTALL_STATE"
+    done
+
+    t_xray_fixture 23456
+    t_xray_install
+    s5_precheck() { return 0; }
+    printf 'y\n' >"$S5_TEST_ROOT/answers.uninstall"
+    S5T_UNINSTALL_FAIL_PHASE=account-removed
+    S5_UNINSTALL_INJECT=s5t_uninstall_injector
+    t_run s5_cmd_uninstall <"$S5_TEST_ROOT/answers.uninstall"
+    assert_ne "account-removed setup stops at its checkpoint" 0 "$T_STATUS"
+    unset S5_UNINSTALL_INJECT
+    printf '901\n' >"$S5_TEST_ROOT/group-exists"
+    t_run s5_cmd_uninstall </dev/null
+    assert_ne "resume refuses a recreated foreign group" 0 "$T_STATUS"
+    assert_file_exists "resume preserves a recreated foreign group" "$S5_TEST_ROOT/group-exists"
+    assert_file_exists "account drift retains recovery evidence" "$S5_UNINSTALL_STATE"
+}
+
 test_uninstall_final_window() {
     t_xray_fixture 23456
     t_xray_install
@@ -773,7 +814,7 @@ test_update_commit_cleanup_failure() {
     done
 }
 
-SCENARIOS='uninstall_confirmation uninstall_messages family update owned_port rejected_candidate listener_failure rejected_command publish_signal config_symlink uninstall_leftovers uninstall_residue verifier_cleanup txn_mkdir_failure txn_copy_failure txn_chmod_failure stop_failure wait_stopped_failure publication_failure new_start_failure dataplane_failure state_write_failure rollback_restart_failure restore_failure uninstall_unknown rollback_exit uninstall_group_residue uninstall_resume uninstall_signal_resume uninstall_final_window older_release_update older_release_download_failure sha256_config_update_failure update_commit_cleanup_failure'
+SCENARIOS='uninstall_confirmation uninstall_messages family update owned_port rejected_candidate listener_failure rejected_command publish_signal config_symlink uninstall_leftovers uninstall_residue verifier_cleanup txn_mkdir_failure txn_copy_failure txn_chmod_failure stop_failure wait_stopped_failure publication_failure new_start_failure dataplane_failure state_write_failure rollback_restart_failure restore_failure uninstall_unknown rollback_exit uninstall_group_residue uninstall_resume uninstall_signal_resume uninstall_resume_drift uninstall_final_window older_release_update older_release_download_failure sha256_config_update_failure update_commit_cleanup_failure'
 if [ "$#" -eq 0 ]; then
     # Expand the fixed scenario words into the default argument list.
     # shellcheck disable=SC2086

@@ -96,6 +96,12 @@ for _tsfield in engine:other release:other commit:other asset:other archive_size
     fi
 done
 
+for _tsrelease in v2x.3.4 v2.3y.4 v2.3.4z v2.3 v2.3.4.5 v.3.4; do
+    s5t_state_reset
+    s5t_state_field release "$_tsrelease"
+    s5t_state_expect "malformed release $_tsrelease is refused" 1
+done
+
 s5t_state_reset
 s5t_state_field family unknown
 S5_OS_FAMILY=''

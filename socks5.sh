@@ -1322,15 +1322,18 @@ s5_valid_sha256() {
 }
 
 s5_valid_release() {
-    case "$1" in v[0-9]*.[0-9]*.[0-9]*) ;;
-    *) return 1 ;;
-    esac
-    _svr=${1#v}
+    case "$1" in v*) _svr=${1#v} ;; *) return 1 ;; esac
+    _svr_count=0
     while :; do
         _svrp=${_svr%%.*}
         s5_valid_decimal "$_svrp" || return 1
-        case "$_svr" in *.*) _svr=${_svr#*.} ;; *) break ;; esac
+        _svr_count=$((_svr_count + 1))
+        case "$_svr" in
+        *.*) _svr=${_svr#*.}; [ -n "$_svr" ] || return 1 ;;
+        *) break ;;
+        esac
     done
+    [ "$_svr_count" -eq 3 ]
 }
 
 s5_path_contract() {
@@ -1372,6 +1375,7 @@ s5_verify_installed_artifacts() {
     fi
     [ "$(s5_sha256 "$S5_SERVICE_ARTIFACT" 2>/dev/null)" = "$S5_UNIT_SHA256" ] || return 1
     [ "$(s5_sha256 "$S5_CFG" 2>/dev/null)" = "$S5_CONFIG_SHA256" ] || return 2
+    [ "$(s5_bytecount "$S5_BIN" 2>/dev/null)" = "$S5_INSTALLED_BINARY_SIZE" ] || return 1
     [ "$(s5_sha256 "$S5_BIN" 2>/dev/null)" = "$S5_INSTALLED_BINARY_SHA256" ] || return 1
     return 0
 }
@@ -2605,6 +2609,97 @@ RECOVERY_FIELDS
         s5_valid_sha256 "$S5_UNIT_SHA256" || return 1
 }
 
+s5_uninstall_expect_absent() {
+    [ ! -e "$1" ] && [ ! -L "$1" ]
+}
+
+s5_uninstall_verify_file() {
+    _suvf_path=$1
+    _suvf_type=$2
+    _suvf_owner=$3
+    _suvf_mode=$4
+    _suvf_sha=$5
+    s5_path_contract "$_suvf_path" "$_suvf_type" "$_suvf_owner" "$_suvf_mode" || return 1
+    [ "$(s5_sha256 "$_suvf_path" 2>/dev/null)" = "$_suvf_sha" ]
+}
+
+s5_uninstall_verify_accounts() {
+    _suva_mode=$1
+    s5_getent_state passwd "$S5_SERVICE_USER"; _suva_user=$?
+    s5_getent_state group "$S5_SERVICE_GROUP"; _suva_group=$?
+    case "$_suva_user:$_suva_group" in 2:*|*:2) return 1 ;; esac
+    if [ "$_suva_mode" = absent ]; then
+        [ "$_suva_user:$_suva_group" = 1:1 ]
+        return $?
+    fi
+    if [ "$_suva_user" = 0 ]; then
+        _suva_uid=$(id -u "$S5_SERVICE_USER" 2>/dev/null) || return 1
+        _suva_gid=$(id -g "$S5_SERVICE_USER" 2>/dev/null) || return 1
+        [ "$_suva_uid:$_suva_gid" = "$S5_ACCOUNT_UID:$S5_ACCOUNT_GID" ] || return 1
+    elif [ "$_suva_mode" = present ]; then
+        return 1
+    fi
+    if [ "$_suva_group" = 0 ]; then
+        _suva_named_gid=$(getent group "$S5_SERVICE_GROUP" 2>/dev/null |
+            awk -F: 'NR==1 {print $3}') || return 1
+        [ "$_suva_named_gid" = "$S5_ACCOUNT_GID" ] || return 1
+    elif [ "$_suva_mode" = present ]; then
+        return 1
+    fi
+    return 0
+}
+
+s5_uninstall_verify_recovery() {
+    _suvr_unit_mode=644
+    _suvr_unit_type=file
+    if [ "$S5_INIT" = openrc ]; then _suvr_unit_mode=755; _suvr_unit_type=exec; fi
+    # Directories that should remain are always checked before their contents.
+    case "$S5_UNINSTALL_PHASE" in
+    prepared|stopped|disabled|service-artifact-removed|config-removed|binary-removed|manager-reloaded|account-removed)
+        s5_path_contract "$S5_STATEDIR" dir root:root 700 || return 1 ;;
+    esac
+    case "$S5_UNINSTALL_PHASE" in
+    prepared|stopped|disabled|service-artifact-removed|config-removed)
+        s5_path_contract "$S5_PREFIX" dir root:root 755 || return 1 ;;
+    esac
+    case "$S5_UNINSTALL_PHASE" in
+    prepared|stopped|disabled|service-artifact-removed)
+        s5_path_contract "$S5_SYSCONFDIR" dir "root:$S5_SERVICE_GROUP" 750 || return 1 ;;
+    esac
+    case "$S5_UNINSTALL_PHASE" in
+    prepared|stopped|disabled)
+        s5_uninstall_verify_file "$S5_SERVICE_ARTIFACT" "$_suvr_unit_type" root:root \
+            "$_suvr_unit_mode" "$S5_UNIT_SHA256" || return 1 ;;
+    *) s5_uninstall_expect_absent "$S5_SERVICE_ARTIFACT" || return 1 ;;
+    esac
+    case "$S5_UNINSTALL_PHASE" in
+    prepared|stopped|disabled|service-artifact-removed)
+        s5_uninstall_verify_file "$S5_CFG" file "root:$S5_SERVICE_GROUP" 640 \
+            "$S5_CONFIG_SHA256" || return 1 ;;
+    *) s5_uninstall_expect_absent "$S5_CFG" || return 1 ;;
+    esac
+    case "$S5_UNINSTALL_PHASE" in
+    prepared|stopped|disabled|service-artifact-removed|config-removed)
+        s5_uninstall_verify_file "$S5_BIN" exec root:root 755 \
+            "$S5_INSTALLED_BINARY_SHA256" || return 1 ;;
+    *) s5_uninstall_expect_absent "$S5_BIN" || return 1 ;;
+    esac
+    case "$S5_UNINSTALL_PHASE" in
+    prepared|stopped|disabled|service-artifact-removed|config-removed|binary-removed)
+        s5_uninstall_verify_accounts present || return 1 ;;
+    manager-reloaded)
+        # Account removal can crash between user and group deletion.
+        s5_uninstall_verify_accounts partial || return 1 ;;
+    *) s5_uninstall_verify_accounts absent || return 1 ;;
+    esac
+    case "$S5_UNINSTALL_PHASE" in
+    prepared|stopped|disabled|service-artifact-removed|config-removed|binary-removed|manager-reloaded|account-removed)
+        s5_path_contract "$S5_STATE" file root:root 600 || return 1 ;;
+    *) s5_uninstall_expect_absent "$S5_STATE" || return 1 ;;
+    esac
+    return 0
+}
+
 s5_uninstall_preflight() {
     for _supdir in "$S5_PREFIX" "$S5_SYSCONFDIR" "$S5_STATEDIR" "$S5_TXNDIR"; do
         [ -e "$_supdir" ] || [ -L "$_supdir" ] || continue
@@ -2747,8 +2842,10 @@ s5_cmd_uninstall() {
     s5_trap_lock_only
     if [ -f "$S5_UNINSTALL_FINAL" ] && [ ! -L "$S5_UNINSTALL_FINAL" ]; then
         s5_uninstall_recovery_load "$S5_UNINSTALL_FINAL" || { s5_fail_locked; return 1; }
+        s5_uninstall_verify_recovery || { s5_fail_locked uninstall.residue "$S5_UNINSTALL_FINAL"; return 1; }
     elif [ -f "$S5_UNINSTALL_STATE" ] && [ ! -L "$S5_UNINSTALL_STATE" ]; then
         s5_uninstall_recovery_load "$S5_UNINSTALL_STATE" || { s5_fail_locked; return 1; }
+        s5_uninstall_verify_recovery || { s5_fail_locked uninstall.residue "$S5_UNINSTALL_STATE"; return 1; }
     else
         s5_open_managed_state uninstall
         _sur=$?
