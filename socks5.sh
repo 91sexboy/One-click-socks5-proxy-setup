@@ -1793,9 +1793,28 @@ s5_wait_listening() {
     return 1
 }
 
+s5_transaction_file_contract() {
+    _stfc_path=$1
+    [ ! -e "$_stfc_path" ] && [ ! -L "$_stfc_path" ] && return 0
+    s5_path_contract "$_stfc_path" file root:root 600
+}
+
+s5_transaction_contract() {
+    s5_path_contract "$S5_TXNDIR" dir root:root 700 || return 1
+    for _stc_path in "$S5_TXNDIR/old.config.json" "$S5_TXNDIR/old.state" \
+        "$S5_TXNDIR/old.xray" "$S5_TXN_COMMITTED" "$S5_TXN_STOPPING"; do
+        s5_transaction_file_contract "$_stc_path" || return 1
+    done
+    for _stc_path in "$S5_TXNDIR"/.s5new.* "$S5_TXNDIR"/.s5tmp.*; do
+        [ -e "$_stc_path" ] || [ -L "$_stc_path" ] || continue
+        s5_path_contract "$_stc_path" file root:root 600 || return 1
+    done
+    return 0
+}
+
 s5_cleanup_transaction() {
     [ -e "$S5_TXNDIR" ] || [ -L "$S5_TXNDIR" ] || return 0
-    s5_path_contract "$S5_TXNDIR" dir root:root 700 || return 1
+    s5_transaction_contract || return 1
     for _sctf in "$S5_TXNDIR"/old.config.json "$S5_TXNDIR"/old.state "$S5_TXNDIR"/old.xray \
         "$S5_TXNDIR"/.s5new.* "$S5_TXNDIR"/.s5tmp.* "$S5_TXN_STOPPING"; do
         [ -e "$_sctf" ] || [ -L "$_sctf" ] || continue
@@ -1817,7 +1836,7 @@ COMMITTED
 
 s5_transaction_recover() {
     [ -e "$S5_TXNDIR" ] || [ -L "$S5_TXNDIR" ] || return 0
-    s5_path_contract "$S5_TXNDIR" dir root:root 700 || return 1
+    s5_transaction_contract || return 1
     if [ -f "$S5_TXN_COMMITTED" ] && [ ! -L "$S5_TXN_COMMITTED" ]; then
         # New state is authoritative. Old credential-bearing bytes may only be
         # deleted; they are never restored after the commit marker exists.
@@ -2246,7 +2265,7 @@ s5_install_update() {
     chmod 0600 "$_sioldcfg" "$_sioldstate" || return 1
     if [ "$S5_UPDATE_NEEDS_BINARY" = 1 ]; then
         cp "$S5_BIN" "$_sioldbin" || return 1
-        chmod 0700 "$_sioldbin" || return 1
+        chmod 0600 "$_sioldbin" || return 1
         S5_CREATED_BIN=0
         S5_BINARY_REPLACED=1
         s5_download_engine || return 1

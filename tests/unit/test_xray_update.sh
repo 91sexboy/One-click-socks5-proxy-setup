@@ -764,6 +764,34 @@ test_older_release_download_failure() {
     assert_file_absent "download failure removes transaction evidence" "$S5_TXNDIR"
 }
 
+test_transaction_contract_drift() {
+    for _tcd_path in old.config.json old.state old.xray committed stopping; do
+        t_xray_fixture 23999
+        t_xray_install
+        mkdir -m 0700 "$S5_TXNDIR"
+        case "$_tcd_path" in
+        old.config.json) cp "$S5_CFG" "$S5_TXNDIR/old.config.json" ;;
+        old.state) cp "$S5_STATE" "$S5_TXNDIR/old.state" ;;
+        old.xray) cp "$S5_BIN" "$S5_TXNDIR/old.xray" ;;
+        committed) printf 'committed\n' >"$S5_TXN_COMMITTED" ;;
+        stopping) printf 'stopping\n' >"$S5_TXN_STOPPING" ;;
+        esac
+        chmod 0644 "$S5_TXNDIR/$_tcd_path"
+        t_run s5_transaction_recover
+        assert_ne "transaction rejects mode drift on $_tcd_path" 0 "$T_STATUS"
+        assert_file_exists "transaction preserves drifted $_tcd_path" "$S5_TXNDIR/$_tcd_path"
+    done
+
+    t_xray_fixture 23999
+    t_xray_install
+    mkdir -m 0700 "$S5_TXNDIR"
+    cp "$S5_BIN" "$S5_TXNDIR/old.xray"
+    chmod 0600 "$S5_TXNDIR/old.xray"
+    assert_mode "binary recovery backup is data-only" 600 "$S5_TXNDIR/old.xray"
+    s5_cleanup_transaction
+    assert_eq "valid binary backup cleanup succeeds" 0 "$?"
+}
+
 test_sha256_config_update_failure() {
     t_xray_fixture 23999
     t_xray_install
@@ -839,7 +867,7 @@ test_update_commit_cleanup_failure() {
     done
 }
 
-SCENARIOS='uninstall_confirmation uninstall_messages family update owned_port rejected_candidate listener_failure rejected_command publish_signal config_symlink uninstall_leftovers uninstall_residue verifier_cleanup txn_mkdir_failure txn_copy_failure txn_chmod_failure stop_failure wait_stopped_failure publication_failure new_start_failure dataplane_failure state_write_failure rollback_restart_failure restore_failure uninstall_unknown rollback_exit uninstall_group_residue uninstall_resume uninstall_signal_resume uninstall_resume_drift uninstall_phase_gap_resume uninstall_final_window older_release_update older_release_download_failure sha256_config_update_failure update_commit_cleanup_failure'
+SCENARIOS='uninstall_confirmation uninstall_messages family update owned_port rejected_candidate listener_failure rejected_command publish_signal config_symlink uninstall_leftovers uninstall_residue verifier_cleanup txn_mkdir_failure txn_copy_failure txn_chmod_failure stop_failure wait_stopped_failure publication_failure new_start_failure dataplane_failure state_write_failure rollback_restart_failure restore_failure uninstall_unknown rollback_exit uninstall_group_residue uninstall_resume uninstall_signal_resume uninstall_resume_drift uninstall_phase_gap_resume uninstall_final_window older_release_update older_release_download_failure transaction_contract_drift sha256_config_update_failure update_commit_cleanup_failure'
 if [ "$#" -eq 0 ]; then
     # Expand the fixed scenario words into the default argument list.
     # shellcheck disable=SC2086
