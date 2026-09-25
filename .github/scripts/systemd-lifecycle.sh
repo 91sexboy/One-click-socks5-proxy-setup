@@ -96,7 +96,7 @@ python3 tests/protocol/duplex_target.py --host 0.0.0.0 --host6 :: --ready-file "
 target_pid=$!
 lifecycle_wait_until 50 0.1 test -s "$work/target.port" || true
 target_port=$(cat "$work/target.port")
-test "$(python3 -c 'import json; print(json.load(open("/etc/xray-socks5/config.json"))["inbounds"][0]["listen"])')" = 0.0.0.0
+test "$(sudo python3 -c 'import json; print(json.load(open("/etc/xray-socks5/config.json"))["inbounds"][0]["listen"])')" = 0.0.0.0
 sudo env PROXY_HOST=192.0.2.1 PASSFILE="$work/pass" PORT=23456 TARGET_PORT="$target_port" \
   REPORT="$work/report" OUT="$work/probe" \
   sh tests/protocol/run_xray_mixed.sh

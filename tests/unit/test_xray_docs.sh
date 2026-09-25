@@ -166,4 +166,7 @@ assert_contains "systemd fixture credentials become root-owned before execution"
 assert_contains "systemd protocol gate reads the root-only passfile as root" \
     'sudo env PROXY_HOST=192.0.2.1 PASSFILE="$work/pass"' "$systemd_text"
 
+assert_contains "systemd parses the protected production config as root" \
+    'sudo python3 -c' "$systemd_text"
+
 t_summary
