@@ -72,7 +72,8 @@ def entry(job, command, step_name=None):
         text = body(step)
         lines = executable_lines(step)
         dangerous = any(pattern in text for pattern in (
-            'echo ' + command, 'if false; then', 'false && ' + command,
+            'echo ' + command, 'if false; then\n' + command,
+            'if false; then ' + command, 'false && ' + command,
             command + ' || true'))
         count = sum(line_executes(line, command) for line in lines)
         # A multiline if false puts the command on an exact physical line, but

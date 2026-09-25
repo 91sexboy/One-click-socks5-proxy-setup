@@ -84,6 +84,14 @@ class WorkflowContractTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0, label)
                 self.assertIn('workflow contract:', result.stderr)
 
+    def test_unrelated_dead_branch_does_not_hide_live_entrypoint(self):
+        changed = copy.deepcopy(self.workflow)
+        step = next(step for step in changed['jobs']['unit']['steps']
+                    if 'sh tests/run.sh' in step.get('run', ''))
+        step['run'] = 'if false; then\n  echo unrelated\nfi\nsh tests/run.sh'
+        result = self.run_oracle(changed)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
 
 if __name__ == '__main__':
     unittest.main()
