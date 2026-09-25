@@ -62,12 +62,8 @@ S5_ASSET_BINARY_SIZE=''
 S5_ASSET_BINARY_SHA256=''
 S5_INSTALLED_RELEASE=''
 S5_INSTALLED_COMMIT=''
-S5_INSTALLED_ASSET=''
-S5_INSTALLED_ARCHIVE_SIZE=''
-S5_INSTALLED_ARCHIVE_SHA256=''
 S5_INSTALLED_BINARY_SIZE=''
 S5_INSTALLED_BINARY_SHA256=''
-S5_STATE_CLASS=''
 S5_UPDATE_NEEDS_BINARY=0
 S5_UNINSTALL_PREFIX_ID=''
 S5_UNINSTALL_CONFDIR_ID=''
@@ -265,7 +261,7 @@ s5_msg_fallback() {
     return 1
 }
 
-s5_msg_print() { _smp=$(s5_msg "$@") || { s5_msg_fallback "$1"; return 1; }; s5_say "$(s5_redact "$_smp")"; _smp=''; }
+s5_msg_print() { _smp=$(s5_msg "$@") || { s5_msg_fallback "$1"; return 1; }; s5_say "$_smp"; _smp=''; }
 s5_msg_err() { _sme=$(s5_msg "$@") || { s5_msg_fallback "$1"; return 1; }; s5_err "$_sme"; _sme=''; }
 s5_msg_warn() { _smw=$(s5_msg "$@") || { s5_msg_fallback "$1"; return 1; }; s5_warn "$_smw"; _smw=''; }
 s5_msg_ask() {
@@ -1428,14 +1424,12 @@ s5_verify_installed_artifacts() {
 s5_state_load() {
     _sload_current_family=$S5_OS_FAMILY
     _sload_current_init=$S5_INIT
-    S5_STATE_CLASS=invalid
     if [ ! -e "$S5_STATE" ] && [ ! -L "$S5_STATE" ]; then
-        S5_STATE_CLASS=absent
         return 3
     fi
     s5_path_contract "$S5_STATE" file root:root 600 || return 1
     _sload_schema_hint=$(s5_state_schema "$S5_STATE") || return 1
-    case "$_sload_schema_hint" in 1 | legacy) ;; *) S5_STATE_CLASS=unsupported; return 4 ;; esac
+    case "$_sload_schema_hint" in 1 | legacy) ;; *) return 4 ;; esac
     _sload_fields=$(s5_state_parse) || return 1
     {
         IFS= read -r _sload_schema
@@ -1466,7 +1460,7 @@ s5_state_load() {
 $_sload_fields
 STATE_FIELDS
     _sload_fields=''
-    case "$_sload_schema" in 1 | legacy) ;; *) S5_STATE_CLASS=unsupported; return 4 ;; esac
+    case "$_sload_schema" in 1 | legacy) ;; *) return 4 ;; esac
     [ "$_sload_engine" = xray ] || return 1
     s5_valid_release "$_sload_release" || return 1
     [ "${#_sload_commit}" -eq 40 ] || return 1
@@ -1476,12 +1470,9 @@ STATE_FIELDS
         s5_valid_decimal "$_sload_binsize" && s5_valid_sha256 "$_sload_binsha" || return 1
     [ "$_sload_protocol" = mixed ] && [ "$_sload_auth" = password ] &&
         [ "$_sload_udp" = false ] || return 1
-    [ "$_sload_status" = complete ] || { S5_STATE_CLASS=unsupported; return 4; }
+    [ "$_sload_status" = complete ] || return 4
     S5_INSTALLED_RELEASE=$_sload_release
     S5_INSTALLED_COMMIT=$_sload_commit
-    S5_INSTALLED_ASSET=$_sload_asset
-    S5_INSTALLED_ARCHIVE_SIZE=$_sload_size
-    S5_INSTALLED_ARCHIVE_SHA256=$_sload_sha
     S5_INSTALLED_BINARY_SIZE=$_sload_binsize
     S5_INSTALLED_BINARY_SHA256=$_sload_binsha
     S5_BINARY_SHA256=$_sload_binsha
@@ -1504,11 +1495,10 @@ STATE_FIELDS
     _sload_result=$?
     case "$_sload_result" in
     0) ;;
-    2) S5_STATE_CLASS=config-drift; return 2 ;;
+    2) return 2 ;;
     *) return 1 ;;
     esac
     s5_account_identity || return 1
-    S5_STATE_CLASS=ready
     return 0
 }
 
@@ -1518,7 +1508,6 @@ s5_open_managed_state() {
     case "$1" in inspect | operate | update | uninstall) ;; *) return 1 ;; esac
     if [ -e "$S5_TXNDIR" ] || [ -L "$S5_TXNDIR" ]; then
         if ! s5_transaction_recover; then
-            S5_STATE_CLASS=recovery
             return 5
         fi
     fi
@@ -2256,8 +2245,8 @@ ROLLBACK_FIELDS
     S5_ACCOUNT_GID=$_stvr_saved_gid
     [ "$_stvr_account_status" -eq 0 ] || return 1
     _stvr_unit_mode=644
-    _stvr_unit_type=file
-    if [ "$S5_INIT" = openrc ]; then _stvr_unit_mode=755; _stvr_unit_type=exec; fi
+    _stvr_unit_type='file'
+    if [ "$S5_INIT" = openrc ]; then _stvr_unit_mode=755; _stvr_unit_type='exec'; fi
     s5_path_contract "$S5_SERVICE_ARTIFACT" "$_stvr_unit_type" root:root "$_stvr_unit_mode" || return 1
     s5_path_contract "$S5_CFG" file "root:$S5_SERVICE_GROUP" 640 || return 1
     s5_path_contract "$S5_STATE" file root:root 600 || return 1
@@ -2859,8 +2848,8 @@ s5_uninstall_verify_accounts() {
 
 s5_uninstall_verify_recovery() {
     _suvr_unit_mode=644
-    _suvr_unit_type=file
-    if [ "$S5_INIT" = openrc ]; then _suvr_unit_mode=755; _suvr_unit_type=exec; fi
+    _suvr_unit_type='file'
+    if [ "$S5_INIT" = openrc ]; then _suvr_unit_mode=755; _suvr_unit_type='exec'; fi
     # Directories that should remain are always checked before their contents.
     case "$S5_UNINSTALL_PHASE" in
     prepared|stopped|disabled|service-artifact-removed|config-removed|binary-removed|manager-reloaded|account-removed|state-finalizing)

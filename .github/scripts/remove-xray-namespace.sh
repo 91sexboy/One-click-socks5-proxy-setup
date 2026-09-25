@@ -64,7 +64,11 @@ for dir in /etc/xray-socks5 /var/lib/xray-socks5 /usr/local/libexec/xray-socks5;
         entries=$(as_root find "$dir" -mindepth 1 -maxdepth 1 -printf '%f\n')
         for entry in $entries; do
             ok=0
-            for pattern in $allowed; do case "$entry" in $pattern) ok=1 ;; esac; done
+            for pattern in $allowed; do
+                # Fixed patterns intentionally carry globs.
+                # shellcheck disable=SC2254
+                case "$entry" in $pattern) ok=1 ;; esac
+            done
             [ "$ok" = 1 ] || { printf 'cleanup: unknown residue %s/%s\n' "$dir" "$entry" >&2; exit 1; }
         done
     fi
@@ -84,9 +88,10 @@ fi
 # state record is accepted only in the exact installer-created CI shape.
 if identity_state passwd xray-socks5; then user_state=0; else user_state=$?; fi
 if identity_state group xray-socks5; then group_state=0; else group_state=$?; fi
-[ "$user_state" -ne 2 ] && [ "$group_state" -ne 2 ] || {
-    printf 'cleanup: account identity lookup failed\n' >&2; exit 1;
-}
+if [ "$user_state" -eq 2 ] || [ "$group_state" -eq 2 ]; then
+    printf 'cleanup: account identity lookup failed\n' >&2
+    exit 1
+fi
 [ "$user_state:$group_state" != 1:0 ] || {
     printf 'cleanup: refusing group-only residue without ownership evidence\n' >&2; exit 1;
 }
@@ -102,9 +107,10 @@ EOF
     case "$name_uid:$name_gid" in *[!0-9:]*|*::*|:*|*:)
         printf 'cleanup: invalid service account identity\n' >&2; exit 1 ;;
     esac
-    [ "$name_uid" -lt 1000 ] && [ "$name_gid" -lt 1000 ] || {
-        printf 'cleanup: refusing non-system service account\n' >&2; exit 1;
-    }
+    if [ "$name_uid" -ge 1000 ] || [ "$name_gid" -ge 1000 ]; then
+        printf 'cleanup: refusing non-system service account\n' >&2
+        exit 1
+    fi
     group=$(as_root getent group xray-socks5)
     IFS=: read -r group_name _ group_gid members <<EOF
 $group

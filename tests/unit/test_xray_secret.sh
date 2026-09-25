@@ -245,7 +245,7 @@ printf '#!/bin/sh\nprintf "%%s\\n" "$@" >>"%s/argv"\nexec "%s" "$@"\n' \
     "$_rundir" "$_realawk" >"$_rundir/bin/awk"
 chmod 0755 "$_rundir/bin/awk"
 _s5t_saved_shell=${S5_TEST_SHELL:-sh}
-S5_TEST_SHELL=sh
+S5_TEST_SHELL='sh'
 s5t_runner_capture
 S5_TEST_SHELL=$_s5t_saved_shell
 s5t_runner_no_secret "redaction commands keep credentials out of argv" "$(cat "$_rundir/argv")"

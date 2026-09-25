@@ -162,10 +162,10 @@ for cleanup_failure in none stop; do
         "$S5_TEST_ROOT/cleanup-unit-deleted"
     : >"$S5_TEST_ROOT/cleanup-calls"
     # Split a configured multiword shell such as busybox sh.
-    # shellcheck disable=SC2086
     _cleanup_load=not-found
     [ "$cleanup_failure" != stop ] || _cleanup_load=loaded
-    t_run env PATH="$S5_TEST_ROOT/bin:$PATH" S5_CLEANUP_FAIL="$cleanup_failure" \
+# shellcheck disable=SC2086
+t_run env PATH="$S5_TEST_ROOT/bin:$PATH" S5_CLEANUP_FAIL="$cleanup_failure" \
         S5_CLEANUP_LOAD_STATE="$_cleanup_load" \
         ${S5_TEST_SHELL:-sh} "$S5_REPO_ROOT/.github/scripts/remove-xray-namespace.sh"
     if [ "$cleanup_failure" = none ]; then
@@ -183,6 +183,7 @@ for cleanup_failure in none stop; do
 done
 
 : >"$S5_TEST_ROOT/cleanup-calls"
+# shellcheck disable=SC2086
 t_run env PATH="$S5_TEST_ROOT/bin:$PATH" S5_CLEANUP_LOAD_STATE=loaded \
     S5_CLEANUP_ACTIVE_STATE=unknown ${S5_TEST_SHELL:-sh} \
     "$S5_REPO_ROOT/.github/scripts/remove-xray-namespace.sh"
@@ -191,6 +192,7 @@ assert_not_contains "unknown stopped state preserves files" 'rm -f /etc/systemd/
     "$(cat "$S5_TEST_ROOT/cleanup-calls")"
 
 : >"$S5_TEST_ROOT/cleanup-calls"
+# shellcheck disable=SC2086
 t_run env PATH="$S5_TEST_ROOT/bin:$PATH" S5_CLEANUP_LOAD_STATE=not-found \
     S5_CLEANUP_ACCOUNT=foreign ${S5_TEST_SHELL:-sh} \
     "$S5_REPO_ROOT/.github/scripts/remove-xray-namespace.sh"
@@ -199,6 +201,7 @@ assert_not_contains "foreign account refusal precedes file deletion" 'rm -rf' \
     "$(cat "$S5_TEST_ROOT/cleanup-calls")"
 
 : >"$S5_TEST_ROOT/cleanup-calls"
+# shellcheck disable=SC2086
 t_run env PATH="$S5_TEST_ROOT/bin:$PATH" S5_CLEANUP_LOAD_STATE=not-found \
     S5_CLEANUP_ACCOUNT=ordinary ${S5_TEST_SHELL:-sh} \
     "$S5_REPO_ROOT/.github/scripts/remove-xray-namespace.sh"
@@ -207,6 +210,7 @@ assert_not_contains "ordinary account refusal precedes file deletion" 'rm -rf' \
     "$(cat "$S5_TEST_ROOT/cleanup-calls")"
 
 : >"$S5_TEST_ROOT/cleanup-calls"
+# shellcheck disable=SC2086
 t_run env PATH="$S5_TEST_ROOT/bin:$PATH" S5_CLEANUP_LOAD_STATE=not-found \
     S5_CLEANUP_SHAPE=unsafe-unit ${S5_TEST_SHELL:-sh} \
     "$S5_REPO_ROOT/.github/scripts/remove-xray-namespace.sh"
@@ -217,7 +221,8 @@ assert_not_contains "unit mode refusal precedes file deletion" 'rm -f /etc/syste
 rm -f "$S5_TEST_ROOT/cleanup-user-deleted" "$S5_TEST_ROOT/cleanup-group-deleted" \
         "$S5_TEST_ROOT/cleanup-unit-deleted"
 : >"$S5_TEST_ROOT/cleanup-calls"
-t_run env PATH="$S5_TEST_ROOT/bin:$PATH" S5_CLEANUP_LOAD_STATE=loaded \
+    # shellcheck disable=SC2086
+    t_run env PATH="$S5_TEST_ROOT/bin:$PATH" S5_CLEANUP_LOAD_STATE=loaded \
     S5_CLEANUP_ACCOUNT=owned S5_CLEANUP_PROCESS=active ${S5_TEST_SHELL:-sh} \
     "$S5_REPO_ROOT/.github/scripts/remove-xray-namespace.sh"
 assert_eq "cleanup stops an owned service before checking orphan processes" 0 "$T_STATUS"
