@@ -1349,6 +1349,7 @@ s5_valid_release() {
     while :; do
         _svrp=${_svr%%.*}
         s5_valid_decimal "$_svrp" || return 1
+        [ "${#_svrp}" -le 18 ] || return 1
         _svr_count=$((_svr_count + 1))
         case "$_svr" in
         *.*) _svr=${_svr#*.}; [ -n "$_svr" ] || return 1 ;;
@@ -1493,6 +1494,12 @@ s5_open_managed_state() {
     # The capability is explicit even where current policy is identical. This is
     # the command-facing state seam; callers do not reimplement schema/release rules.
     case "$1" in inspect | operate | update | uninstall) ;; *) return 1 ;; esac
+    if [ -e "$S5_TXNDIR" ] || [ -L "$S5_TXNDIR" ]; then
+        if ! s5_transaction_recover; then
+            S5_STATE_CLASS=recovery
+            return 5
+        fi
+    fi
     s5_state_load
     _soms=$?
     [ "$_soms" -eq 0 ] || return "$_soms"
@@ -1862,23 +1869,31 @@ s5_transaction_recover() {
     [ -e "$S5_TXNDIR" ] || [ -L "$S5_TXNDIR" ] || return 0
     s5_transaction_contract || return 1
     if [ -f "$S5_TXN_COMMITTED" ] && [ ! -L "$S5_TXN_COMMITTED" ]; then
-        # New state is authoritative. Old credential-bearing bytes may only be
-        # deleted; they are never restored after the commit marker exists.
+        # Delete-only cleanup is allowed only while the newly authoritative state
+        # still validates. Drift preserves the old backups for diagnosis; they
+        # are never restored after the commit marker exists.
+        s5_state_load || return 1
         s5_cleanup_transaction
         return $?
     fi
-    if [ -f "$S5_TXNDIR/old.config.json" ] && [ ! -L "$S5_TXNDIR/old.config.json" ] &&
-        [ -f "$S5_TXNDIR/old.state" ] && [ ! -L "$S5_TXNDIR/old.state" ]; then
-        if [ -f "$S5_TXN_STOPPING" ] && [ ! -L "$S5_TXN_STOPPING" ]; then
-            S5_SERVICE_TOUCHED=1
-        else
-            S5_SERVICE_TOUCHED=0
-        fi
+    if [ -f "$S5_TXN_STOPPING" ] && [ ! -L "$S5_TXN_STOPPING" ]; then
+        [ -f "$S5_TXNDIR/old.config.json" ] && [ -f "$S5_TXNDIR/old.state" ] || return 1
+        S5_SERVICE_TOUCHED=1
         [ -f "$S5_TXNDIR/old.xray" ] || S5_BINARY_REPLACED=0
         s5_update_rollback "$S5_TXNDIR/old.config.json" "$S5_TXNDIR/old.state"
         return $?
     fi
-    return 1
+    if [ -f "$S5_TXNDIR/old.xray" ]; then
+        [ -f "$S5_TXNDIR/old.config.json" ] && [ -f "$S5_TXNDIR/old.state" ] || return 1
+        S5_SERVICE_TOUCHED=0
+        S5_BINARY_REPLACED=1
+        s5_update_rollback "$S5_TXNDIR/old.config.json" "$S5_TXNDIR/old.state"
+        return $?
+    fi
+    # Before binary replacement or stop, every live resource is untouched. A
+    # hard crash can leave an empty or partial backup directory; deleting only
+    # that private transaction is deterministic and does not rewrite live files.
+    s5_cleanup_transaction
 }
 
 s5_cleanup_own_temps() {
@@ -2210,6 +2225,13 @@ ROLLBACK_FIELDS
     S5_ACCOUNT_UID=$_stvr_saved_uid
     S5_ACCOUNT_GID=$_stvr_saved_gid
     [ "$_stvr_account_status" -eq 0 ] || return 1
+    _stvr_unit_mode=644
+    _stvr_unit_type=file
+    if [ "$S5_INIT" = openrc ]; then _stvr_unit_mode=755; _stvr_unit_type=exec; fi
+    s5_path_contract "$S5_SERVICE_ARTIFACT" "$_stvr_unit_type" root:root "$_stvr_unit_mode" || return 1
+    s5_path_contract "$S5_CFG" file "root:$S5_SERVICE_GROUP" 640 || return 1
+    s5_path_contract "$S5_STATE" file root:root 600 || return 1
+    s5_path_contract "$S5_BIN" exec root:root 755 || return 1
     [ "$(s5_sha256 "$S5_SERVICE_ARTIFACT" 2>/dev/null)" = "$_stvr_unit_sha" ] || return 1
     [ "$(s5_sha256 "$S5_TXNDIR/old.config.json" 2>/dev/null)" = "$_stvr_config_sha" ] || return 1
     _stvr_binary=$S5_BIN
@@ -2323,6 +2345,7 @@ s5_report_state_load() {
     0) return 0 ;;
     2) s5_msg_err config.external ;;
     4) s5_msg_err state.unsupported "$S5_STATE" ;;
+    5) s5_msg_err transaction.pending "$S5_TXNDIR" ;;
     *)
         if [ -e "$S5_STATE" ] || [ -L "$S5_STATE" ]; then
             s5_msg_err state.invalid "$S5_STATE"
@@ -2335,14 +2358,6 @@ s5_report_state_load() {
 }
 
 s5_install_update() {
-    # Recovery evidence is authoritative before ordinary state/hash validation:
-    # rollback-required transactions necessarily leave config/state mismatched.
-    if [ -e "$S5_TXNDIR" ] || [ -L "$S5_TXNDIR" ]; then
-        if ! s5_transaction_recover; then
-            s5_msg_err transaction.pending "$S5_TXNDIR"
-            return 1
-        fi
-    fi
     s5_open_managed_state update
     s5_report_state_load $? || return 1
     s5_config_extract || { s5_msg_err config.unreadable "$S5_CFG"; return 1; }

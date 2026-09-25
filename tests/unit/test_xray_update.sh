@@ -867,6 +867,42 @@ test_uninstall_directory_drift() {
     done
 }
 
+test_transaction_all_commands() {
+    for _tac_command in status restart uninstall; do
+        t_xray_fixture 23999
+        t_xray_install
+        s5_precheck() { return 0; }
+        mkdir -m 0700 "$S5_TXNDIR"
+        cp "$S5_CFG" "$S5_TXNDIR/old.config.json"
+        cp "$S5_STATE" "$S5_TXNDIR/old.state"
+        chmod 0600 "$S5_TXNDIR/old.config.json" "$S5_TXNDIR/old.state"
+        case "$_tac_command" in
+        status) t_run s5_cmd_status ;;
+        restart) t_run s5_cmd_restart ;;
+        uninstall)
+            printf 'n\n' >"$S5_TEST_ROOT/answers.uninstall"
+            t_run s5_cmd_uninstall <"$S5_TEST_ROOT/answers.uninstall" ;;
+        esac
+        case "$_tac_command" in uninstall) assert_ne "uninstall cancellation stays nonzero" 0 "$T_STATUS" ;; *) assert_eq "$_tac_command succeeds after recovery" 0 "$T_STATUS" ;; esac
+        assert_file_absent "$_tac_command leaves no pre-stop transaction residue" "$S5_TXNDIR"
+    done
+
+    t_xray_fixture 23999
+    t_xray_install
+    mkdir -m 0700 "$S5_TXNDIR"
+    cp "$S5_CFG" "$S5_TXNDIR/old.config.json"
+    cp "$S5_STATE" "$S5_TXNDIR/old.state"
+    chmod 0600 "$S5_TXNDIR/old.config.json" "$S5_TXNDIR/old.state"
+    printf 'committed\n' >"$S5_TXN_COMMITTED"
+    chmod 0600 "$S5_TXN_COMMITTED"
+    printf 'drift\n' >>"$S5_CFG"
+    t_run s5_open_managed_state inspect
+    assert_eq "committed cleanup refuses invalid new state" 5 "$T_STATUS"
+    assert_file_exists "committed cleanup preserves old config backup on drift" "$S5_TXNDIR/old.config.json"
+    assert_file_exists "committed cleanup preserves old state backup on drift" "$S5_TXNDIR/old.state"
+    assert_file_exists "committed cleanup preserves its marker on drift" "$S5_TXN_COMMITTED"
+}
+
 test_sha256_config_update_failure() {
     t_xray_fixture 23999
     t_xray_install
@@ -942,7 +978,7 @@ test_update_commit_cleanup_failure() {
     done
 }
 
-SCENARIOS='uninstall_confirmation uninstall_messages family update owned_port rejected_candidate listener_failure rejected_command publish_signal config_symlink uninstall_leftovers uninstall_residue verifier_cleanup txn_mkdir_failure txn_copy_failure txn_chmod_failure stop_failure wait_stopped_failure publication_failure new_start_failure dataplane_failure state_write_failure rollback_restart_failure restore_failure uninstall_unknown rollback_exit uninstall_group_residue uninstall_resume uninstall_signal_resume uninstall_resume_drift uninstall_phase_gap_resume uninstall_final_window older_release_update older_release_download_failure transaction_contract_drift rollback_backup_drift uninstall_directory_drift sha256_config_update_failure update_commit_cleanup_failure'
+SCENARIOS='uninstall_confirmation uninstall_messages family update owned_port rejected_candidate listener_failure rejected_command publish_signal config_symlink uninstall_leftovers uninstall_residue verifier_cleanup txn_mkdir_failure txn_copy_failure txn_chmod_failure stop_failure wait_stopped_failure publication_failure new_start_failure dataplane_failure state_write_failure rollback_restart_failure restore_failure uninstall_unknown rollback_exit uninstall_group_residue uninstall_resume uninstall_signal_resume uninstall_resume_drift uninstall_phase_gap_resume uninstall_final_window older_release_update older_release_download_failure transaction_contract_drift rollback_backup_drift uninstall_directory_drift transaction_all_commands sha256_config_update_failure update_commit_cleanup_failure'
 if [ "$#" -eq 0 ]; then
     # Expand the fixed scenario words into the default argument list.
     # shellcheck disable=SC2086
