@@ -90,8 +90,10 @@ assert_contains "Alpine gate runs the independent protocol probe" \
     'sh tests/protocol/run_xray_mixed.sh' "$alpine_text"
 assert_contains "Alpine gate keeps credentials out of argv" '/proc/$live_pid/cmdline' "$alpine_text"
 assert_contains "Alpine gate keeps credentials out of the environment" '/proc/$live_pid/environ' "$alpine_text"
-assert_contains "Alpine gate proves no packages are installed outside install" \
-    'test "$(apk info | sort | sha256sum)" = "$pkgs_before"' "$alpine_text"
+assert_contains "Alpine gate snapshots packages before installation" \
+    'pkgs_before_install=$(apk info | sort | sha256sum)' "$alpine_text"
+assert_contains "Alpine gate proves uninstall retains installed dependencies" \
+    'test "$(apk info | sort | sha256sum)" = "$pkgs_after_install"' "$alpine_text"
 assert_contains "Alpine gate restores the config in place" \
     'cat "$work/good.json" >/etc/xray-socks5/config.json' "$alpine_text"
 assert_contains "systemd gate restores the config in place" 'cat "$1" >"$2"' "$systemd_text"

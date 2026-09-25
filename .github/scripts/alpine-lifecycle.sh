@@ -17,6 +17,7 @@ umask 077
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 lifecycle_write_fixtures "$work"
+pkgs_before_install=$(apk info | sort | sha256sum)
 sh .github/scripts/run-socks5.sh install \
   "$work/answers" "$work/install.log" "$work/pass"
 test "$(stat -c "%U:%G %a" /etc/init.d/xray-socks5)" = "root:root 755"
@@ -29,7 +30,8 @@ sh .github/scripts/run-socks5.sh install \
   "$work/answers.update" "$work/update.log" "$work/pass.update" "$work/pass"
 sh .github/scripts/lifecycle-update-assert.sh
 rc-service xray-socks5 status
-pkgs_before=$(apk info | sort | sha256sum)
+pkgs_after_install=$(apk info | sort | sha256sum)
+test "$pkgs_after_install" != "$pkgs_before_install"
 sh .github/scripts/run-socks5.sh status \
   "$work/answers.empty" "$work/status.log" "$work/pass.update" "$work/pass"
 sh .github/scripts/run-socks5.sh restart \
@@ -136,7 +138,7 @@ PROXY_HOST=192.0.2.1 PASSFILE="$work/pass.update" PORT=23456 TARGET_PORT="$(cat 
   sh tests/protocol/run_xray_mixed.sh
 sh .github/scripts/run-socks5.sh uninstall \
   "$work/answers.uninstall" "$work/uninstall.log" "$work/pass.update" "$work/pass"
-test "$(apk info | sort | sha256sum)" = "$pkgs_before"
+test "$(apk info | sort | sha256sum)" = "$pkgs_after_install"
 test ! -e /etc/xray-socks5
 test ! -e /var/lib/xray-socks5
 test ! -e /usr/local/libexec/xray-socks5
