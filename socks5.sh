@@ -2622,6 +2622,13 @@ s5_uninstall_verify_file() {
     s5_path_contract "$_suvf_path" "$_suvf_type" "$_suvf_owner" "$_suvf_mode" || return 1
     [ "$(s5_sha256 "$_suvf_path" 2>/dev/null)" = "$_suvf_sha" ]
 }
+s5_uninstall_verify_optional_file() {
+    _suvo_path=$1
+    shift
+    if [ ! -e "$_suvo_path" ] && [ ! -L "$_suvo_path" ]; then return 0; fi
+    s5_uninstall_verify_file "$_suvo_path" "$@"
+}
+
 
 s5_uninstall_verify_accounts() {
     _suva_mode=$1
@@ -2667,20 +2674,29 @@ s5_uninstall_verify_recovery() {
         s5_path_contract "$S5_SYSCONFDIR" dir "root:$S5_SERVICE_GROUP" 750 || return 1 ;;
     esac
     case "$S5_UNINSTALL_PHASE" in
-    prepared|stopped|disabled)
+    prepared|stopped)
         s5_uninstall_verify_file "$S5_SERVICE_ARTIFACT" "$_suvr_unit_type" root:root \
+            "$_suvr_unit_mode" "$S5_UNIT_SHA256" || return 1 ;;
+    disabled)
+        s5_uninstall_verify_optional_file "$S5_SERVICE_ARTIFACT" "$_suvr_unit_type" root:root \
             "$_suvr_unit_mode" "$S5_UNIT_SHA256" || return 1 ;;
     *) s5_uninstall_expect_absent "$S5_SERVICE_ARTIFACT" || return 1 ;;
     esac
     case "$S5_UNINSTALL_PHASE" in
-    prepared|stopped|disabled|service-artifact-removed)
+    prepared|stopped|disabled)
         s5_uninstall_verify_file "$S5_CFG" file "root:$S5_SERVICE_GROUP" 640 \
+            "$S5_CONFIG_SHA256" || return 1 ;;
+    service-artifact-removed)
+        s5_uninstall_verify_optional_file "$S5_CFG" file "root:$S5_SERVICE_GROUP" 640 \
             "$S5_CONFIG_SHA256" || return 1 ;;
     *) s5_uninstall_expect_absent "$S5_CFG" || return 1 ;;
     esac
     case "$S5_UNINSTALL_PHASE" in
-    prepared|stopped|disabled|service-artifact-removed|config-removed)
+    prepared|stopped|disabled|service-artifact-removed)
         s5_uninstall_verify_file "$S5_BIN" exec root:root 755 \
+            "$S5_INSTALLED_BINARY_SHA256" || return 1 ;;
+    config-removed)
+        s5_uninstall_verify_optional_file "$S5_BIN" exec root:root 755 \
             "$S5_INSTALLED_BINARY_SHA256" || return 1 ;;
     *) s5_uninstall_expect_absent "$S5_BIN" || return 1 ;;
     esac
@@ -2693,8 +2709,12 @@ s5_uninstall_verify_recovery() {
     *) s5_uninstall_verify_accounts absent || return 1 ;;
     esac
     case "$S5_UNINSTALL_PHASE" in
-    prepared|stopped|disabled|service-artifact-removed|config-removed|binary-removed|manager-reloaded|account-removed)
+    prepared|stopped|disabled|service-artifact-removed|config-removed|binary-removed|manager-reloaded)
         s5_path_contract "$S5_STATE" file root:root 600 || return 1 ;;
+    account-removed)
+        if [ -e "$S5_STATE" ] || [ -L "$S5_STATE" ]; then
+            s5_path_contract "$S5_STATE" file root:root 600 || return 1
+        fi ;;
     *) s5_uninstall_expect_absent "$S5_STATE" || return 1 ;;
     esac
     return 0

@@ -657,6 +657,31 @@ test_uninstall_resume_drift() {
     assert_file_exists "account drift retains recovery evidence" "$S5_UNINSTALL_STATE"
 }
 
+test_uninstall_phase_gap_resume() {
+    for _ugr_case in disabled:unit service-artifact-removed:config config-removed:binary account-removed:state; do
+        _ugr_phase=${_ugr_case%%:*}
+        _ugr_resource=${_ugr_case#*:}
+        t_xray_fixture 23456
+        t_xray_install
+        s5_precheck() { return 0; }
+        printf 'y\n' >"$S5_TEST_ROOT/answers.uninstall"
+        S5T_UNINSTALL_FAIL_PHASE=$_ugr_phase
+        S5_UNINSTALL_INJECT=s5t_uninstall_injector
+        t_run s5_cmd_uninstall <"$S5_TEST_ROOT/answers.uninstall"
+        assert_ne "$_ugr_phase setup stops at its checkpoint" 0 "$T_STATUS"
+        unset S5_UNINSTALL_INJECT
+        case "$_ugr_resource" in
+        unit) rm -f "$S5_SERVICE_ARTIFACT" ;;
+        config) rm -f "$S5_CFG" ;;
+        binary) rm -f "$S5_BIN" ;;
+        state) rm -f "$S5_STATE" ;;
+        esac
+        t_run s5_cmd_uninstall </dev/null
+        assert_eq "$_ugr_phase resumes when its next removal already completed" 0 "$T_STATUS"
+        assert_file_absent "$_ugr_phase gap recovery removes state namespace" "$S5_STATEDIR"
+    done
+}
+
 test_uninstall_final_window() {
     t_xray_fixture 23456
     t_xray_install
@@ -814,7 +839,7 @@ test_update_commit_cleanup_failure() {
     done
 }
 
-SCENARIOS='uninstall_confirmation uninstall_messages family update owned_port rejected_candidate listener_failure rejected_command publish_signal config_symlink uninstall_leftovers uninstall_residue verifier_cleanup txn_mkdir_failure txn_copy_failure txn_chmod_failure stop_failure wait_stopped_failure publication_failure new_start_failure dataplane_failure state_write_failure rollback_restart_failure restore_failure uninstall_unknown rollback_exit uninstall_group_residue uninstall_resume uninstall_signal_resume uninstall_resume_drift uninstall_final_window older_release_update older_release_download_failure sha256_config_update_failure update_commit_cleanup_failure'
+SCENARIOS='uninstall_confirmation uninstall_messages family update owned_port rejected_candidate listener_failure rejected_command publish_signal config_symlink uninstall_leftovers uninstall_residue verifier_cleanup txn_mkdir_failure txn_copy_failure txn_chmod_failure stop_failure wait_stopped_failure publication_failure new_start_failure dataplane_failure state_write_failure rollback_restart_failure restore_failure uninstall_unknown rollback_exit uninstall_group_residue uninstall_resume uninstall_signal_resume uninstall_resume_drift uninstall_phase_gap_resume uninstall_final_window older_release_update older_release_download_failure sha256_config_update_failure update_commit_cleanup_failure'
 if [ "$#" -eq 0 ]; then
     # Expand the fixed scenario words into the default argument list.
     # shellcheck disable=SC2086
