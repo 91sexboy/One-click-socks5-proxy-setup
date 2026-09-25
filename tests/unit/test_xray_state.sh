@@ -82,6 +82,14 @@ done
 s5t_state_reset
 s5t_state_field schema 2
 s5t_state_expect "unknown schema is classified unsupported" 4
+s5t_state_reset
+s5t_state_field schema 2
+printf 'future_field\tfuture_value\n' >>"$S5_STATE"
+s5t_state_expect "unknown schema with future fields remains unsupported" 4
+s5t_state_reset
+awk -F '\t' '$1 == "schema" { print; print } $1 != "schema" { print }' \
+    "$S5_TEST_ROOT/valid-state" >"$S5_STATE"
+s5t_state_expect "duplicate schema discriminator is invalid" 1
 
 for _tsfield in engine:other release:other commit:other asset:other archive_size:bad \
     archive_sha256:bad binary_size:bad binary_sha256:bad protocol:socks auth:none udp:true \

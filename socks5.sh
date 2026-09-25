@@ -1263,6 +1263,19 @@ UNIT
 # Emit one value per line in this fixed order only after the whole schema passes.
 # Values cannot contain tabs/newlines; read -r consumes them as data, never code.
 # The legacy schema omits family, represented by an empty line in that slot.
+s5_state_schema() {
+    awk -F '\t' '
+        $1 == "schema" {
+            if (NF != 2 || $2 == "" || seen++) exit 1
+            schema=$2
+        }
+        END {
+            if (seen > 1) exit 1
+            print seen == 1 ? schema : "legacy"
+        }
+    ' "$1" 2>/dev/null
+}
+
 s5_state_parse_file() {
     awk -F '\t' '
         BEGIN {
@@ -1398,6 +1411,8 @@ s5_state_load() {
         return 3
     fi
     s5_path_contract "$S5_STATE" file root:root 600 || return 1
+    _sload_schema_hint=$(s5_state_schema "$S5_STATE") || return 1
+    case "$_sload_schema_hint" in 1 | legacy) ;; *) S5_STATE_CLASS=unsupported; return 4 ;; esac
     _sload_fields=$(s5_state_parse) || return 1
     {
         IFS= read -r _sload_schema
