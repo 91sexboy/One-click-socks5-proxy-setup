@@ -958,16 +958,23 @@ test_sha256_binary_update_failure() {
     mv "$S5_STATE.next" "$S5_STATE"
     chmod 0600 "$S5_STATE"
     _sbu_old_state=$(t_sha256 "$S5_STATE")
+    _sbu_real_sha=/usr/bin/sha256sum
+    [ -x "$_sbu_real_sha" ] || _sbu_real_sha=/bin/sha256sum
+    _sbu_digest_fail=0
+    s5_sha256_command() {
+        if [ "$_sbu_digest_fail" = 1 ] && [ "$1" = "$S5_BIN" ]; then return 91; fi
+        "$_sbu_real_sha" "$1"
+    }
     s5_download_engine() {
         printf '#!/bin/sh\nprintf candidate\\n\n' >"$S5_BIN"
         chmod 0755 "$S5_BIN"
+        _sbu_digest_fail=1
         s5_record_digest binary "$S5_BIN" || return 1
         S5_BINARY_SHA256=$S5_RECORDED_DIGEST
-        return 91
     }
     s5_prompt_port() { S5_PORT=23999; return 0; }
     s5_install_update
-    assert_ne "candidate binary digest/download failure aborts update" 0 "$?"
+    assert_ne "candidate binary digest failure aborts update" 0 "$?"
     s5_cleanup
     assert_eq "candidate failure restores the exact old binary" "$_sbu_old_bin" "$(t_sha256 "$S5_BIN")"
     assert_eq "candidate failure preserves config" "$_sbu_old_cfg" "$(t_sha256 "$S5_CFG")"
