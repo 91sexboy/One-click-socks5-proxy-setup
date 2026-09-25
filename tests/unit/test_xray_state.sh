@@ -247,4 +247,39 @@ for _tsmode_case in \
     esac
 done
 
+s5t_state_owner_case() (
+    _soc_target=$1
+    S5_SKIP_OWNERSHIP=0
+    stat() {
+        if [ "$1" = -c ] && [ "$2" = '%U:%G %a' ]; then
+            _soc_mode=$(/usr/bin/stat -c %a "$3") || return 1
+            case "$3" in
+            "$S5_PREFIX"|"$S5_BIN"|"$S5_STATEDIR"|"$S5_STATE"|"$S5_SERVICE_ARTIFACT") _soc_owner=root:root ;;
+            "$S5_SYSCONFDIR"|"$S5_CFG") _soc_owner=root:xray-socks5 ;;
+            *) return 1 ;;
+            esac
+            case "$_soc_target:$3" in
+            config-owner:"$S5_CFG") _soc_owner=operator:xray-socks5 ;;
+            config-group:"$S5_CFG") _soc_owner=root:operators ;;
+            binary-owner:"$S5_BIN") _soc_owner=xray-socks5:root ;;
+            state-owner:"$S5_STATE") _soc_owner=operator:root ;;
+            unit-group:"$S5_SERVICE_ARTIFACT") _soc_owner=root:xray-socks5 ;;
+            confdir-owner:"$S5_SYSCONFDIR") _soc_owner=xray-socks5:xray-socks5 ;;
+            esac
+            printf '%s %s\n' "$_soc_owner" "$_soc_mode"
+        else
+            /usr/bin/stat "$@"
+        fi
+    }
+    s5_state_load
+)
+for _soc_case in healthy config-owner config-group binary-owner state-owner unit-group confdir-owner; do
+    t_run s5t_state_owner_case "$_soc_case"
+    if [ "$_soc_case" = healthy ]; then
+        assert_eq "exact installed ownership baseline loads" 0 "$T_STATUS"
+    else
+        assert_eq "$_soc_case ownership drift is refused" 1 "$T_STATUS"
+    fi
+done
+
 t_summary
