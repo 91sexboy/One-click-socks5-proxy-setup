@@ -1295,6 +1295,7 @@ s5_state_parse_file() {
             if (NR < 22 || NR > 24) valid=0
             if (!("schema" in seen)) values["schema"]="legacy"
             if (!("family" in seen)) values["family"]=""
+            if (("schema" in seen) && !("family" in seen)) valid=0
             for (i=1; i<=count; i++) {
                 if (keys[i] == "family") continue
                 if (keys[i] == "schema" && values["schema"] == "legacy") continue

@@ -92,7 +92,7 @@ Run these from the directory containing the downloaded script. Installation and 
 
 An installation made by an older supported script release remains available to `status`, `show`, `restart`, update, and uninstall after this script's release pins change. `status` reports the installed release, not the current download candidate. Recorded metadata verifies the installed binary; an update independently verifies the current pinned download.
 
-Re-running `install` is a **configuration update**, not an upgrade to the latest Xray release. On update, pressing Enter for the port keeps the verified currently owned port; pressing Enter for the username or password generates a new value. New-install confirmation defaults to yes; update and uninstall default to no.
+Re-running `install` updates the managed configuration and, when the installed artifact is older, replaces it with this script's independently verified pinned Xray release. It never follows an unpinned “latest” channel. On update, pressing Enter for the port keeps the verified currently owned port; pressing Enter for the username or password generates a new value. New-install confirmation defaults to yes; update and uninstall default to no.
 
 The language preference is saved in `/etc/xray-socks5.lang` and survives uninstall. If it cannot be saved, the script warns that the choice applies only to the current invocation. The `language` command reports failure if saving fails.
 

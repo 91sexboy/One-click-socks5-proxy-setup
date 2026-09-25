@@ -39,8 +39,8 @@ awk '{ rows[NR]=$0 } END { for(i=NR;i>0;i--) printf "%s%s",rows[i],(i==1 ? "" : 
 s5t_state_expect "unordered state without final newline loads" 0
 
 s5t_state_reset
-awk -F '\t' '$1 != "family"' "$S5_TEST_ROOT/valid-state" >"$S5_STATE"
-s5t_state_expect "legacy 22-field state without family loads" 0
+awk -F '\t' '$1 != "schema" && $1 != "family"' "$S5_TEST_ROOT/valid-state" >"$S5_STATE"
+s5t_state_expect "legacy 22-field state without schema or family loads" 0
 assert_eq "legacy systemd family defaults to Debian" debian "$S5_OS_FAMILY"
 S5_OS_FAMILY=el
 s5t_state_expect "legacy Debian state is refused on a detected EL host" 1
@@ -52,7 +52,7 @@ for _tskey in schema engine release commit asset archive_size archive_sha256 bin
     s5t_state_reset
     awk -F '\t' -v key="$_tskey" '$1 != key' "$S5_TEST_ROOT/valid-state" >"$S5_STATE"
     case "$_tskey" in
-    family|schema) s5t_state_expect "missing $_tskey is recognized as legacy" 0 ;;
+    schema) s5t_state_expect "missing schema is recognized as legacy" 0 ;;
     *) s5t_state_expect "missing $_tskey is refused" 1 ;;
     esac
     s5t_state_reset

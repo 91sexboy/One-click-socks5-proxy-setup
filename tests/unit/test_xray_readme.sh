@@ -46,6 +46,8 @@ for _doc in README.md README.zh-CN.md; do
             'Blank username and password answers generate new values' "$_doctext"
         assert_contains "English status docs report installed release" \
             '`status` reports the installed release' "$_doctext"
+        assert_contains "English update docs name pinned artifact replacement" \
+            "replaces it with this script's independently verified pinned Xray release" "$_doctext"
         ;;
     README.zh-CN.md)
         assert_contains "Chinese update docs retain a verified blank port" \
@@ -54,6 +56,8 @@ for _doc in README.md README.zh-CN.md; do
             '账户名或密码留空会生成新值' "$_doctext"
         assert_contains "Chinese status docs report installed release" \
             '`status` 报告的是已安装版本' "$_doctext"
+        assert_contains "Chinese update docs name pinned artifact replacement" \
+            '替换为当前脚本独立校验并固定版本的 Xray' "$_doctext"
         ;;
     esac
 done
