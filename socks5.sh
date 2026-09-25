@@ -1310,6 +1310,20 @@ s5_state_parse_file() {
 s5_state_parse() { s5_state_parse_file "$S5_STATE"; }
 
 s5_state_write() {
+    s5_valid_release "$S5_XRAY_VERSION" || return 1
+    [ "${#S5_XRAY_COMMIT}" -eq 40 ] || return 1
+    case "$S5_XRAY_COMMIT" in *[!0-9a-fA-F]*) return 1 ;; esac
+    case "$S5_ARCHNAME:$S5_ASSET_NAME" in
+    amd64:Xray-linux-64.zip | arm64:Xray-linux-arm64-v8a.zip) ;;
+    *) return 1 ;;
+    esac
+    s5_valid_decimal "$S5_ASSET_SIZE" && s5_valid_sha256 "$S5_ASSET_SHA256" &&
+        s5_valid_decimal "$S5_ASSET_BINARY_SIZE" && s5_valid_sha256 "$S5_ASSET_BINARY_SHA256" || return 1
+    s5_valid_port "$S5_PORT" && s5_valid_username "$S5_USERNAME" &&
+        s5_ipv4_is_canonical "$S5_LISTEN" || return 1
+    s5_backend_supported || return 1
+    s5_valid_decimal "$S5_ACCOUNT_UID" && s5_valid_decimal "$S5_ACCOUNT_GID" &&
+        s5_valid_sha256 "$S5_CONFIG_SHA256" && s5_valid_sha256 "$S5_UNIT_SHA256" || return 1
     [ "$S5_BINARY_SHA256" = "$S5_ASSET_BINARY_SHA256" ] || return 1
     s5_valid_sha256 "$S5_BINARY_SHA256" || return 1
     [ "$(s5_bytecount "$S5_BIN" 2>/dev/null)" = "$S5_ASSET_BINARY_SIZE" ] || return 1

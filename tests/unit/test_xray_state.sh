@@ -295,5 +295,10 @@ S5_ACCOUNT_GID=900
 t_run s5_state_write
 assert_ne "state writer refuses a binary digest that is not the current pin" 0 "$T_STATUS"
 assert_file_absent "wrong binary metadata writes no state" "$S5_STATE"
+S5_BINARY_SHA256=$S5_ASSET_BINARY_SHA256
+S5_ASSET_SIZE=bad
+t_run s5_state_write
+assert_ne "state writer refuses malformed archive metadata" 0 "$T_STATUS"
+assert_file_absent "malformed archive metadata writes no state" "$S5_STATE"
 
 t_summary
