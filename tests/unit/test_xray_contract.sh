@@ -130,12 +130,20 @@ S5_USERNAME=alice
 S5_PASSWORD='Secret_123~x'
 S5_SECRET=$S5_PASSWORD
 S5_LISTEN=127.0.0.1
-mkdir -p "$S5_SYSCONFDIR" "$S5_STATEDIR"
+mkdir -p "$S5_SYSCONFDIR" "$S5_STATEDIR" "$S5_PREFIX"
 config=$(s5_config_render)
 printf '%s\n' "$config" >"$S5_CFG"
 S5_CONFIG_SHA256=$(t_sha256 "$S5_CFG")
 S5_ARCHNAME=amd64
-s5_asset_select
+printf '#!/bin/sh\nexit 0\n' >"$S5_BIN"
+chmod 0755 "$S5_BIN"
+t_use_asset_fixture() { :; }
+S5_ASSET_NAME=Xray-linux-64.zip
+S5_ASSET_SIZE=17
+S5_ASSET_SHA256=$(t_sha256 "$S5_BIN")
+S5_ASSET_BINARY_SIZE=$(wc -c <"$S5_BIN" | tr -d '[:space:]')
+S5_ASSET_BINARY_SHA256=$(t_sha256 "$S5_BIN")
+S5_BINARY_SHA256=$S5_ASSET_BINARY_SHA256
 S5_INIT=systemd
 S5_ACCOUNT_UID=900
 S5_ACCOUNT_GID=900
