@@ -38,6 +38,8 @@ for _doc in README.md README.zh-CN.md; do
     assert_contains "$_doc links to the other language" "$_doclanguage" "$_doctext"
     assert_contains "$_doc names every lifecycle-tested Alpine release" \
         'Alpine 3.20 / 3.22 / 3.24 amd64' "$_doctext"
+    assert_contains "$_doc requires the canonical packaged Info-ZIP path" \
+        '/usr/bin/unzip' "$_doctext"
     assert_contains "$_doc links to the verified local release mirror" \
         "($_docrepo/releases/tag/xray-v26.3.27)" "$_doctext"
     case "$_doc" in

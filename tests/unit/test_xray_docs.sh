@@ -20,7 +20,7 @@ for _entry in 'python3 .github/scripts/check-workflow.py .github/workflows/ci.ym
     'python3 -O tests/lib/workflow_contract_regression.py'; do
     assert_contains "the lint job executes $_entry" "$_entry" "$ci_text"
 done
-for _contract in timeout-minutes continue-on-error CHECKOUT UPLOADER RUNNERS IMAGES MUTATIONS \
+for _contract in timeout-minutes continue-on-error CHECKOUT UPLOADER RUNNERS LIFECYCLE_ROWS CONTROL_IMAGES MUTATIONS \
     'matrix.shell.command' 'memory-report.sh' 'run_xray_mixed.sh' 'lifecycle-assert-control.py'; do
     assert_contains "the parsed workflow oracle covers $_contract" "$_contract" "$workflow_oracle"
 done
@@ -109,6 +109,17 @@ assert_not_contains "the Alpine lifecycle body is not inlined in the YAML" \
     'apk add --no-cache openrc' "$ci_text"
 assert_contains "the lifecycle script is what installs OpenRC" \
     'apk add --no-cache openrc' "$alpine_text"
+assert_contains "Alpine lifecycle injects a hostile unzip PATH control" \
+    'hostile-bin/unzip' "$alpine_text"
+assert_contains "Alpine lifecycle pins the installed Xray byte count" \
+    '= 36577406' "$alpine_text"
+assert_contains "Alpine lifecycle pins the installed Xray digest" \
+    '8255dd939c34cf966cc91517b6324dd3c8d0bcf49ffac8beca049a38c46845ed' \
+    "$alpine_text"
+assert_contains "Alpine lifecycle proves the hostile unzip was bypassed" \
+    'test ! -e "$ALPINE_HOSTILE_UNZIP_LOG"' "$alpine_text"
+assert_contains "Alpine lifecycle proves the hostile PATH remained active" \
+    'test "$PATH" = "$work/hostile-bin:$original_path"' "$alpine_text"
 common_text=$(cat "$ROOT/.github/scripts/lifecycle-common.sh")
 assert_eq "the shared lifecycle fixtures are defined once" 1 \
     "$(printf '%s\n' "$common_text" | grep -c 'lifecycle_write_fixtures()')"
