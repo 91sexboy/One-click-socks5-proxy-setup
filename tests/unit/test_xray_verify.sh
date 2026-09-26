@@ -95,6 +95,83 @@ assert_ne "two distinct failures produce distinct diagnostics" "$_diag_close" "$
 assert_contains "a closed inbound names its reason" "closed" "$_diag_close"
 assert_contains "a rejected auth method names its reason" "auth method" "$_diag_auth"
 
+# Reach the HTTP half after two valid SOCKS exchanges. The fourth connection
+# receives the correct HTTP credential and then closes without a status line: an
+# inbound that merely treats "not 407" as success accepts this broken response.
+cat >"$WORK/http-silent-mock.py" <<'MOCK_HTTP'
+import socket
+import sys
+
+srv = socket.socket()
+srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+srv.bind(("127.0.0.1", 0))
+srv.listen(4)
+print(srv.getsockname()[1], flush=True)
+
+# Correct SOCKS credential followed by a refused boundary destination.
+conn, _ = srv.accept()
+conn.recv(4096); conn.sendall(b"\x05\x02")
+conn.recv(4096); conn.sendall(b"\x01\x00")
+conn.recv(4096); conn.sendall(b"\x05\x02\x00\x01" + b"\x00" * 6)
+conn.close()
+# Incorrect SOCKS credential.
+conn, _ = srv.accept()
+conn.recv(4096); conn.sendall(b"\x05\x02")
+conn.recv(4096); conn.sendall(b"\x01\x01")
+conn.close()
+# Incorrect HTTP credential, then a silent close for the correct one.
+conn, _ = srv.accept()
+conn.recv(4096)
+conn.sendall(b"HTTP/1.1 407 Proxy Authentication Required\r\n\r\n")
+conn.close()
+conn, _ = srv.accept()
+conn.recv(4096)
+conn.close()
+srv.close()
+MOCK_HTTP
+
+s5t_http_silent_case() {
+    _verifier=$1
+    _suffix=$2
+    python3 "$WORK/http-silent-mock.py" >"$WORK/port.$_suffix" 2>>"$WORK/mock.log" &
+    _http_mockpid=$!
+    _i=0
+    while [ "$_i" -lt 50 ]; do
+        [ -s "$WORK/port.$_suffix" ] && break
+        _i=$((_i + 1))
+        sleep 0.1
+    done
+    _http_port=$(cat "$WORK/port.$_suffix" 2>/dev/null)
+    python3 "$_verifier" "$_http_port" "$WORK/pass" >"$WORK/out.$_suffix" 2>&1
+    S5T_HTTP_STATUS=$?
+    kill "$_http_mockpid" 2>/dev/null || true
+    wait "$_http_mockpid" 2>/dev/null || true
+}
+
+s5t_http_silent_case "$VERIFY_PY" httpempty
+assert_ne "a silent correct-credential HTTP response is refused" 0 "$S5T_HTTP_STATUS"
+assert_contains "the silent HTTP response names the missing positive evidence" \
+    'http auth response' "$(cat "$WORK/out.httpempty")"
+
+# Red control: restore the old differential-only check. Against the same mock it
+# exits zero, proving that the positive assertion above guards a real false pass.
+python3 - "$VERIFY_PY" "$WORK/verify.differential-only.py" <<'PY'
+from pathlib import Path
+import sys
+source, output = map(Path, sys.argv[1:])
+old = '''if http_status_code(http_status(password)) == b"407":
+        raise RuntimeError("http auth")'''
+new = '''if b"407" in http_status(password): raise RuntimeError("http auth")'''
+text = source.read_text()
+if text.count(old) != 1:
+    raise SystemExit("HTTP verifier mutation anchor changed")
+output.write_text(text.replace(old, new))
+PY
+assert_eq "the differential-only verifier mutation was constructed" 0 "$?"
+s5t_http_silent_case "$WORK/verify.differential-only.py" httpempty-mutant
+assert_eq "the old differential-only HTTP check accepts a silent response" 0 \
+    "$S5T_HTTP_STATUS"
+
 S5_TEST_MODE=1
 S5_TEST_ROOT=$WORK
 S5_LIB_ONLY=1

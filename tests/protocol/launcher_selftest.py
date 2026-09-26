@@ -81,12 +81,18 @@ if name == "curl":
     with open(sys.argv[sys.argv.index("-o") + 1], "wb") as handle:
         handle.truncate({PINS['amd64']['size']})
 elif name == "sha256sum":
-    print("{PINS['amd64']['sha']}  archive")
+    target = pathlib.Path(sys.argv[-1])
+    digest = "{PINS['amd64']['binary_sha']}" if target.name == "xray" else "{PINS['amd64']['sha']}"
+    print(digest + "  " + target.name)
 elif name == "unzip":
     if sys.argv[1] == "-Z1":
         print("xray\\ngeoip.dat\\ngeosite.dat\\nLICENSE\\nREADME.md")
     else:
-        sys.stdout.write((root / "engine").read_text())
+        # The launcher gates the extracted member on the pinned size, so pad the
+        # engine up to it with one trailing comment line: the same program, at
+        # the byte count the real member has.
+        body = (root / "engine").read_text()
+        sys.stdout.write(body + "#" + "x" * ({PINS['amd64']['binary_size']} - len(body) - 2) + "\\n")
 elif name == "file":
     print("ELF 64-bit LSB executable, x86-64")
 elif name == "sleep":
@@ -108,6 +114,13 @@ elif name == "sleep":
             # keep the same explicit tool fixtures in all four supported shells.
             wrappers = "\n".join('%s() { "$FIXTURE_ROOT/bin/%s" "$@"; }' % (name, name)
                                  for name in ("curl", "sha256sum", "unzip", "file", "sleep"))
+            # The launcher runs Info-ZIP at an absolute path through a seam it
+            # defines only when none is present, so the fixture extractor is
+            # substituted there rather than as a bare `unzip`.
+            wrappers += '\ncurl_command() { "$FIXTURE_ROOT/bin/curl" "$@"; }'
+            wrappers += '\nsha256_command() { "$FIXTURE_ROOT/bin/sha256sum" "$@"; }'
+            wrappers += '\nunzip_command() { "$FIXTURE_ROOT/bin/unzip" "$@"; }'
+            wrappers += '\nfile_type_command() { "$FIXTURE_ROOT/bin/file" -b "$@"; }'
             wrappers += '\npython3() { : >"$FIXTURE_ROOT/probed"; "$REAL_PYTHON" "$@"; }'
             command = shell + ["-c", wrappers + '\n. "$1"', "launcher-fixture", str(LAUNCHER)]
             process = subprocess.Popen(command, env=env, stdout=log, stderr=log, start_new_session=True)

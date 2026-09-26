@@ -34,6 +34,15 @@ sudo test -f /var/lib/xray-socks5/state
 printf 'lifecycle: state-file-ok\n'
 sudo test -x /usr/local/libexec/xray-socks5/xray
 printf 'lifecycle: binary-file-ok\n'
+# Executable is not enough. README.md has the operator supply Info-ZIP on this
+# family, which makes extraction the least controlled step here, and a corrupted
+# binary stays executable. These repeat the amd64 pins from outside the installer,
+# so they still hold if its own size and digest checks regress; the job runs on
+# ubuntu-24.04 only, so the architecture is fixed.
+test "$(sudo stat -c '%s' /usr/local/libexec/xray-socks5/xray)" = 36577406
+test "$(sudo sha256sum /usr/local/libexec/xray-socks5/xray | awk '{print $1}')" = \
+  8255dd939c34cf966cc91517b6324dd3c8d0bcf49ffac8beca049a38c46845ed
+printf 'lifecycle: binary-bytes-ok\n'
 printf 'lifecycle: files-ok\n'
 test "$(sudo stat -c '%a' /etc/xray-socks5/config.json)" = 640
 test "$(sudo stat -c '%a' /var/lib/xray-socks5/state)" = 600
@@ -114,7 +123,13 @@ printf 'lifecycle: update-ok\n'
 sudo sh .github/scripts/run-socks5.sh status \
   "$work/answers.empty" "$work/status.log" "$work/pass.update" "$work/pass"
 printf 'lifecycle: status-ok\n'
-sudo grep -q 'mixed' "$work/status.log"
+# status always exits 0 by design (README.md), so the log content is the only
+# signal. The heading carries "mixed" on its own, which left a listener degraded
+# to service.listen or service.unverified passing: match the service.ready line
+# for the installed port, and the protocol summary in the status line rather than
+# the word in the heading.
+sudo grep -qxF 'Xray is listening on port 23456.' "$work/status.log"
+sudo grep -qF 'protocol: mixed (SOCKS5 + HTTP); auth: password; UDP: disabled' "$work/status.log"
 printf 'lifecycle: status-content-ok\n'
 sudo sh .github/scripts/lifecycle-update-assert.sh
 sudo systemctl is-active --quiet xray-socks5.service

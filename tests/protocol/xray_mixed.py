@@ -613,6 +613,7 @@ def negative_cases(proxy, target, creds, bad_creds):
         fail("mixed proxy accepted BIND")
     if not socks5_reject_command(proxy, target, creds, 3):
         fail("mixed proxy accepted UDP ASSOCIATE with udp=false")
+    print("mixed_refusals=ok")
 
 
 def main():

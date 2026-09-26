@@ -47,12 +47,22 @@ recorded hash on every later command. See `s5_asset_select` in the
 
 - Bumping Xray requires deliberate updates to the version, tag commit and
   per-architecture asset metadata in `socks5.sh`, `.github/workflows/ci.yml`,
-  `tests/protocol/start_engine.sh`, and the independent pin table in
-  `tests/lib/release_contract.py`. Update the release tags and published sizes in
-  `README.md` and `README.zh-CN.md`, and the independent expectations in
-  `tests/lib/release_contract_regression.py`. The release-contract oracle and
-  its mutation regressions retain independent expectations rather than deriving
-  the expected bytes from the production declarations.
+  `tests/protocol/start_engine.sh` and `tests/unit/test_xray_asset.sh`, and to the
+  amd64 binary size and digest that three further files repeat: the two native
+  lifecycle gates `.github/scripts/alpine-lifecycle.sh` and
+  `.github/scripts/systemd-lifecycle.sh`, which re-check the installed bytes from
+  outside the installer, and `tests/unit/test_xray_docs.sh`, which requires that
+  they do. That list is enforced rather than remembered: the release contract
+  names the first four as `FILES` and the last three as `PIN_MIRRORS`, and a bump
+  that misses one is refused — including a 64-hex digest left in a mirror that is
+  no longer a current pin.
+- The independent pin table in `tests/lib/release_contract.py` and the independent
+  expectations in `tests/lib/release_contract_regression.py` are updated by hand
+  as well; the oracle and its mutation regressions retain independent expectations
+  rather than deriving the expected bytes from the production declarations. Update
+  the release tag and published sizes in `README.md` and `README.zh-CN.md`, the
+  documented mirror tag in `tests/unit/test_xray_readme.sh`, and the version and
+  upstream source links in `THIRD_PARTY_NOTICES.md`.
 - A wrong pin refuses every install on that architecture rather than installing an
   unverified binary (fail closed).
 - No GeoIP database ever reaches disk, which is why the destination boundary uses

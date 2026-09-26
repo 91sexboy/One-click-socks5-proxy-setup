@@ -27,7 +27,7 @@
 
 - 使用 **root shell**，并确保[支持范围](#支持范围)表中的系统原生服务管理器正常工作。
 - 服务器需要能访问 GitHub，以下载安装器和固定版本的 Xray 发布包。
-- systemd 系统需要预先准备运行工具：`curl`、CA 证书、提供 `/usr/bin/unzip` 且支持 `-Z` 的发行版 Info-ZIP 软件包、`file`、Python 3、`ss` 及常规账户管理工具。缺少命令时，安装器会提示名称。
+- systemd 系统需要预先准备运行工具：位于 `/usr/bin/curl` 的 `curl`、CA 证书、提供 `/usr/bin/unzip` 且支持 `-Z` 的发行版 Info-ZIP 软件包、位于 `/usr/bin/file` 的 `file`、位于 `/usr/bin/sha256sum` 的 `sha256sum`（coreutils，通常已安装）、Python 3、`ss` 及常规账户管理工具。这四个传输／校验工具按绝对路径调用，安装在其他位置的副本会被视为缺失。缺少命令时，安装器会提示名称。
 - Alpine 的运行依赖由安装器通过 `apk` 安装，发生在预检查阶段，**早于安装确认**。下载脚本本身仍需要 `curl`；缺少时可先执行 `apk add --no-cache curl ca-certificates`。
 - 根据需要在主机防火墙和云安全组中放行所选 **TCP 端口**。脚本不会配置这些规则，也不会设置 NAT 或端口转发。
 
