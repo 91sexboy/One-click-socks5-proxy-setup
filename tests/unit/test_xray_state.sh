@@ -191,8 +191,12 @@ s5t_state_expect "external executable edit is refused" 1
 
 # Installed identity is independent of the current download candidate. A valid
 # older release remains operable while a later update still selects current pins.
+# The installed binary is that older release's own bytes, recorded as such, so
+# the historical digest in state is a different value from the candidate's and
+# the two can be told apart.
 s5t_state_reset
-cp "$S5_TEST_ROOT/asset-xray" "$S5_BIN"
+printf '#!/bin/sh\nprintf older\\n\n' >"$S5_TEST_ROOT/older-xray"
+cp "$S5_TEST_ROOT/older-xray" "$S5_BIN"
 chmod 755 "$S5_PREFIX" "$S5_BIN"
 chmod 750 "$S5_SYSCONFDIR"
 chmod 640 "$S5_CFG"
@@ -201,15 +205,29 @@ chmod 600 "$S5_STATE"
 chmod 644 "$S5_SERVICE_ARTIFACT"
 printf '900\n' >"$S5_TEST_ROOT/user-exists"
 printf '900\n' >"$S5_TEST_ROOT/group-exists"
-awk -F '\t' 'BEGIN { OFS="\t" }
+awk -F '\t' -v sha="$(t_sha256 "$S5_BIN")" \
+    -v size="$(wc -c <"$S5_BIN" | tr -d '[:space:]')" 'BEGIN { OFS="\t" }
     $1 == "release" { $2="v25.1.1" }
     $1 == "commit" { $2="1111111111111111111111111111111111111111" }
     $1 == "archive_size" { $2="123456" }
     $1 == "archive_sha256" { $2="2222222222222222222222222222222222222222222222222222222222222222" }
+    $1 == "binary_size" { $2=size }
+    $1 == "binary_sha256" { $2=sha }
     { print }
 ' "$S5_TEST_ROOT/valid-state" >"$S5_STATE"
 s5t_state_expect "a supported older installed release remains loadable" 0
 assert_eq "the state seam reports the installed release" v25.1.1 "$S5_INSTALLED_RELEASE"
+assert_eq "the state seam reports the installed binary digest" \
+    "$(t_state_get binary_sha256)" "$S5_INSTALLED_BINARY_SHA256"
+# The control for the two assertions below: with a historical digest equal to
+# the candidate's they would hold no matter what the load did.
+assert_ne "the historical digest is a different value from the candidate's" \
+    "$(t_state_get binary_sha256)" "$S5T_BIN_SHA256"
+# Loading runs before candidate selection, and the update decision is taken in
+# between, so a load that wrote the recorded digest into the candidate would
+# stand unnoticed until the next selection.
+assert_eq "loading historical state leaves the download candidate alone" \
+    "$S5T_BIN_SHA256" "$S5_ASSET_BINARY_SHA256"
 s5_service_state() { return 1; }
 s5_listener_state() { return 1; }
 s5_lock_acquire() { S5_LOCK_HELD=1; return 0; }
@@ -220,7 +238,14 @@ assert_contains "status reports the installed historical release"     'Xray vers
 assert_not_contains "status does not substitute the current candidate release"     "Xray version: $S5_XRAY_VERSION" "$T_OUT"
 s5_asset_select
 assert_eq "current candidate selection remains on the script release" Xray-linux-64.zip "$S5_ASSET_NAME"
-assert_eq "current candidate digest is not replaced by historical state" "$S5T_BIN_SHA256" "$S5_ASSET_BINARY_SHA256"
+assert_eq "selection restores the script's own candidate digest" "$S5T_BIN_SHA256" "$S5_ASSET_BINARY_SHA256"
+assert_ne "the selected candidate digest is not the historical one" \
+    "$(t_state_get binary_sha256)" "$S5_ASSET_BINARY_SHA256"
+# Hand the current binary back: every case below starts from the fixture's own
+# state, whose recorded digest is this one, and a stale older binary would make
+# each of them refuse for that reason instead of the one under test.
+cp "$S5_TEST_ROOT/asset-xray" "$S5_BIN"
+chmod 0755 "$S5_BIN"
 
 # Mode checks are independent of hashes. Every mutation uses unchanged bytes.
 for _tsmode_case in \

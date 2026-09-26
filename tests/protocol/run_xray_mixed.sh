@@ -44,6 +44,7 @@ grep -qE '^mixed_target_ipv6=(ok|unavailable)$' "$OUT/probe.log" || exit 1
 grep -q '^mixed_denied_control=ok$' "$OUT/probe.log" || exit 1
 grep -q '^mixed_denied_destination=ok$' "$OUT/probe.log" || exit 1
 grep -q '^mixed_denied_hostname=ok$' "$OUT/probe.log" || exit 1
+grep -q '^mixed_refusals=ok$' "$OUT/probe.log" || exit 1
 grep -q '^mixed_longlived=ok$' "$OUT/probe.log" || exit 1
 grep -q '^mixed_concurrency_1=ok$' "$OUT/probe.log" || exit 1
 grep -q '^mixed_concurrency_32=ok$' "$OUT/probe.log" || exit 1

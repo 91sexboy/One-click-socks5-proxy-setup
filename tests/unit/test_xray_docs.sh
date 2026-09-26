@@ -118,8 +118,18 @@ assert_contains "Alpine lifecycle pins the installed Xray digest" \
     "$alpine_text"
 assert_contains "Alpine lifecycle proves the hostile unzip was bypassed" \
     'test ! -e "$ALPINE_HOSTILE_UNZIP_LOG"' "$alpine_text"
-assert_contains "Alpine lifecycle proves the hostile PATH remained active" \
-    'test "$PATH" = "$work/hostile-bin:$original_path"' "$alpine_text"
+# An untouched log is only evidence that the installer bypassed the wrapper if the
+# wrapper would have corrupted what it extracted and would have recorded the call.
+# The positive control extracts one local member both ways and requires the bytes
+# to differ; without these four lines it could lapse into proving neither.
+assert_contains "Alpine lifecycle extracts the control member through clean Info-ZIP" \
+    '/usr/bin/unzip -p "$work/control.zip" xray >"$work/control.clean"' "$alpine_text"
+assert_contains "Alpine lifecycle extracts the same member through the hostile wrapper" \
+    '"$work/hostile-bin/unzip" -p "$work/control.zip" xray >"$work/control.hostile"' "$alpine_text"
+assert_contains "Alpine lifecycle proves the hostile wrapper records its invocations" \
+    'test -s "$ALPINE_HOSTILE_UNZIP_LOG"' "$alpine_text"
+assert_contains "Alpine lifecycle fails when the hostile wrapper corrupts nothing" \
+    'if cmp -s "$work/control.clean" "$work/control.hostile"; then' "$alpine_text"
 common_text=$(cat "$ROOT/.github/scripts/lifecycle-common.sh")
 assert_eq "the shared lifecycle fixtures are defined once" 1 \
     "$(printf '%s\n' "$common_text" | grep -c 'lifecycle_write_fixtures()')"
@@ -132,6 +142,8 @@ assert_contains "OpenRC observes the same postconditions in its root container" 
 update_assert_text=$(cat "$ROOT/.github/scripts/lifecycle-update-assert.sh")
 assert_contains "shared update assertion requires the config owner and mode" \
     'root:xray-socks5 640' "$update_assert_text"
+assert_contains "shared update assertion requires the install directory owner and mode" \
+    'root:root 755' "$update_assert_text"
 assert_contains "native assertion controls retain their behavioral regression" \
     'lifecycle_control_regression.py' "$(cat "$ROOT/tests/unit/test_xray_lifecycle_assert.sh")"
 assert_contains "update diagnostics filter both known credential generations" \

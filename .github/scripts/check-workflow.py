@@ -137,9 +137,12 @@ def check(workflow):
                            'sh /src/.github/scripts/alpine-lifecycle.sh')
     require(lifecycle_step.get('env', {}).get('ALPINE_IMAGE') == '${{ matrix.image }}' and
             lifecycle_step.get('env', {}).get('ALPINE_HOSTILE_UNZIP') ==
-            '${{ matrix.hostile_unzip }}' and '"$ALPINE_IMAGE"' in body(lifecycle_step) and
-            '-e ALPINE_HOSTILE_UNZIP="$ALPINE_HOSTILE_UNZIP"' in body(lifecycle_step),
+            '${{ matrix.hostile_unzip }}' and '"$ALPINE_IMAGE"' in body(lifecycle_step),
             'openrc-integration: matrix bindings changed')
+    # Its own message: a job-level binding the container never receives leaves the
+    # hostile row running the ordinary gate, and that must not read as a binding.
+    require('-e ALPINE_HOSTILE_UNZIP="$ALPINE_HOSTILE_UNZIP"' in body(lifecycle_step),
+            'openrc-integration: hostile unzip flag not forwarded to the container')
     require('docker run --rm ' in body(lifecycle_step),
             'openrc-integration: native container entrypoint missing')
     control_images = matrix(jobs['openrc-assertion-controls'], 'image')

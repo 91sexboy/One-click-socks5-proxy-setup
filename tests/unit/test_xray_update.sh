@@ -793,6 +793,51 @@ test_older_release_update() {
     t_xray_assert_healthy
 }
 
+# The opposite branch of test_older_release_update: the recorded pins already
+# equal the script's, so the update downloads nothing and re-checks the installed
+# executable instead. SPEC 7 requires that re-check to fail closed on an external
+# replacement, and it is the only thing standing between a replaced binary and a
+# restarted service on this path.
+test_binary_ready_gate() {
+    t_xray_fixture 23999
+    t_xray_install
+    t_run s5_binary_ready
+    assert_eq "a verified installation is ready without a download" 0 "$T_STATUS"
+    chmod 0644 "$S5_BIN"
+    t_run s5_binary_ready
+    assert_ne "a non-executable installed binary is not ready" 0 "$T_STATUS"
+    chmod 0755 "$S5_BIN"
+    rm -f "$S5_BIN"
+    # Matching bytes behind a symlink are still not this installation's binary.
+    ln -s "$S5_TEST_ROOT/asset-xray" "$S5_BIN"
+    t_run s5_binary_ready
+    assert_ne "a symlinked installed binary is not ready" 0 "$T_STATUS"
+    rm -f "$S5_BIN"
+    cp "$S5_TEST_ROOT/asset-xray" "$S5_BIN"
+    chmod 0755 "$S5_BIN"
+
+    s5_download_engine() { : >"$S5_TEST_ROOT/pinned-download"; return 0; }
+    # The replacement lands in the operator's prompt window: after the state load
+    # that verified this binary, before the branch that decides to keep it.
+    s5_prompt_password() { printf 'replaced\n' >>"$S5_BIN"; return 0; }
+    _brg_cfg=$(t_sha256 "$S5_CFG")
+    _brg_state=$(t_sha256 "$S5_STATE")
+    s5_install_update >"$S5_TEST_ROOT/binary-ready.log" 2>&1
+    _brg_status=$?
+    assert_ne "an externally replaced binary fails the update" 0 "$_brg_status"
+    assert_contains "the refusal names the binary" \
+        'Xray asset verification failed: binary.' "$(cat "$S5_TEST_ROOT/binary-ready.log")"
+    assert_file_absent "matching pins download nothing" "$S5_TEST_ROOT/pinned-download"
+    assert_eq "the refusal leaves the published config alone" \
+        "$_brg_cfg" "$(t_sha256 "$S5_CFG")"
+    assert_eq "the refusal leaves the published state alone" \
+        "$_brg_state" "$(t_sha256 "$S5_STATE")"
+    assert_eq "the refusal never stops the running listener" 23999 \
+        "$(cat "$S5_TEST_ROOT/svc_active")"
+    s5_cleanup
+    assert_file_absent "the refusal leaves no transaction behind" "$S5_TXNDIR"
+}
+
 test_older_release_download_failure() {
     t_xray_fixture 23999
     t_xray_install
@@ -1084,7 +1129,7 @@ test_update_commit_cleanup_failure() {
     done
 }
 
-SCENARIOS='uninstall_confirmation uninstall_messages family update owned_port rejected_candidate listener_failure rejected_command publish_signal config_symlink uninstall_leftovers uninstall_residue verifier_cleanup txn_mkdir_failure txn_copy_failure txn_chmod_failure stop_failure wait_stopped_failure publication_failure new_start_failure dataplane_failure state_write_failure rollback_restart_failure restore_failure uninstall_unknown rollback_exit uninstall_group_residue uninstall_resume uninstall_signal_resume uninstall_resume_drift uninstall_phase_gap_resume uninstall_final_window older_release_operations older_release_update older_release_download_failure transaction_contract_drift rollback_backup_drift uninstall_directory_drift transaction_all_commands transaction_unknown_residue sha256_binary_update_failure sha256_config_update_failure update_commit_cleanup_failure'
+SCENARIOS='uninstall_confirmation uninstall_messages family update owned_port rejected_candidate listener_failure rejected_command publish_signal config_symlink uninstall_leftovers uninstall_residue verifier_cleanup txn_mkdir_failure txn_copy_failure txn_chmod_failure stop_failure wait_stopped_failure publication_failure new_start_failure dataplane_failure state_write_failure rollback_restart_failure restore_failure uninstall_unknown rollback_exit uninstall_group_residue uninstall_resume uninstall_signal_resume uninstall_resume_drift uninstall_phase_gap_resume uninstall_final_window older_release_operations older_release_update binary_ready_gate older_release_download_failure transaction_contract_drift rollback_backup_drift uninstall_directory_drift transaction_all_commands transaction_unknown_residue sha256_binary_update_failure sha256_config_update_failure update_commit_cleanup_failure'
 if [ "$#" -eq 0 ]; then
     # Expand the fixed scenario words into the default argument list.
     # shellcheck disable=SC2086

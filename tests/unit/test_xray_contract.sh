@@ -115,8 +115,10 @@ unset -f od
 S5_PORT=25000
 printf '25000\n' >"$S5_TEST_ROOT/occupied"
 printf '\n' >"$S5_TEST_ROOT/port.blank"
-s5_prompt_port <"$S5_TEST_ROOT/port.blank" >/dev/null 2>&1
+s5_prompt_port <"$S5_TEST_ROOT/port.blank" 2>"$S5_TEST_ROOT/port.out" >/dev/null
 assert_eq "a blank port on update keeps the owned port" 25000 "$S5_PORT"
+assert_not_contains "a verified recorded port is kept without a diagnosis" \
+    'could not verify' "$(cat "$S5_TEST_ROOT/port.out")"
 # A blank answer with no current port (a fresh install) still generates one.
 S5_PORT=''
 s5_prompt_port <"$S5_TEST_ROOT/port.blank" >/dev/null 2>&1
@@ -124,6 +126,20 @@ s5_valid_port "$S5_PORT"; _rpfresh=$?
 assert_eq "a blank port on a fresh install still generates a valid port" 0 "$_rpfresh"
 assert_ne "a fresh install does not reuse the update's owned port" 25000 "$S5_PORT"
 rm -f "$S5_TEST_ROOT/occupied"
+
+# The other blank-answer outcome on update: nothing answers on the recorded port,
+# so ownership cannot be verified. Rotating to a random port there would move the
+# operator's listener without a word, so the port is named and the question is
+# asked again -- and the loop has to accept the explicit answer that follows.
+S5_PORT=25000
+printf '\n24500\n' >"$S5_TEST_ROOT/port.unverified"
+s5_prompt_port <"$S5_TEST_ROOT/port.unverified" 2>"$S5_TEST_ROOT/port.out" >/dev/null
+_rpunv=$?
+assert_eq "an unverified recorded port re-asks instead of failing" 0 "$_rpunv"
+assert_contains "the unverified recorded port is named" \
+    'could not verify that port 25000 belongs to this installation' \
+    "$(cat "$S5_TEST_ROOT/port.out")"
+assert_eq "the explicit answer after the refusal is taken" 24500 "$S5_PORT"
 
 S5_PORT=23456
 S5_USERNAME=alice

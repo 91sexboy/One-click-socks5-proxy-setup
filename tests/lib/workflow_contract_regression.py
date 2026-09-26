@@ -13,6 +13,13 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 
+# Dropping the -e forwarding has to keep the command's physical shape: collapsed
+# onto one line the entrypoint is no longer a standalone line, so the oracle
+# rejects it for a missing entrypoint and never reaches the forwarding clause.
+UNFORWARDED_RUN = ('docker run --rm --privileged -v "$PWD:/src" -w /src \\\n'
+                   '  "$ALPINE_IMAGE" \\\n'
+                   '  sh /src/.github/scripts/alpine-lifecycle.sh\n')
+
 
 class WorkflowContractTests(unittest.TestCase):
     def setUp(self):
@@ -52,7 +59,16 @@ class WorkflowContractTests(unittest.TestCase):
             'memory-env': lambda jobs: next(step for step in jobs['memory-report']['steps'] if step.get('name') == 'Measure Xray process and cgroup memory')['env'].update({'XRAY_ARCH': 'amd64'}),
             'container-env': lambda jobs: next(step for step in jobs['openrc-integration']['steps'] if 'run' in step)['env'].update({'ALPINE_IMAGE': 'alpine:3.20'}),
             'hostile-container-env': lambda jobs: next(step for step in jobs['openrc-integration']['steps'] if 'run' in step)['env'].pop('ALPINE_HOSTILE_UNZIP'),
-            'hostile-container-forward': lambda jobs: next(step for step in jobs['openrc-integration']['steps'] if 'run' in step).update({'run': 'docker run --rm --privileged -v "$PWD:/src" -w /src "$ALPINE_IMAGE" sh /src/.github/scripts/alpine-lifecycle.sh'}),
+            'hostile-container-forward': lambda jobs: next(step for step in jobs['openrc-integration']['steps'] if 'run' in step).update({'run': UNFORWARDED_RUN}),
+        }
+        # A mutation rejected for an unrelated reason proves nothing about the
+        # clause it targets, which is how a collapsed container command passed
+        # here while never reaching the forwarding it was written to falsify.
+        messages = {
+            'lifecycle-hostile-flag': 'openrc-integration: required Alpine hostile-unzip rows changed',
+            'hostile-container-env': 'openrc-integration: matrix bindings changed',
+            'hostile-container-forward':
+                'openrc-integration: hostile unzip flag not forwarded to the container',
         }
         for label, mutate in mutations.items():
             with self.subTest(mutation=label):
@@ -60,7 +76,7 @@ class WorkflowContractTests(unittest.TestCase):
                 mutate(changed['jobs'])
                 result = self.run_oracle(changed)
                 self.assertNotEqual(result.returncode, 0, label)
-                self.assertIn('workflow contract:', result.stderr)
+                self.assertIn('workflow contract: ' + messages.get(label, ''), result.stderr)
 
     def test_textual_noop_entrypoints_are_rejected(self):
         mutations = {

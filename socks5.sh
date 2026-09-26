@@ -40,6 +40,7 @@ S5_SERVICE_TOUCHED=0
 S5_CREATED_USER=0
 S5_CREATED_GROUP=0
 S5_CREATED_PREFIX=0
+S5_PREFIX_PRIVATE=0
 S5_CREATED_CONFDIR=0
 S5_CREATED_STATEDIR=0
 S5_CREATED_TRANSACTION=0
@@ -182,6 +183,7 @@ s5_msg() {
     input.port) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '端口 [回车 = 随机 20000-60000]：' ;; en) printf 'Port [Enter = random 20000-60000]: ' ;; esac ;;
     input.port.invalid) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '端口必须是 1024-65535 的十进制数字。' ;; en) printf 'port must be a decimal number from 1024 to 65535.' ;; esac ;;
     input.port.used) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '端口 %s 已被占用。' "$1" ;; en) printf 'port %s is already in use.' "$1" ;; esac ;;
+    input.port.unverified) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法确认端口 %s 属于本安装；请明确输入端口。' "$1" ;; en) printf 'could not verify that port %s belongs to this installation; enter a port explicitly.' "$1" ;; esac ;;
     input.username) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '账户名 [回车 = 随机]：' ;; en) printf 'Username [Enter = random]: ' ;; esac ;;
     input.username.invalid) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '账户名必须是 3-32 个字母、数字、下划线或短横线。' ;; en) printf 'username must be 3-32 letters, digits, underscores or hyphens.' ;; esac ;;
     input.password) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '密码（输入时可见）[回车 = 随机]：' ;; en) printf 'Password (visible while typed) [Enter = random]: ' ;; esac ;;
@@ -593,18 +595,24 @@ s5_port_owned_by_service() {
 
 s5_prompt_port() {
     # On update S5_PORT holds the port the running service owns; a blank answer
-    # keeps it (verified through the listener, not assumed) rather than rotating
-    # to a random port. On a fresh install S5_PORT is empty, so a blank answer
-    # generates one as before.
+    # keeps it only once the listener verifies that ownership, and otherwise
+    # re-asks rather than rotating the operator's port behind their back. On a
+    # fresh install S5_PORT is empty, so a blank answer generates one as before.
     _spp_current=${S5_PORT:-}
     while :; do
         s5_msg_ask input.port || return 1
         _spp=''
         IFS= read -r _spp || return 1
         if [ -z "$_spp" ]; then
-            if [ -n "$_spp_current" ] && s5_port_owned_by_service "$_spp_current"; then
-                S5_PORT=$_spp_current
-                return 0
+            if [ -n "$_spp_current" ]; then
+                if s5_port_owned_by_service "$_spp_current"; then
+                    S5_PORT=$_spp_current
+                    return 0
+                fi
+                # Falling through to a random port moved the operator's listener
+                # without a word; an unverified port is reported and re-asked.
+                s5_msg_err input.port.unverified "$_spp_current"
+                continue
             fi
             _spp=$(s5_random_port) || return 1
         fi
@@ -695,9 +703,7 @@ s5_mkdir_private() {
     if [ -L "$1" ]; then return 1; fi
     _smpriv_parent=${1%/*}
     [ "$_smpriv_parent" != "$1" ] || _smpriv_parent=.
-    if [ "$_smpriv_parent" != "$1" ]; then
-        s5_mkdir_parents "$_smpriv_parent" || return 1
-    fi
+    s5_mkdir_parents "$_smpriv_parent" || return 1
     if [ ! -d "$1" ]; then
         mkdir "$1" || return 1
         chmod 0700 "$1" || return 1
@@ -929,9 +935,17 @@ s5_tmp_base() {
 # stripped (the same digit-only sanitiser used elsewhere for wc output).
 s5_bytecount() { wc -c <"$1" | tr -cd '0-9'; }
 
-# One internal seam lets tests inject digest-command failures under every shell,
-# including BusyBox shells that resolve applets before PATH.
-s5_sha256_command() { sha256sum "$1"; }
+# Both HTTPS requests use the distribution package at its supported path. The
+# narrow seam keeps focused tests able to observe the complete transport argv.
+s5_curl_command() { /usr/bin/curl "$@"; }
+
+# The digest is the authoritative acceptance for every pinned value, so an
+# absolute command seam keeps a same-named PATH wrapper from making any file
+# match any pin; every supported family ships the tool at this path, BusyBox
+# applet symlink included. One line keeps tests able to inject digest-command
+# failures under every shell, including BusyBox shells that resolve applets
+# before PATH.
+s5_sha256_command() { /usr/bin/sha256sum "$1"; }
 
 s5_sha256() {
     _ss_output=$(s5_sha256_command "$1" 2>/dev/null) || return 1
@@ -964,13 +978,14 @@ s5_fetch_archive() {
         cp "$S5_TEST_ASSET_PATH" "$1" || return 1
     else
         s5_msg_print asset.download "$S5_ASSET_NAME" >&2
-        # --proto/--proto-redir pin HTTPS, --max-time caps the transfer, and
-        # --max-filesize aborts mid-stream only when the response advertises a
+        # -q comes first so no user or system curlrc can add an option to this
+        # request; --proto/--proto-redir pin HTTPS, --max-time caps the transfer,
+        # and --max-filesize aborts mid-stream only when the response advertises a
         # Content-Length over the limit -- a chunked reply with no length escapes it.
         # The exact-size and SHA-256 checks below are therefore the authoritative
         # acceptance: they reject anything that is not the pinned artifact byte for
         # byte, and the size check also bounds what a length-less reply left on disk.
-        curl -fsSL --proto '=https' --proto-redir '=https' \
+        s5_curl_command -q -fsSL --proto '=https' --proto-redir '=https' \
             --max-time 120 --max-filesize "$((S5_ASSET_SIZE + 1))" \
             -o "$1" "$S5_XRAY_BASE/$S5_ASSET_NAME" || {
             s5_msg_err asset.invalid download
@@ -996,6 +1011,19 @@ s5_unzip_command() { /usr/bin/unzip "$@"; }
 s5_unzip() (
     unset UNZIP UNZIPOPT ZIPINFO ZIPINFOOPT
     s5_unzip_command "$@"
+)
+
+# The same packages install file(1) here. An absolute command seam prevents
+# aliases, functions and PATH wrappers from deciding what type the extracted
+# binary is while remaining replaceable by focused tests.
+s5_file_type_command() { /usr/bin/file -b "$@"; }
+
+# file reads MAGIC as its magic-database override, and a database that matches
+# nothing reports the pinned executable as data. A subshell gives the external
+# process a clean environment and preserves every caller value.
+s5_file_type() (
+    unset MAGIC
+    s5_file_type_command "$@"
 )
 
 s5_verify_archive_members() {
@@ -1024,11 +1052,11 @@ s5_extract_binary() {
     # $1: the verified archive. $2: scratch path for the extracted xray. Accept the
     # binary only at the pinned size and SHA-256 and an arch-matching ELF type, then
     # install it atomically at $S5_BIN and record its digest.
-    s5_unzip -p "$1" xray >"$2" 2>/dev/null || return 1
+    s5_unzip -p "$1" xray >"$2" 2>/dev/null || { s5_msg_err asset.invalid extract; return 1; }
     [ "$(s5_bytecount "$2")" = "$S5_ASSET_BINARY_SIZE" ] || { s5_msg_err asset.invalid binary-size; return 1; }
     [ "$(s5_sha256 "$2")" = "$S5_ASSET_BINARY_SHA256" ] || { s5_msg_err asset.invalid binary-sha256; return 1; }
     chmod 0755 "$2" || return 1
-    _seb_file=$(file -b "$2" 2>/dev/null) || return 1
+    _seb_file=$(s5_file_type "$2" 2>/dev/null) || return 1
     case "$S5_ARCHNAME:$_seb_file" in
     amd64:*'ELF 64-bit LSB executable, x86-64'*) ;;
     arm64:*'ELF 64-bit LSB executable, ARM aarch64'*) ;;
@@ -1047,15 +1075,42 @@ s5_extract_binary() {
     [ "$S5_BINARY_SHA256" = "$S5_ASSET_BINARY_SHA256" ]
 }
 
+s5_stage_engine() {
+    [ -n "$S5_WORKDIR" ] || S5_WORKDIR=$(mktemp -d "$(s5_tmp_base)/xray-socks5-download.XXXXXX") || return 1
+    _ssezip=$S5_WORKDIR/$S5_ASSET_NAME
+    s5_fetch_archive "$_ssezip" || return 1
+    s5_verify_archive_members "$_ssezip" "$S5_WORKDIR/members" || return 1
+    s5_extract_binary "$_ssezip" "$S5_WORKDIR/xray" || return 1
+}
+
+s5_release_prefix_private() {
+    [ "$S5_PREFIX_PRIVATE" = 1 ] || return 0
+    [ -d "$S5_PREFIX" ] && [ ! -L "$S5_PREFIX" ] || return 1
+    chmod 0755 "$S5_PREFIX" || return 1
+    S5_PREFIX_PRIVATE=0
+}
+
 s5_download_engine() {
     s5_asset_select || return 1
     if [ ! -d "$S5_PREFIX" ]; then S5_CREATED_PREFIX=1; fi
-    s5_mkdir_private "$S5_PREFIX" || return 1
-    [ -n "$S5_WORKDIR" ] || S5_WORKDIR=$(mktemp -d "$(s5_tmp_base)/xray-socks5-download.XXXXXX") || return 1
-    _sdezip=$S5_WORKDIR/$S5_ASSET_NAME
-    s5_fetch_archive "$_sdezip" || return 1
-    s5_verify_archive_members "$_sdezip" "$S5_WORKDIR/members" || return 1
-    s5_extract_binary "$_sdezip" "$S5_WORKDIR/xray" || return 1
+    # The private mode shields the staging window, where the partially written
+    # .xray.XXXXXX temporary lives. Publication must hand back the documented 0755
+    # on failure as well as success: an update reuses an existing directory, and
+    # leaving it private locks the service account out of its own installation.
+    # Staging is its own function so no early return can skip the restore.
+    # Arm cleanup before changing the mode: a signal between chmod and the next
+    # shell statement must still know that an existing prefix needs restoring.
+    S5_PREFIX_PRIVATE=1
+    if ! s5_mkdir_private "$S5_PREFIX"; then
+        # A normal failure returned without opening the window; only an
+        # asynchronous signal inside the function needs cleanup to close it.
+        S5_PREFIX_PRIVATE=0
+        return 1
+    fi
+    s5_stage_engine
+    _sde_status=$?
+    s5_release_prefix_private || return 1
+    return "$_sde_status"
 }
 
 s5_binary_ready() {
@@ -1650,15 +1705,25 @@ def http_status(secret):
         return data.split(b"\r\n", 1)[0]
     finally: conn.close()
 
+def http_status_code(status):
+    fields = status.split(b" ", 2)
+    if (len(fields) < 2 or fields[0] not in (b"HTTP/1.0", b"HTTP/1.1") or
+            len(fields[1]) != 3 or not fields[1].isdigit()):
+        raise RuntimeError("http auth response")
+    return fields[1]
+
 def http_auth_discriminates():
-    """A wrong credential has to be refused with 407 and the real one must not be.
+    """Wrong credentials receive 407; real credentials receive an HTTP response.
 
     The destination is inside the boundary, so a 200 is neither expected nor
-    required; what the differential rules out is a proxy that answers the same way
-    to both, which an empty reply from a broken inbound would otherwise pass.
+    required. The positive side still has to be a complete HTTP status line: an
+    empty or malformed reply from a broken inbound is not evidence that it
+    accepted the real credential.
     """
-    if b"407" not in http_status(password + "x"): raise RuntimeError("http bad auth accepted")
-    if b"407" in http_status(password): raise RuntimeError("http auth")
+    if http_status_code(http_status(password + "x")) != b"407":
+        raise RuntimeError("http bad auth accepted")
+    if http_status_code(http_status(password)) == b"407":
+        raise RuntimeError("http auth")
 
 t = threading.Thread(target=target, daemon=True)
 t.start()
@@ -1959,6 +2024,12 @@ s5_cleanup() {
     S5_IN_CLEANUP=1
     trap '' HUP INT TERM
     _sclstatus=0
+    # A handled signal can enter cleanup from inside the staging function, before
+    # s5_download_engine regains control. Restore an existing installation here;
+    # a fresh prefix stays private until its partial files and directory are removed.
+    if [ "$S5_CREATED_PREFIX" != 1 ] && ! s5_release_prefix_private; then
+        _sclstatus=1
+    fi
     if [ "$S5_INSTALL_COMPLETE" != 1 ] && [ "$S5_SERVICE_STARTED" = 1 ]; then
         if ! s5_svc stop || ! s5_wait_stopped; then
             s5_msg_err cleanup.service
@@ -2012,7 +2083,10 @@ s5_cleanup() {
         s5_cleanup_own_temps "$S5_PREFIX" || true
         if [ "$S5_CREATED_CONFDIR" = 1 ]; then rmdir "$S5_SYSCONFDIR" 2>/dev/null || true; fi
         if [ "$S5_CREATED_STATEDIR" = 1 ]; then rmdir "$S5_STATEDIR" 2>/dev/null || true; fi
-        if [ "$S5_CREATED_PREFIX" = 1 ]; then rmdir "$S5_PREFIX" 2>/dev/null || true; fi
+        if [ "$S5_CREATED_PREFIX" = 1 ]; then
+            rmdir "$S5_PREFIX" 2>/dev/null || true
+            S5_PREFIX_PRIVATE=0
+        fi
     fi
     # The verifier's credential temp is recorded in S5_VERIFY_TEMP. On the update
     # path it lands in /var/tmp with no S5_WORKDIR to sweep it, so release it here
@@ -2065,11 +2139,13 @@ s5_runtime_packages() {
     case "${1:-}" in install | update) ;; *) return 0 ;; esac
     [ "$S5_INIT" = openrc ] || return 0
     _spkgs_list=''
-    command -v curl >/dev/null 2>&1 || _spkgs_list="$_spkgs_list curl ca-certificates"
+    [ -x /usr/bin/curl ] || _spkgs_list="$_spkgs_list curl ca-certificates"
     # BusyBox provides a stripped unzip without -Z, so a present unzip proves
     # nothing about archive inspection; Info-ZIP is always requested.
     _spkgs_list="$_spkgs_list unzip"
-    command -v file >/dev/null 2>&1 || _spkgs_list="$_spkgs_list file"
+    # file(1) is invoked by absolute path, so provisioning asks about that path
+    # too: a copy elsewhere on PATH would skip the package the precheck needs.
+    [ -x /usr/bin/file ] || _spkgs_list="$_spkgs_list file"
     command -v python3 >/dev/null 2>&1 || _spkgs_list="$_spkgs_list python3"
     command -v ss >/dev/null 2>&1 || _spkgs_list="$_spkgs_list iproute2"
     printf '%s' "${_spkgs_list# }"
@@ -2131,13 +2207,17 @@ s5_precheck() {
         ;;
     esac
     s5_install_runtime_dependencies "$_spcmode" || return 1
-    s5_require_commands awk sed grep tr tail head id getent mkdir rmdir rm mv cp cat printf stat sha256sum mktemp ln sleep wc chmod || return 1
+    s5_require_commands awk sed grep tr tail head id getent mkdir rmdir rm mv cp cat printf stat mktemp ln sleep wc chmod || return 1
+    # Every mode reads a recorded digest, so the pinned digest tool is required
+    # here rather than per mode, and by absolute path: a same-named PATH wrapper
+    # would otherwise decide what counts as the pinned artifact.
+    [ -x /usr/bin/sha256sum ] || { s5_msg_err detect.commands sha256sum; return 1; }
     case "$S5_INIT:$_spcmode" in
     openrc:install|openrc:update)
-        s5_require_commands addgroup adduser delgroup deluser rc-service rc-update rc-status logger curl file od chown python3 ss || return 1
+        s5_require_commands addgroup adduser delgroup deluser rc-service rc-update rc-status logger od chown python3 ss || return 1
         ;;
     systemd:install|systemd:update)
-        s5_require_commands groupadd groupdel useradd userdel systemctl curl file od chown python3 || return 1
+        s5_require_commands groupadd groupdel useradd userdel systemctl od chown python3 || return 1
         command -v ss >/dev/null 2>&1 || { s5_msg_err detect.commands ss; return 1; }
         ;;
     openrc:status)
@@ -2162,17 +2242,25 @@ s5_precheck() {
         ;;
     *) s5_msg_err detect.init; return 1 ;;
     esac
-    # The official packages on every supported family install Info-ZIP at this
-    # path. Require and probe that executable so a same-named PATH wrapper cannot
-    # alter the verified archive after download.
+    # The official packages on every supported family install curl, Info-ZIP and
+    # file(1) at these paths. Require and probe those executables so a same-named
+    # PATH wrapper cannot alter the download, archive extraction or binary type.
     case "$_spcmode" in
     install | update)
+        [ -x /usr/bin/curl ] || {
+            s5_msg_err detect.commands curl
+            return 1
+        }
         [ -x /usr/bin/unzip ] || {
             s5_msg_err detect.commands unzip
             return 1
         }
         s5_unzip_lists_members || {
             s5_msg_err detect.unzip
+            return 1
+        }
+        [ -x /usr/bin/file ] || {
+            s5_msg_err detect.commands file
             return 1
         }
         ;;
@@ -2447,7 +2535,6 @@ STOPPING
     fi
     if ! s5_svc start; then
         s5_update_rollback "$_sioldcfg" "$_sioldstate"
-        rm -f "$_siinc"
         return 1
     fi
     S5_SERVICE_STARTED=1
@@ -2576,12 +2663,12 @@ s5_read_public_ipv4() {
     if [ "${S5_TEST_MODE:-0}" = 1 ] && [ -n "${S5_TEST_ADDR_PATH:-}" ]; then
         cp "$S5_TEST_ADDR_PATH" "$_sripv4_file" || { rm -f "$_sripv4_file"; _sripv4_file=''; return 1; }
     else
-        if ! command -v curl >/dev/null 2>&1; then
+        if [ ! -x /usr/bin/curl ]; then
             rm -f "$_sripv4_file"
             _sripv4_file=''
             return 1
         fi
-        if ! curl -q -4 --noproxy '*' --proto '=https' --fail --silent \
+        if ! s5_curl_command -q -4 --noproxy '*' --proto '=https' --fail --silent \
             --connect-timeout 3 --max-time 5 --max-filesize 17 \
             --output "$_sripv4_file" "$S5_ADDR_ENDPOINT" </dev/null 2>/dev/null; then
             rm -f "$_sripv4_file"

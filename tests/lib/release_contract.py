@@ -40,6 +40,14 @@ SC_SHA = '6c881ab0698e4e6ea235245f22832860544f17ba386442fe7e9d629f8cbedf87'
 FILES = ('socks5.sh', '.github/workflows/ci.yml',
          'tests/protocol/start_engine.sh', 'tests/unit/test_xray_asset.sh')
 
+# The amd64 binary pins are mirrored outside FILES as well: both native lifecycle
+# gates re-check the installed bytes from outside the installer, and the docs test
+# requires that they do. Nothing derives those literals, so a bump that misses one
+# leaves stale bytes that fail as a lifecycle mystery rather than a pin mismatch.
+PIN_MIRRORS = ('.github/scripts/alpine-lifecycle.sh',
+               '.github/scripts/systemd-lifecycle.sh',
+               'tests/unit/test_xray_docs.sh')
+
 
 class ContractError(ValueError):
     pass
@@ -90,7 +98,7 @@ printf '%s\\n' "$S5_XRAY_VERSION" "$S5_XRAY_COMMIT" "$S5_XRAY_BASE" \\
     "$S5_ASSET_NAME" "$S5_ASSET_SIZE" "$S5_ASSET_SHA256" \\
     "$S5_ASSET_BINARY_SIZE" "$S5_ASSET_BINARY_SHA256"
 : >"$S5_TEST_ROOT/curl.calls"
-curl() { printf '%s\\n' curl-call "$@" >>"$S5_TEST_ROOT/curl.calls"; return 1; }
+s5_curl_command() { printf '%s\\n' curl-call "$@" >>"$S5_TEST_ROOT/curl.calls"; return 1; }
 _fetch_status=0
 s5_fetch_archive "$S5_TEST_ROOT/archive" >/dev/null 2>&1 || _fetch_status=$?
 printf 'fetch-status=%s\\n' "$_fetch_status"
@@ -107,7 +115,9 @@ cat "$S5_TEST_ROOT/curl.calls"
                 env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 timeout=15, check=False)
             expected = [VERSION, COMMIT, BASE + DISTRIBUTION_TAG] + list(pins.values())
-            expected += ['fetch-status=1', 'curl-call', '-fsSL', '--proto', '=https',
+            # -q leads, so no user or system curlrc can add an option to the
+            # download; its position is part of the contract, not a detail.
+            expected += ['fetch-status=1', 'curl-call', '-q', '-fsSL', '--proto', '=https',
                          '--proto-redir', '=https', '--max-time', '120', '--max-filesize',
                          str(int(pins['size']) + 1), '-o', directory + '/archive',
                          BASE + DISTRIBUTION_TAG + '/' + pins['asset']]
@@ -149,10 +159,25 @@ def check_launcher(text):
     block = one(r'^case "\$ARCH" in\n(.*?)^esac$', text, 'launcher architecture case')
     for arch, pins in PINS.items():
         body = one(r'^' + arch + r'\)\n(.*?)^    ;;$', block, 'launcher ' + arch)
-        require(assignments(body, ['ASSET', 'SIZE', 'SHA']) == {
-            'ASSET': pins['asset'], 'SIZE': pins['size'], 'SHA': pins['sha']},
+        require(assignments(body, ['ASSET', 'SIZE', 'SHA', 'BINARY_SIZE', 'BINARY_SHA']) == {
+            'ASSET': pins['asset'], 'SIZE': pins['size'], 'SHA': pins['sha'],
+            'BINARY_SIZE': pins['binary_size'], 'BINARY_SHA': pins['binary_sha']},
             'launcher ' + arch + ': metadata differs')
     release_url(text, '$ASSET')
+
+
+def check_pin_mirrors(root):
+    # Both gates run on amd64 only, so that architecture's binary pins are the
+    # whole mirrored set. Every 64-hex token in these files must be a current
+    # release digest as well, or a bump that leaves one behind reads as correct.
+    known = {pins[key] for pins in PINS.values() for key in ('sha', 'binary_sha')}
+    for name in PIN_MIRRORS:
+        text = (root / name).read_text(encoding='utf-8')
+        for key in ('binary_size', 'binary_sha'):
+            require(PINS['amd64'][key] in text,
+                    name + ': amd64 ' + key + ' is missing or stale')
+        for token in re.findall('[0-9a-fA-F]{64}', text):
+            require(token in known, name + ': unrecognized digest ' + token)
 
 
 def check_asset_expectations(text):
@@ -189,6 +214,7 @@ def check(root, shell='sh'):
             require(re.fullmatch('[1-9][0-9]*', pins[key]), 'oracle size format')
     require(re.fullmatch('[0-9a-f]{40}', COMMIT), 'oracle revision format')
     require(re.fullmatch('[0-9a-f]{64}', SC_SHA), 'oracle ShellCheck digest format')
+    check_pin_mirrors(root)
     check_installer(root, shell)
     check_workflow(texts[FILES[1]])
     check_launcher(texts[FILES[2]])
@@ -201,7 +227,8 @@ def main():
     except (ContractError, OSError, ValueError, subprocess.SubprocessError) as error:
         print('release contract: ' + str(error), file=sys.stderr)
         return 1
-    print('release contract: installer, workflow, launcher and asset expectations verified')
+    print('release contract: installer, workflow, launcher, asset expectations'
+          ' and mirrored pins verified')
     return 0
 
 

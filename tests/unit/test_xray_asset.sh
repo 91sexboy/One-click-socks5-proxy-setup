@@ -64,10 +64,13 @@ done
 # the s5_asset_select override below republishes those two from the fixture
 # itself; S5T_SIZE_OVERRIDE and S5T_SHA_OVERRIDE put a wrong one back to prove
 # the hook did not turn the gate into a bypass.
+# Production reaches both tools only at their absolute paths, so a PATH-probed
+# `file` would let this file run in an environment production itself refuses.
 if ! command -v python3 >/dev/null 2>&1 ||
     [ ! -x /usr/bin/unzip ] ||
-    ! command -v file >/dev/null 2>&1; then
-    t_skip "crafted Xray archives are inspected" "python3, /usr/bin/unzip or file is unavailable"
+    [ ! -x /usr/bin/file ]; then
+    t_skip "crafted Xray archives are inspected" \
+        "python3, /usr/bin/unzip or /usr/bin/file is unavailable"
     t_summary
 fi
 
@@ -153,6 +156,79 @@ assert_file_absent "hostile PATH and function unzips are never invoked" \
     "$S5_TEST_ROOT/hostile-unzip.calls"
 PATH=$_sapath
 export PATH
+# Both doubles end with their case. Restoring PATH does not remove a shell
+# function, and leaving it defined would put a hostile unzip under every case
+# below, where nothing reads hostile-unzip.calls again.
+unset -f unzip
+
+# The tools that acquire and judge the accepted member are pinned for the same
+# reason as the extractor. PATH executables or shell functions can otherwise
+# replace the download or make arbitrary bytes match an arbitrary pin; file(1)
+# also reads MAGIC as a database override and reports the real member as data.
+mkdir -p "$S5_TEST_ROOT/hostile-tools"
+# Freeze the fixture's archive metadata before PATH becomes hostile. The fixture
+# selector otherwise uses the test helper's PATH-resolved sha256sum to build its
+# independent expected value, which would test the harness instead of production.
+S5T_SIZE_OVERRIDE=$(wc -c <"$S5T_ASSETS/good.zip" | tr -d '[:space:]')
+S5T_SHA_OVERRIDE=$(/usr/bin/sha256sum "$S5T_ASSETS/good.zip" | awk '{print $1}')
+cat >"$S5_TEST_ROOT/hostile-tools/curl" <<'HOSTILE_CURL'
+#!/bin/sh
+printf 'path-curl-called\n' >>"$S5_TEST_ROOT/hostile-curl.calls"
+exit 90
+HOSTILE_CURL
+cat >"$S5_TEST_ROOT/hostile-tools/sha256sum" <<'HOSTILE_SHA'
+#!/bin/sh
+printf 'path-sha-called\n' >>"$S5_TEST_ROOT/hostile-sha.calls"
+printf '%064d  %s\n' 0 "$1"
+HOSTILE_SHA
+cat >"$S5_TEST_ROOT/hostile-tools/file" <<'HOSTILE_FILE'
+#!/bin/sh
+printf 'path-file-called\n' >>"$S5_TEST_ROOT/hostile-file.calls"
+printf '%s\n' 'ELF 64-bit LSB executable, ARM aarch64'
+HOSTILE_FILE
+chmod 0755 "$S5_TEST_ROOT/hostile-tools/curl" \
+    "$S5_TEST_ROOT/hostile-tools/sha256sum" "$S5_TEST_ROOT/hostile-tools/file"
+PATH=$S5_TEST_ROOT/hostile-tools:$PATH
+export PATH
+curl() {
+    printf 'function-curl-called\n' >>"$S5_TEST_ROOT/hostile-curl.calls"
+    return 90
+}
+sha256sum() {
+    printf 'function-sha-called\n' >>"$S5_TEST_ROOT/hostile-sha.calls"
+    printf '%064d  %s\n' 0 "$1"
+}
+file() {
+    printf 'function-file-called\n' >>"$S5_TEST_ROOT/hostile-file.calls"
+    printf '%s\n' 'ELF 64-bit LSB executable, ARM aarch64'
+}
+MAGIC=/dev/null
+export MAGIC
+"$S5_TEST_ROOT/hostile-tools/curl" --version >/dev/null 2>&1 || :
+assert_file_exists "the hostile curl control records a direct invocation" \
+    "$S5_TEST_ROOT/hostile-curl.calls"
+rm -f "$S5_TEST_ROOT/hostile-curl.calls"
+t_run s5_curl_command --version
+assert_eq "the packaged curl seam remains callable under hostile resolution" 0 "$T_STATUS"
+assert_file_absent "the packaged curl seam bypasses PATH and function wrappers" \
+    "$S5_TEST_ROOT/hostile-curl.calls"
+s5t_asset_run good
+assert_eq "production bypasses hostile digest and type commands" 0 "$T_STATUS"
+assert_eq "tool isolation installs the verified xray member" "$S5T_BIN_SHA256" \
+    "$(/usr/bin/sha256sum "$S5_BIN" | awk '{print $1}')"
+assert_file_absent "hostile transport commands are never invoked" \
+    "$S5_TEST_ROOT/hostile-curl.calls"
+assert_file_absent "hostile digest commands are never invoked" \
+    "$S5_TEST_ROOT/hostile-sha.calls"
+assert_file_absent "hostile type commands are never invoked" \
+    "$S5_TEST_ROOT/hostile-file.calls"
+assert_eq "the caller's MAGIC value is preserved" /dev/null "$MAGIC"
+unset MAGIC
+unset -f curl sha256sum file
+PATH=$_sapath
+export PATH
+S5T_SIZE_OVERRIDE=''
+S5T_SHA_OVERRIDE=''
 
 # Info-ZIP treats UNZIP and UNZIPOPT as leading command-line options. `-aa`
 # forces text conversion and used to alter binary bytes while `unzip -p` still
@@ -205,5 +281,93 @@ S5T_BIN_SHA256=1111111111111111111111111111111111111111111111111111111111111111
 s5t_asset_reject good "an archive whose xray member has an unexpected digest" \
     binary-sha256
 S5T_BIN_SHA256=${S5T_META##* }
+
+# The verified member must also be an ELF for the architecture being installed.
+# mkasset builds one x86-64 stub for every case, so that gate is reached at the
+# file(1) seam rather than through PATH -- PATH is the surface production
+# deliberately stopped trusting for the type decision. The double delegates to
+# the real command while inert, so every other case is still judged by file(1).
+S5T_FILE_TYPE=''
+s5_file_type_command() {
+    if [ -n "$S5T_FILE_TYPE" ]; then printf '%s\n' "$S5T_FILE_TYPE"; return 0; fi
+    /usr/bin/file -b "$@"
+}
+S5T_FILE_TYPE='ELF 64-bit LSB executable, ARM aarch64, version 1 (SYSV)'
+s5t_asset_reject good "an archive whose xray member is built for another architecture" \
+    architecture
+S5T_FILE_TYPE=''
+
+# Extraction has a refusal reason of its own that no crafted archive can reach:
+# the member inspection ahead of it has already accepted exactly one readable
+# xray. Fail the extraction itself at the unzip seam instead.
+S5T_UNZIP_FAIL=''
+s5_unzip_command() {
+    if [ -n "$S5T_UNZIP_FAIL" ] && [ "$1" = "$S5T_UNZIP_FAIL" ]; then return 9; fi
+    /usr/bin/unzip "$@"
+}
+S5T_UNZIP_FAIL=-p
+s5t_asset_reject good "an archive whose xray member cannot be extracted" extract
+S5T_UNZIP_FAIL=''
+
+# Both seams are inert again. Without this control a double left switched on
+# would make every later case refuse for the injected reason instead of its own.
+s5t_asset_run good
+assert_eq "the restored command seams accept a well-formed archive" 0 "$T_STATUS"
+assert_eq "the restored seams install the verified xray member" "$S5T_BIN_SHA256" \
+    "$(t_sha256 "$S5_BIN")"
+
+# SPEC 4 pins the binary namespace at root:root 0755 and SPEC 5 keeps a
+# recognized installation restartable and updatable after the release pins
+# change. Staging makes the prefix private so a partially written .xray.XXXXXX
+# cannot be read, and an update reuses a directory already at the documented
+# mode -- so publication has to hand 0755 back on the refusal path as well as
+# the successful one. Nothing else on the update path restores it, and a
+# private prefix locks the service account out of its own installation.
+mkdir -p "$S5_PREFIX"
+chmod 0755 "$S5_PREFIX"
+s5t_asset_run good
+assert_eq "an update over an existing prefix is accepted" 0 "$T_STATUS"
+assert_mode "a successful update leaves the binary namespace at 0755" 755 "$S5_PREFIX"
+chmod 0755 "$S5_PREFIX"
+S5T_SHA_OVERRIDE=0000000000000000000000000000000000000000000000000000000000000000
+s5t_asset_run good
+assert_ne "a refused update fails" 0 "$T_STATUS"
+assert_contains "the refused update reports the gate it broke" \
+    'Xray asset verification failed: sha256.' "$T_OUT"
+assert_mode "a refused update leaves the binary namespace at 0755" 755 "$S5_PREFIX"
+S5T_SHA_OVERRIDE=''
+
+# The signal handler can interrupt inside s5_stage_engine, before the ordinary
+# return path closes the private staging window. Drive cleanup from that exact
+# point and require it to hand the existing installation's traversal mode back.
+chmod 0755 "$S5_PREFIX"
+S5_PREFIX_PRIVATE=0
+s5_stage_engine() {
+    assert_mode "the signal arrives while staging is private" 700 "$S5_PREFIX"
+    s5_cleanup
+    assert_mode "signal cleanup restores the binary namespace" 755 "$S5_PREFIX"
+    return 143
+}
+t_run s5_download_engine
+assert_ne "an interrupted staging run fails" 0 "$T_STATUS"
+assert_mode "the interrupted update leaves the binary namespace at 0755" 755 "$S5_PREFIX"
+assert_eq "signal cleanup closes the private-prefix window" 0 "$S5_PREFIX_PRIVATE"
+
+# A fresh install owns the prefix and should keep it private until cleanup has
+# removed every partial staging file and the directory itself.
+rm -rf "$S5_PREFIX"
+S5_CREATED_PREFIX=1
+S5_PREFIX_PRIVATE=0
+s5_stage_engine() {
+    assert_mode "fresh staging remains private" 700 "$S5_PREFIX"
+    : >"$S5_PREFIX/.xray.interrupted"
+    s5_cleanup
+    assert_file_absent "fresh signal cleanup removes the owned prefix" "$S5_PREFIX"
+    return 143
+}
+t_run s5_download_engine
+assert_ne "an interrupted fresh staging run fails" 0 "$T_STATUS"
+assert_file_absent "the interrupted fresh install leaves no prefix" "$S5_PREFIX"
+assert_eq "fresh signal cleanup clears the private-prefix window" 0 "$S5_PREFIX_PRIVATE"
 
 t_summary

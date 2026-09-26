@@ -27,7 +27,7 @@ Deploy an authenticated **SOCKS5 + HTTP CONNECT proxy** on Ubuntu, Debian, CentO
 
 - Use a **root shell** and a working native service manager from the [supported systems](#supported-targets) table.
 - Ensure the server can reach GitHub to download the installer and the pinned Xray release.
-- On systemd-based systems, prepare the runtime tools first: `curl`, CA certificates, the distribution Info-ZIP package providing `/usr/bin/unzip` with `-Z` support, `file`, Python 3, `ss`, and the standard account-management tools. Missing commands are reported by the installer.
+- On systemd-based systems, prepare the runtime tools first: `curl` at `/usr/bin/curl`, CA certificates, the distribution Info-ZIP package providing `/usr/bin/unzip` with `-Z` support, `file` at `/usr/bin/file`, `sha256sum` at `/usr/bin/sha256sum` (coreutils, normally already present), Python 3, `ss`, and the standard account-management tools. Those four transport/verification tools are invoked by absolute path, so a copy installed elsewhere is reported as missing. Missing commands are reported by the installer.
 - On Alpine, the installer provisions its runtime packages through `apk` during precheck, **before installation confirmation**. You still need `curl` to download the script; if missing, bootstrap it with `apk add --no-cache curl ca-certificates`.
 - Allow the chosen **TCP port** in your host firewall and cloud security group as appropriate. The script does not configure either, or set up NAT/port forwarding.
 

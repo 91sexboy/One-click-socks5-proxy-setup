@@ -134,6 +134,7 @@ def gate_result(fault=None):
             group["members"]["1000"] = 4
         markers = ["mixed_target_ipv4=ok", "mixed_http_connect=ok", "mixed_target_hostname=ok", "mixed_target_ipv6=unavailable",
                    "mixed_denied_control=ok", "mixed_denied_destination=ok", "mixed_denied_hostname=ok",
+                   "mixed_refusals=ok",
                    "mixed_longlived=ok", "mixed_concurrency_1=ok", "mixed_concurrency_32=ok",
                    "mixed_concurrency_128=ok"]
         if fault == "marker":

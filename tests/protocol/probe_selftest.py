@@ -445,6 +445,7 @@ class ProbeTests(TapTestCase):
         self.check("main preserves all protocol marker ordering", status == 0 and output.getvalue().splitlines() == [
             "mixed_target_ipv4=ok", "mixed_http_connect=ok", "mixed_target_hostname=ok", "mixed_target_ipv6=ok",
             "mixed_denied_control=ok", "mixed_denied_destination=ok", "mixed_denied_hostname=ok",
+            "mixed_refusals=ok",
             "mixed_concurrency_1=ok", "mixed_concurrency_32=ok", "mixed_concurrency_128=ok",
             "mixed_longlived=ok", "mixed_protocol=ok"])
         self.check("main keeps long-lived overlap and direct controls before refusals", events == [

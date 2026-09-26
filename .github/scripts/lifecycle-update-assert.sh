@@ -11,6 +11,7 @@ ROOT=${1:-/}
 _cfg=$ROOT/etc/xray-socks5/config.json
 _state=$ROOT/var/lib/xray-socks5/state
 _txn=$ROOT/var/lib/xray-socks5/transaction
+_prefix=$ROOT/usr/local/libexec/xray-socks5
 printf '%s\n' 'lifecycle-update-assert: reached'
 
 if [ ! -f "$_cfg" ] || [ -L "$_cfg" ]; then
@@ -48,5 +49,17 @@ if [ -e "$_txn" ] || [ -L "$_txn" ]; then
 fi
 [ "$(stat -c '%U:%G %a' "$_cfg")" = 'root:xray-socks5 640' ] || {
     printf '%s\n' 'updated config ownership or mode is wrong' >&2
+    exit 1
+}
+# The install directory is root:root 0755. A binary-replacing update re-creates
+# it private to shield its staging window, and a restore that does not run leaves
+# the service account unable to traverse its own installation -- while the config,
+# the state and the service all still look correct to every check above.
+if [ ! -d "$_prefix" ] || [ -L "$_prefix" ]; then
+    printf '%s\n' 'updated install directory is not a directory' >&2
+    exit 1
+fi
+[ "$(stat -c '%U:%G %a' "$_prefix")" = 'root:root 755' ] || {
+    printf '%s\n' 'updated install directory ownership or mode is wrong' >&2
     exit 1
 }

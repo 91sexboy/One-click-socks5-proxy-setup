@@ -28,8 +28,8 @@ def declarations(name, text):
                    r'(?P<value>[A-Za-z0-9_.-]+)$')
         expected = 14
     elif name == FILES[2]:
-        pattern = r'^    (?:ASSET|SIZE|SHA)=(?P<value>[A-Za-z0-9_.-]+)$'
-        expected = 6
+        pattern = r'^    (?:ASSET|SIZE|SHA|BINARY_SIZE|BINARY_SHA)=(?P<value>[A-Za-z0-9_.-]+)$'
+        expected = 10
     else:
         pattern = (r'^assert_eq "(?:Xray release[^"\n]*|(?:amd64|arm64) '
                    r'(?:asset name|archive (?:size|digest)|extracted xray (?:size|digest)))"'
@@ -65,6 +65,7 @@ def run_regressions(source):
         def rejects(name, changed, label):
             nonlocal checked
             path = root / name
+            restore = path.read_text()
             path.write_text(changed)
             try:
                 try:
@@ -74,7 +75,7 @@ def run_regressions(source):
                 else:
                     raise AssertionError(name + ': accepted ' + label)
             finally:
-                path.write_text(originals[name])
+                path.write_text(restore)
 
         contract.check(root, shell)
         checked += 1
@@ -128,13 +129,34 @@ def run_regressions(source):
                 if text.count(anchor) != 1:
                     raise AssertionError('installer transport mutation anchor missing')
                 fallback = ('-o "$1" "$S5_XRAY_BASE/$S5_ASSET_NAME" || '
-                            'curl -fsSL "' + upstream + '$S5_ASSET_NAME" || {')
+                            's5_curl_command -fsSL "' + upstream + '$S5_ASSET_NAME" || {')
                 rejects(name, text.replace(anchor, fallback), 'transport failure triggers upstream fallback')
             else:
                 variable = '$XRAY_ASSET' if name == FILES[1] else '$ASSET'
                 anchor = '"' + url + variable + '"'
                 fallback = anchor + ' || curl -fsSL "' + upstream + variable + '"'
                 rejects(name, text.replace(anchor, fallback), 'additional fallback URL')
+
+        digest = contract.PINS['amd64']['binary_sha']
+        size = contract.PINS['amd64']['binary_size']
+        unknown = 'de' * 32
+        for name in contract.PIN_MIRRORS:
+            text = (root / name).read_text()
+            if text.count(digest) != 1 or text.count(size) != 1:
+                raise AssertionError('pin mirror mutation anchor missing or duplicated')
+            rejects(name, text.replace(digest, unknown), 'stale binary digest')
+            rejects(name, text.replace(size, '9' * len(size)), 'stale binary size')
+            rejects(name, text.replace(digest, ''), 'dropped binary digest assertion')
+            rejects(name, text.replace(size, ''), 'dropped binary size assertion')
+            rejects(name, text.replace(digest, contract.PINS['arm64']['binary_sha']),
+                    'the binary digest of the architecture these gates never run on')
+            rejects(name, text + '\n# ' + unknown + '\n', 'an unrecognized digest')
+            # Another current pin is not staleness: the mirrors are required to
+            # carry the amd64 binary bytes, not forbidden every other digest.
+            (root / name).write_text(text + '\n# ' + contract.PINS['arm64']['sha'] + '\n')
+            contract.check(root, shell)
+            checked += 1
+            (root / name).write_text(text)
 
         # Test callers through the real docs/asset paths too, not just imports.
         def run_test(name, expected):

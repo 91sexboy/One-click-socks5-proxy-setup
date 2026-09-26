@@ -48,8 +48,36 @@ test "$(sha256sum /usr/local/libexec/xray-socks5/xray | awk '{print $1}')" = \
   8255dd939c34cf966cc91517b6324dd3c8d0bcf49ffac8beca049a38c46845ed
 if [ "${ALPINE_HOSTILE_UNZIP:-0}" = 1 ]; then
   test ! -e "$ALPINE_HOSTILE_UNZIP_LOG"
-  test "$UNZIP:$UNZIPOPT:$ZIPINFO:$ZIPINFOOPT" = '-aa:-aa:-h:-h'
-  test "$PATH" = "$work/hostile-bin:$original_path"
+  # The positive control test_xray_asset.sh keeps for the same wrapper. A wrapper
+  # that happened to be harmless satisfies the line above exactly as a harmful one
+  # does, so run the wrapper itself and require the bytes it produces to differ
+  # from a clean extraction of the same member. The call made here also has to
+  # reach the log, or "never invoked" would be reading a log that never records.
+  # It runs after the install because the install is what brings Info-ZIP in: the
+  # BusyBox unzip Alpine ships ignores UNZIP entirely, so the control would prove
+  # nothing earlier. A local archive keeps it off the network, and the member only
+  # has to carry the CR LF pairs that -aa rewrites.
+  python3 - "$work/control.zip" <<'CONTROL_ZIP'
+import sys
+import zipfile
+
+with zipfile.ZipFile(sys.argv[1], "w") as archive:
+    archive.writestr("xray", b"\r\n".join(bytes([value]) for value in range(256)))
+CONTROL_ZIP
+  # The wrapper is still first on PATH, so the clean side names Info-ZIP
+  # absolutely and drops the inherited options in a subshell, the way socks5.sh's
+  # s5_unzip does.
+  (
+    unset UNZIP UNZIPOPT ZIPINFO ZIPINFOOPT
+    /usr/bin/unzip -p "$work/control.zip" xray >"$work/control.clean"
+  )
+  "$work/hostile-bin/unzip" -p "$work/control.zip" xray >"$work/control.hostile"
+  test -s "$ALPINE_HOSTILE_UNZIP_LOG"
+  if cmp -s "$work/control.clean" "$work/control.hostile"; then
+    printf "the hostile unzip wrapper extracted uncorrupted bytes\n" >&2
+    exit 1
+  fi
+  rm -f "$ALPINE_HOSTILE_UNZIP_LOG"
   PATH=$original_path
   unset UNZIP UNZIPOPT ZIPINFO ZIPINFOOPT ALPINE_HOSTILE_UNZIP_LOG
   export PATH
@@ -70,7 +98,13 @@ sh .github/scripts/run-socks5.sh status \
 sh .github/scripts/run-socks5.sh restart \
   "$work/answers.empty" "$work/restart.log" "$work/pass.update" "$work/pass"
 rc-service xray-socks5 status
-grep -q "mixed" "$work/status.log"
+# status always exits 0 by design (README.md), so the log content is the only
+# signal. The heading carries "mixed" on its own, which left a listener degraded
+# to service.listen or service.unverified passing: match the service.ready line
+# for the installed port, and the protocol summary in the status line rather than
+# the word in the heading.
+grep -qxF 'Xray is listening on port 23456.' "$work/status.log"
+grep -qF 'protocol: mixed (SOCKS5 + HTTP); auth: password; UDP: disabled' "$work/status.log"
 # SPEC 5: OpenRC recovers a crash with the listener returning, and a
 # configuration error does not enter an automatic restart loop.
 crash_pid=$(cat /run/openrc/options/xray-socks5/child_pid)
