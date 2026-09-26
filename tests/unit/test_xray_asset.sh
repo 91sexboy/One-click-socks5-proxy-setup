@@ -65,9 +65,9 @@ done
 # itself; S5T_SIZE_OVERRIDE and S5T_SHA_OVERRIDE put a wrong one back to prove
 # the hook did not turn the gate into a bypass.
 if ! command -v python3 >/dev/null 2>&1 ||
-    ! command -v unzip >/dev/null 2>&1 ||
+    [ ! -x /usr/bin/unzip ] ||
     ! command -v file >/dev/null 2>&1; then
-    t_skip "crafted Xray archives are inspected" "python3, unzip or file is unavailable"
+    t_skip "crafted Xray archives are inspected" "python3, /usr/bin/unzip or file is unavailable"
     t_summary
 fi
 
@@ -82,8 +82,8 @@ assert_ne "the crafted archives were built" '' "$S5T_META"
 # BusyBox ships an unzip without -Z, and the member listing the installer reads
 # comes from -Z1. Without it no member is inspected at all, so refusing to run is
 # the only honest outcome.
-if ! unzip -Z1 "$S5T_ASSETS/good.zip" >/dev/null 2>&1; then
-    t_skip "crafted Xray archives are inspected" "the unzip on PATH has no -Z"
+if ! /usr/bin/unzip -Z1 "$S5T_ASSETS/good.zip" >/dev/null 2>&1; then
+    t_skip "crafted Xray archives are inspected" "/usr/bin/unzip has no -Z"
     t_summary
 fi
 
@@ -118,6 +118,41 @@ assert_file_exists "an accepted archive installs xray" "$S5_BIN"
 assert_eq "the installed xray is the verified member" "$S5T_BIN_SHA256" \
     "$(t_sha256 "$S5_BIN")"
 assert_mode "the installed xray is executable" 755 "$S5_BIN"
+
+# A same-named PATH executable can reintroduce implicit options after the caller
+# cleaned its own environment. Prove the hostile control changes the fixture,
+# then require production's absolute command seam to bypass it completely.
+_sapath=$PATH
+mkdir -p "$S5_TEST_ROOT/hostile-bin"
+cat >"$S5_TEST_ROOT/hostile-bin/unzip" <<'HOSTILE_UNZIP'
+#!/bin/sh
+printf 'called\n' >>"$S5_TEST_ROOT/hostile-unzip.calls"
+UNZIP=-aa
+export UNZIP
+exec /usr/bin/unzip "$@"
+HOSTILE_UNZIP
+chmod 0755 "$S5_TEST_ROOT/hostile-bin/unzip"
+PATH=$S5_TEST_ROOT/hostile-bin:$PATH
+export PATH
+"$S5_TEST_ROOT/hostile-bin/unzip" -p "$S5T_ASSETS/good.zip" xray \
+    >"$S5_TEST_ROOT/hostile-xray"
+assert_ne "the hostile PATH control changes extracted xray bytes" "$S5T_BIN_SHA256" \
+    "$(t_sha256 "$S5_TEST_ROOT/hostile-xray")"
+rm -f "$S5_TEST_ROOT/hostile-unzip.calls"
+unzip() {
+    printf 'function-called\n' >>"$S5_TEST_ROOT/hostile-unzip.calls"
+    UNZIP=-aa
+    export UNZIP
+    /usr/bin/unzip "$@"
+}
+s5t_asset_run good
+assert_eq "production bypasses a hostile unzip on PATH" 0 "$T_STATUS"
+assert_eq "PATH isolation installs the verified xray member" "$S5T_BIN_SHA256" \
+    "$(t_sha256 "$S5_BIN")"
+assert_file_absent "hostile PATH and function unzips are never invoked" \
+    "$S5_TEST_ROOT/hostile-unzip.calls"
+PATH=$_sapath
+export PATH
 
 # Info-ZIP treats UNZIP and UNZIPOPT as leading command-line options. `-aa`
 # forces text conversion and used to alter binary bytes while `unzip -p` still

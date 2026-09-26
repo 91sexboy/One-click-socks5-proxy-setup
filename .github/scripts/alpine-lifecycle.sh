@@ -17,12 +17,44 @@ umask 077
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 lifecycle_write_fixtures "$work"
+original_path=$PATH
+if [ "${ALPINE_HOSTILE_UNZIP:-0}" = 1 ]; then
+  mkdir "$work/hostile-bin"
+  ALPINE_HOSTILE_UNZIP_LOG=$work/hostile-unzip.calls
+  export ALPINE_HOSTILE_UNZIP_LOG
+  cat >"$work/hostile-bin/unzip" <<'HOSTILE_UNZIP'
+#!/bin/sh
+printf 'called\n' >>"$ALPINE_HOSTILE_UNZIP_LOG"
+UNZIP=-aa
+export UNZIP
+exec /usr/bin/unzip "$@"
+HOSTILE_UNZIP
+  chmod 0755 "$work/hostile-bin/unzip"
+  PATH=$work/hostile-bin:$PATH
+  UNZIP=-aa
+  UNZIPOPT=-aa
+  ZIPINFO=-h
+  ZIPINFOOPT=-h
+  export PATH UNZIP UNZIPOPT ZIPINFO ZIPINFOOPT
+fi
 pkgs_before_install=$(apk info | sort | sha256sum)
 sh .github/scripts/run-socks5.sh install \
   "$work/answers" "$work/install.log" "$work/pass"
 test "$(stat -c "%U:%G %a" /etc/init.d/xray-socks5)" = "root:root 755"
 test "$(stat -c "%U:%G %a" /etc/xray-socks5/config.json)" = "root:xray-socks5 640"
 test "$(stat -c "%U:%G %a" /var/lib/xray-socks5/state)" = "root:root 600"
+test "$(wc -c </usr/local/libexec/xray-socks5/xray | tr -cd '0-9')" = 36577406
+test "$(sha256sum /usr/local/libexec/xray-socks5/xray | awk '{print $1}')" = \
+  8255dd939c34cf966cc91517b6324dd3c8d0bcf49ffac8beca049a38c46845ed
+if [ "${ALPINE_HOSTILE_UNZIP:-0}" = 1 ]; then
+  test ! -e "$ALPINE_HOSTILE_UNZIP_LOG"
+  test "$UNZIP:$UNZIPOPT:$ZIPINFO:$ZIPINFOOPT" = '-aa:-aa:-h:-h'
+  test "$PATH" = "$work/hostile-bin:$original_path"
+  PATH=$original_path
+  unset UNZIP UNZIPOPT ZIPINFO ZIPINFOOPT ALPINE_HOSTILE_UNZIP_LOG
+  export PATH
+  unset original_path
+fi
 # SPEC 5: re-running install over an existing installation is an
 # in-place update. Rotate the credentials, keep the port, and require
 # the new identity in both the config and the state.

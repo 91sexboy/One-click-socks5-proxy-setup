@@ -985,11 +985,18 @@ s5_fetch_archive() {
     [ "$(s5_sha256 "$1")" = "$S5_ASSET_SHA256" ] || { s5_msg_err asset.invalid sha256; return 1; }
 }
 
-# Info-ZIP reads these variables as implicit command-line options. Keep each
-# invocation deterministic without changing the caller's shell environment.
-s5_unzip() {
-    UNZIP='' UNZIPOPT='' ZIPINFO='' ZIPINFOOPT='' unzip "$@"
-}
+# The supported distribution packages install Info-ZIP here. An absolute
+# command seam prevents aliases, functions and PATH wrappers from changing the
+# extractor while remaining replaceable by focused tests.
+s5_unzip_command() { /usr/bin/unzip "$@"; }
+
+# Info-ZIP reads these variables as implicit command-line options. A subshell
+# gives the external process a clean option environment and preserves every
+# caller value without relying on assignment-before-function semantics.
+s5_unzip() (
+    unset UNZIP UNZIPOPT ZIPINFO ZIPINFOOPT
+    s5_unzip_command "$@"
+)
 
 s5_verify_archive_members() {
     # $1: the accepted archive. $2: scratch path for its member listing. Refuse any
@@ -2127,10 +2134,10 @@ s5_precheck() {
     s5_require_commands awk sed grep tr tail head id getent mkdir rmdir rm mv cp cat printf stat sha256sum mktemp ln sleep wc chmod || return 1
     case "$S5_INIT:$_spcmode" in
     openrc:install|openrc:update)
-        s5_require_commands addgroup adduser delgroup deluser rc-service rc-update rc-status logger unzip curl file od chown python3 ss || return 1
+        s5_require_commands addgroup adduser delgroup deluser rc-service rc-update rc-status logger curl file od chown python3 ss || return 1
         ;;
     systemd:install|systemd:update)
-        s5_require_commands groupadd groupdel useradd userdel systemctl unzip curl file od chown python3 || return 1
+        s5_require_commands groupadd groupdel useradd userdel systemctl curl file od chown python3 || return 1
         command -v ss >/dev/null 2>&1 || { s5_msg_err detect.commands ss; return 1; }
         ;;
     openrc:status)
@@ -2155,12 +2162,15 @@ s5_precheck() {
         ;;
     *) s5_msg_err detect.init; return 1 ;;
     esac
-    # Checked after the command list so a missing unzip is still reported as a
-    # missing command. Without it the 21 MB archive downloads and hash-verifies
-    # and only then fails member inspection, reporting a bad archive when the
-    # tool is what cannot do the job.
+    # The official packages on every supported family install Info-ZIP at this
+    # path. Require and probe that executable so a same-named PATH wrapper cannot
+    # alter the verified archive after download.
     case "$_spcmode" in
     install | update)
+        [ -x /usr/bin/unzip ] || {
+            s5_msg_err detect.commands unzip
+            return 1
+        }
         s5_unzip_lists_members || {
             s5_msg_err detect.unzip
             return 1

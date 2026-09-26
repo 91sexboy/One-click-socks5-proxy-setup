@@ -12,7 +12,7 @@ CHECKOUT = 'actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09'
 UPLOADER = 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02'
 JOBS = {'lint', 'unit', 'xray-assets', 'xray-mixed', 'xray-systemd', 'openrc-integration',
         'systemd-assertion-controls', 'openrc-assertion-controls', 'memory-report'}
-LIFECYCLE_IMAGES = {'alpine:3.20', 'alpine:3.22', 'alpine:3.24'}
+LIFECYCLE_ROWS = {('alpine:3.20', '0'), ('alpine:3.22', '1'), ('alpine:3.24', '0')}
 CONTROL_IMAGES = {'alpine:3.20', 'alpine:3.24'}
 MUTATIONS = {'fail', 'skip', 'unreachable', 'swallow'}
 RUNNERS = {('ubuntu-24.04', 'amd64'), ('ubuntu-24.04-arm', 'arm64')}
@@ -129,17 +129,29 @@ def check(workflow):
     require(jobs['unit']['runs-on'] == '${{ matrix.shell.runner }}', 'unit: runner binding changed')
     require(entry(jobs['unit'], 'sh tests/run.sh', 'Unit suite').get('env', {}).get('S5_TEST_SHELL') ==
             '${{ matrix.shell.command }}', 'unit: shell binding changed')
-    for name in ('openrc-integration', 'openrc-assertion-controls'):
-        images = matrix(jobs[name], 'image')
-        expected_images = LIFECYCLE_IMAGES if name == 'openrc-integration' else CONTROL_IMAGES
-        require(len(images) == len(expected_images) and set(images) == expected_images,
-                name + ': required Alpine versions changed')
-        command = ('sh /src/.github/scripts/alpine-lifecycle.sh' if name == 'openrc-integration'
-                   else 'python3 .github/scripts/lifecycle-assert-control.py openrc')
-        step = entry(jobs[name], command)
-        require(step.get('env', {}).get('ALPINE_IMAGE') == '${{ matrix.image }}' and
-                '"$ALPINE_IMAGE"' in body(step), name + ': image binding changed')
-        require('docker run --rm ' in body(step), name + ': native container entrypoint missing')
+    lifecycle_rows = [(row.get('image'), row.get('hostile_unzip'))
+                      for row in matrix(jobs['openrc-integration'], 'include')]
+    require(len(lifecycle_rows) == len(LIFECYCLE_ROWS) and set(lifecycle_rows) == LIFECYCLE_ROWS,
+            'openrc-integration: required Alpine hostile-unzip rows changed')
+    lifecycle_step = entry(jobs['openrc-integration'],
+                           'sh /src/.github/scripts/alpine-lifecycle.sh')
+    require(lifecycle_step.get('env', {}).get('ALPINE_IMAGE') == '${{ matrix.image }}' and
+            lifecycle_step.get('env', {}).get('ALPINE_HOSTILE_UNZIP') ==
+            '${{ matrix.hostile_unzip }}' and '"$ALPINE_IMAGE"' in body(lifecycle_step) and
+            '-e ALPINE_HOSTILE_UNZIP="$ALPINE_HOSTILE_UNZIP"' in body(lifecycle_step),
+            'openrc-integration: matrix bindings changed')
+    require('docker run --rm ' in body(lifecycle_step),
+            'openrc-integration: native container entrypoint missing')
+    control_images = matrix(jobs['openrc-assertion-controls'], 'image')
+    require(len(control_images) == len(CONTROL_IMAGES) and set(control_images) == CONTROL_IMAGES,
+            'openrc-assertion-controls: required Alpine versions changed')
+    control_step = entry(jobs['openrc-assertion-controls'],
+                         'python3 .github/scripts/lifecycle-assert-control.py openrc')
+    require(control_step.get('env', {}).get('ALPINE_IMAGE') == '${{ matrix.image }}' and
+            '"$ALPINE_IMAGE"' in body(control_step),
+            'openrc-assertion-controls: image binding changed')
+    require('docker run --rm ' in body(control_step),
+            'openrc-assertion-controls: native container entrypoint missing')
     for name, dependency, backend in (('systemd-assertion-controls', 'xray-systemd', 'systemd'),
                                       ('openrc-assertion-controls', 'openrc-integration', 'openrc')):
         choices = matrix(jobs[name], 'mutation')

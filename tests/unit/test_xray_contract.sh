@@ -310,14 +310,13 @@ s5_precheck status >/dev/null 2>&1
 # BusyBox ships an unzip that rejects -Z outright, and -Z1 is where the archive
 # inspection gets its member list, so a present unzip proves nothing. Detecting it
 # in the precheck tells the operator the tool cannot do the job; without that the
-# 21 MB archive downloads and hash-verifies and is then reported invalid.
-# Substituted as a shell function rather than through PATH: BusyBox sh resolves
-# applet names such as unzip before PATH, so a stub directory would be ignored
-# there while a function shadows the applet in all three shells.
-unzip() {
+# 21 MB archive downloads and hash-verifies and is then reported invalid. Override
+# the internal command seam so these probe return shapes are deterministic across
+# the shell matrix while production remains pinned to /usr/bin/unzip.
+s5_unzip_command() {
     [ "$1" = -Z ] || return 0
-    if [ -n "${UNZIP:-}${UNZIPOPT:-}${ZIPINFO:-}${ZIPINFOOPT:-}" ]; then
-        printf 'inherited Info-ZIP options were not isolated\n' >&2
+    if [ "${UNZIP+x}${UNZIPOPT+x}${ZIPINFO+x}${ZIPINFOOPT+x}" != '' ]; then
+        printf 'inherited Info-ZIP options were not unset\n' >&2
         return 9
     fi
     case "$(cat "$S5_TEST_ROOT/unzip-mode" 2>/dev/null)" in

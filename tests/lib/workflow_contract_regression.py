@@ -44,12 +44,15 @@ class WorkflowContractTests(unittest.TestCase):
             'shell-binding': lambda jobs: jobs['unit']['steps'][-1]['env'].update({'S5_TEST_SHELL': 'sh'}),
             'control-mutation': lambda jobs: jobs['openrc-assertion-controls']['strategy']['matrix']['mutation'].pop(),
             'control-image': lambda jobs: jobs['openrc-assertion-controls']['strategy']['matrix']['image'].pop(),
-            'lifecycle-image': lambda jobs: jobs['openrc-integration']['strategy']['matrix']['image'].pop(),
+            'lifecycle-image': lambda jobs: jobs['openrc-integration']['strategy']['matrix']['include'].pop(),
+            'lifecycle-hostile-flag': lambda jobs: jobs['openrc-integration']['strategy']['matrix']['include'][1].update({'hostile_unzip': '0'}),
             'control-needs': lambda jobs: jobs['systemd-assertion-controls'].pop('needs'),
             'upload-path': lambda jobs: jobs['memory-report']['steps'][-1]['with'].update({'path': '**/*'}),
             'upload-missing': lambda jobs: jobs['memory-report']['steps'][-1]['with'].update({'if-no-files-found': 'warn'}),
             'memory-env': lambda jobs: next(step for step in jobs['memory-report']['steps'] if step.get('name') == 'Measure Xray process and cgroup memory')['env'].update({'XRAY_ARCH': 'amd64'}),
             'container-env': lambda jobs: next(step for step in jobs['openrc-integration']['steps'] if 'run' in step)['env'].update({'ALPINE_IMAGE': 'alpine:3.20'}),
+            'hostile-container-env': lambda jobs: next(step for step in jobs['openrc-integration']['steps'] if 'run' in step)['env'].pop('ALPINE_HOSTILE_UNZIP'),
+            'hostile-container-forward': lambda jobs: next(step for step in jobs['openrc-integration']['steps'] if 'run' in step).update({'run': 'docker run --rm --privileged -v "$PWD:/src" -w /src "$ALPINE_IMAGE" sh /src/.github/scripts/alpine-lifecycle.sh'}),
         }
         for label, mutate in mutations.items():
             with self.subTest(mutation=label):
