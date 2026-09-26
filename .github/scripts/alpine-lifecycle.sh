@@ -220,4 +220,27 @@ sh .github/scripts/run-socks5.sh uninstall \
   "$work/answers.uninstall" "$work/uninstall-reinstall.log" "$work/pass"
 sh socks5.sh help </dev/null >"$work/help-after-uninstall.log"
 grep -q 'Usage: sh socks5.sh' "$work/help-after-uninstall.log"
+# ADR-0006: the capacity check reads the filesystem through stat, and BusyBox builds
+# stat's -f support behind a config option. Without it the check answers nothing and
+# disables itself -- silently, and on the one platform whose operator reported the
+# failure it exists to explain, which is why a passing lifecycle is not evidence on
+# its own. Prove the applet answers, then prove the refusal is reachable end to end
+# rather than merely compiled in: a 12 MiB work filesystem cannot hold the 21 MB
+# archive and the 36 MB member, and the prefix is on another filesystem, so the
+# per-path requirement is the one reported.
+test "$(stat -f -c '%f %S' / | awk '{print ($1 > 0 && $2 > 0) ? "ok" : "bad"}')" = ok
+test "$(stat -c '%d' / | awk '{print ($1 > 0) ? "ok" : "bad"}')" = ok
+mount -t tmpfs -o size=12m,mode=1777 tmpfs /var/tmp
+capacity_status=0
+sh .github/scripts/run-socks5.sh install \
+  "$work/answers.reinstall" "$work/capacity.log" "$work/pass" || capacity_status=$?
+umount /var/tmp
+test "$capacity_status" -ne 0
+grep -q 'not enough space on the filesystem holding' "$work/capacity.log"
+grep -q '56362 KiB required' "$work/capacity.log"
+# The refusal happens after staging created the prefix, so cleanup owns removing it.
+test ! -e /usr/local/libexec/xray-socks5
+test ! -e /etc/xray-socks5
+test ! -e /var/lib/xray-socks5
+lifecycle_generation_absent "$work/capacity.log" "$work/pass"
 lifecycle_assert_logs_redacted "$work"

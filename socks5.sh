@@ -195,9 +195,13 @@ s5_msg() {
     install.cancelled) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '操作已取消。' ;; en) printf 'operation cancelled.' ;; esac ;;
     asset.download) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '正在下载并校验 Xray 资产：%s。' "$1" ;; en) printf 'downloading and verifying Xray asset: %s.' "$1" ;; esac ;;
     asset.invalid) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf 'Xray 资产校验失败：%s。' "$1" ;; en) printf 'Xray asset verification failed: %s.' "$1" ;; esac ;;
+    asset.size) [ "$#" -eq 3 ] || return 1; case "$S5_LANG" in zh) printf 'Xray 资产校验失败：%s 为 %s 字节，应为 %s 字节。' "$1" "$2" "$3" ;; en) printf 'Xray asset verification failed: %s is %s bytes, expected %s.' "$1" "$2" "$3" ;; esac ;;
+    disk.space) [ "$#" -eq 3 ] || return 1; case "$S5_LANG" in zh) printf '%s 所在文件系统空间不足：需要 %s KiB，仅剩 %s KiB。' "$1" "$2" "$3" ;; en) printf 'not enough space on the filesystem holding %s: %s KiB required, %s KiB available.' "$1" "$2" "$3" ;; esac ;;
+    disk.write) [ "$#" -eq 3 ] || return 1; case "$S5_LANG" in zh) printf '无法写完 %s：已写入 %s 字节，应为 %s 字节；文件系统已满或超出配额。' "$1" "$2" "$3" ;; en) printf 'could not write all of %s: %s bytes written of %s; the filesystem is full or over quota.' "$1" "$2" "$3" ;; esac ;;
     digest.failed) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法计算已安装资源的 SHA-256：%s。' "$1" ;; en) printf 'could not compute SHA-256 for installed artifact: %s.' "$1" ;; esac ;;
     cleanup.service) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '无法确认 Xray 服务已停止；已保留安装文件和账户。' ;; en) printf 'could not verify that the Xray service stopped; installation files and account were retained.' ;; esac ;;
     cleanup.download) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法删除下载临时目录：%s。' "$1" ;; en) printf 'could not remove temporary download directory: %s.' "$1" ;; esac ;;
+    prefix.mode) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法将安装目录恢复为 0755：%s；在该权限恢复之前，服务账户无法使用本安装，后续命令也会拒绝执行。' "$1" ;; en) printf 'could not restore installation directory %s to 0755; until that mode is restored the service account cannot use this installation and later commands refuse to run.' "$1" ;; esac ;;
     config.invalid) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf 'Xray 配置测试失败；旧配置未改变。' ;; en) printf 'Xray configuration test failed; the old configuration was unchanged.' ;; esac ;;
     transaction.pending) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '存在待处理的恢复目录，拒绝覆盖：%s。' "$1" ;; en) printf 'pending recovery directory must be resolved before updating: %s.' "$1" ;; esac ;;
     transaction.restore) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法恢复旧配置和状态；恢复备份保留在 %s。' "$1" ;; en) printf 'could not restore the previous config and state; recovery copies retained at %s.' "$1" ;; esac ;;
@@ -935,6 +939,98 @@ s5_tmp_base() {
 # stripped (the same digit-only sanitiser used elsewhere for wc output).
 s5_bytecount() { wc -c <"$1" | tr -cd '0-9'; }
 
+# Capacity is advisory, never an acceptance gate: it decides whether to refuse
+# before tens of megabytes are written, while the pinned size and SHA-256 stay the
+# only authority over what gets installed. Every unusable answer below therefore
+# leaves the operation alone rather than refusing a working host, and both answers
+# come from stat -- reached the same way s5_path_contract reaches it -- rather than
+# from df. df reports the space available to unprivileged users, which excludes the
+# reserve only root may write into; every command that stages an engine runs as
+# root, that reserve is gigabytes on a nearly full ext4 root filesystem, and
+# refusing a host that would have installed is the one outcome this check must never
+# produce. stat also answers without columns to split, so a device or mount point
+# containing a space cannot shift the number being read.
+s5_fs_free_command() { stat -f -c '%f %S' "$1"; }
+
+# The filesystem id for $1. Two paths reporting the same id draw on the same free
+# space. A df row cannot answer this: its used, available and capacity columns move
+# between the two calls, so one filesystem compares unequal to itself whenever
+# anything else on the host is writing -- which silently skips the combined check
+# exactly when a busy single-filesystem container needs it.
+s5_fs_id_command() { stat -c '%d' "$1"; }
+
+s5_fs_id() {
+    _sfi=$(s5_fs_id_command "$1" 2>/dev/null) || return 1
+    case "$_sfi" in '' | *[!0-9]*) return 1 ;; esac
+    printf '%s\n' "$_sfi"
+}
+
+# Free kibibytes on the filesystem holding $1, counting the reserve root can write
+# into, or failure when stat cannot say. The count is in fundamental blocks, so an
+# unrecognised block size is treated as no answer rather than converted by guess.
+s5_free_kb() {
+    _sfk=$(s5_fs_free_command "$1" 2>/dev/null) || return 1
+    _sfk_blocks=${_sfk%% *}
+    _sfk_bytes=${_sfk##* }
+    case "$_sfk_blocks" in '' | *[!0-9]*) return 1 ;; esac
+    case "$_sfk_bytes" in
+    512) printf '%s\n' "$((_sfk_blocks / 2))" ;;
+    1024 | 2048 | 4096 | 8192 | 16384 | 32768 | 65536)
+        printf '%s\n' "$((_sfk_blocks * (_sfk_bytes / 1024)))"
+        ;;
+    *) return 1 ;;
+    esac
+}
+
+# Whether the filesystem holding $1 has no usable room left. A write that could
+# not complete and a substituted extractor both leave a file shorter than its pin
+# (ADR-0005, ADR-0006), so the direction of a size mismatch identifies neither;
+# this is the one signal that separates them, and an unknown answer is not taken
+# as exhaustion. The slack covers a filesystem that reports a few blocks free but
+# could never have held the multi-megabyte artifact.
+s5_space_exhausted() {
+    _sspe_free=$(s5_free_kb "$1") || return 1
+    [ "$_sspe_free" -le 64 ]
+}
+
+s5_require_space() {
+    # $1: the directory about to receive bytes. $2: how many. Refuse only on a
+    # usable capacity answer that is short of the requirement.
+    case "${2:-}" in '' | *[!0-9]*) return 0 ;; esac
+    _srs_free=$(s5_free_kb "$1") || return 0
+    _srs_need=$(((${2} + 1023) / 1024))
+    [ "$_srs_free" -lt "$_srs_need" ] || return 0
+    s5_msg_err disk.space "$1" "$_srs_need" "$_srs_free"
+    return 1
+}
+
+s5_accept_size() {
+    # $1: the file just written. $2: the gate's stable reason slug. $3: the pinned
+    # byte count. Accept only the exact length, and report the length actually
+    # observed either way, so a report of this refusal is diagnosable without a
+    # rerun: two bytes short is a rewritten stream, twenty megabytes short is a
+    # write that ran out of room.
+    _sas_size=$(s5_bytecount "$1")
+    case "$_sas_size" in '' | *[!0-9]*) _sas_size=0 ;; esac
+    [ "$_sas_size" = "$3" ] && return 0
+    # Only a file shorter than its pin can be a write that did not finish, and only
+    # an exhausted filesystem explains one. A file longer than its pin is something
+    # no truncation produces -- a length-less response admitted one byte over the
+    # bound, or a tampered member -- and blaming the disk for it would reinstate the
+    # mirror image of the misdiagnosis this gate exists to remove.
+    _sas_short=0
+    case "$3" in
+    '' | *[!0-9]*) ;;
+    *) [ "$_sas_size" -lt "$3" ] && _sas_short=1 ;;
+    esac
+    if [ "$_sas_short" = 1 ] && s5_space_exhausted "$1"; then
+        s5_msg_err disk.write "$1" "$_sas_size" "$3"
+    else
+        s5_msg_err asset.size "$2" "$_sas_size" "$3"
+    fi
+    return 1
+}
+
 # Both HTTPS requests use the distribution package at its supported path. The
 # narrow seam keeps focused tests able to observe the complete transport argv.
 s5_curl_command() { /usr/bin/curl "$@"; }
@@ -996,7 +1092,7 @@ s5_fetch_archive() {
             return 1
         }
     fi
-    [ "$(s5_bytecount "$1")" = "$S5_ASSET_SIZE" ] || { s5_msg_err asset.invalid size; return 1; }
+    s5_accept_size "$1" size "$S5_ASSET_SIZE" || return 1
     [ "$(s5_sha256 "$1")" = "$S5_ASSET_SHA256" ] || { s5_msg_err asset.invalid sha256; return 1; }
 }
 
@@ -1053,7 +1149,7 @@ s5_extract_binary() {
     # binary only at the pinned size and SHA-256 and an arch-matching ELF type, then
     # install it atomically at $S5_BIN and record its digest.
     s5_unzip -p "$1" xray >"$2" 2>/dev/null || { s5_msg_err asset.invalid extract; return 1; }
-    [ "$(s5_bytecount "$2")" = "$S5_ASSET_BINARY_SIZE" ] || { s5_msg_err asset.invalid binary-size; return 1; }
+    s5_accept_size "$2" binary-size "$S5_ASSET_BINARY_SIZE" || return 1
     [ "$(s5_sha256 "$2")" = "$S5_ASSET_BINARY_SHA256" ] || { s5_msg_err asset.invalid binary-sha256; return 1; }
     chmod 0755 "$2" || return 1
     _seb_file=$(s5_file_type "$2" 2>/dev/null) || return 1
@@ -1077,6 +1173,22 @@ s5_extract_binary() {
 
 s5_stage_engine() {
     [ -n "$S5_WORKDIR" ] || S5_WORKDIR=$(mktemp -d "$(s5_tmp_base)/xray-socks5-download.XXXXXX") || return 1
+    # Three files exist at once: the archive and the member extracted from it in the
+    # work directory, and the published copy under the prefix. Checking here names a
+    # filesystem that cannot hold them up front, instead of letting it surface as a
+    # short file at the size gate, which reads as a bad artifact (ADR-0006).
+    # A container with one root filesystem -- where this was reported -- holds all
+    # three against the same free space, so it is told the whole requirement rather
+    # than each half, which two separate checks would both pass. Anything that does
+    # not report the same filesystem for both paths keeps the per-path requirements.
+    _sseid=$(s5_fs_id "$S5_WORKDIR" 2>/dev/null) || _sseid=''
+    if [ -n "$_sseid" ] && [ "$_sseid" = "$(s5_fs_id "$S5_PREFIX" 2>/dev/null)" ]; then
+        s5_require_space "$S5_WORKDIR" \
+            "$((S5_ASSET_SIZE + S5_ASSET_BINARY_SIZE + S5_ASSET_BINARY_SIZE))" || return 1
+    else
+        s5_require_space "$S5_WORKDIR" "$((S5_ASSET_SIZE + S5_ASSET_BINARY_SIZE))" || return 1
+        s5_require_space "$S5_PREFIX" "$S5_ASSET_BINARY_SIZE" || return 1
+    fi
     _ssezip=$S5_WORKDIR/$S5_ASSET_NAME
     s5_fetch_archive "$_ssezip" || return 1
     s5_verify_archive_members "$_ssezip" "$S5_WORKDIR/members" || return 1
@@ -1085,8 +1197,13 @@ s5_stage_engine() {
 
 s5_release_prefix_private() {
     [ "$S5_PREFIX_PRIVATE" = 1 ] || return 0
-    [ -d "$S5_PREFIX" ] && [ ! -L "$S5_PREFIX" ] || return 1
-    chmod 0755 "$S5_PREFIX" || return 1
+    # Leaving the prefix at 0700 locks the service account out of its own
+    # installation, so this failure is named. Without a message the operator saw
+    # only chmod's own untranslated line and no statement of what it meant.
+    if [ ! -d "$S5_PREFIX" ] || [ -L "$S5_PREFIX" ] || ! chmod 0755 "$S5_PREFIX"; then
+        s5_msg_err prefix.mode "$S5_PREFIX"
+        return 1
+    fi
     S5_PREFIX_PRIVATE=0
 }
 
@@ -2497,6 +2614,10 @@ s5_install_update() {
     cp "$S5_STATE" "$_sioldstate" || return 1
     chmod 0600 "$_sioldcfg" "$_sioldstate" || return 1
     if [ "$S5_UPDATE_NEEDS_BINARY" = 1 ]; then
+        # The rollback copy is as large as the engine itself, and it is written
+        # before anything is replaced, so a filesystem without room for it is named
+        # here rather than while a live installation is half updated.
+        s5_require_space "$S5_TXNDIR" "$(s5_bytecount "$S5_BIN" 2>/dev/null)" || return 1
         cp "$S5_BIN" "$_sioldbin" || return 1
         if [ "${S5_SKIP_OWNERSHIP:-0}" != 1 ]; then chown root:root "$_sioldbin" || return 1; fi
         chmod 0600 "$_sioldbin" || return 1
