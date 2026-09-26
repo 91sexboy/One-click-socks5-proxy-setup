@@ -29,6 +29,7 @@ Deploy an authenticated **SOCKS5 + HTTP CONNECT proxy** on Ubuntu, Debian, CentO
 - Ensure the server can reach GitHub to download the installer and the pinned Xray release.
 - On systemd-based systems, prepare the runtime tools first: `curl` at `/usr/bin/curl`, CA certificates, the distribution Info-ZIP package providing `/usr/bin/unzip` with `-Z` support, `file` at `/usr/bin/file`, `sha256sum` at `/usr/bin/sha256sum` (coreutils, normally already present), Python 3, `ss`, and the standard account-management tools. Those four transport/verification tools are invoked by absolute path, so a copy installed elsewhere is reported as missing. Missing commands are reported by the installer.
 - On Alpine, the installer provisions its runtime packages through `apk` during precheck, **before installation confirmation**. You still need `curl` to download the script; if missing, bootstrap it with `apk add --no-cache curl ca-certificates`.
+- Leave about **90 MiB free** on the filesystem holding `/var/tmp` (or `/tmp`) and `/usr/local`: the pinned archive, the binary extracted from it, and the published copy all exist at once. The installer measures this before downloading and reports the requirement and what is available, so a container with a disk quota is told what it needs rather than failing partway.
 - Allow the chosen **TCP port** in your host firewall and cloud security group as appropriate. The script does not configure either, or set up NAT/port forwarding.
 
 ### 2. Download and run
@@ -190,6 +191,7 @@ Run `sh socks5.sh uninstall` as root and confirm. It removes the managed install
 | Symptom | What to check |
 | --- | --- |
 | A required command is missing | Install the named runtime tool; for archive inspection, use Info-ZIP with `unzip -Z` support. |
+| Not enough space is reported, or a file could not be written completely | Free space or raise the container's disk quota on the filesystem the message names. The installer reports the bytes it needs and the bytes available, and a size mismatch reports what it observed, so a full disk is never presented as a bad release artifact. |
 | The local install succeeds but remote clients cannot connect | Check the advertised address, chosen TCP port, host/cloud firewall, and any NAT or forwarding. |
 | `SERVER_IPV4` appears in the card | Use a reachable IPv4 explicitly or replace the placeholder in the client configuration. |
 | `show` refuses to print | Run as root with stdout attached to a real terminal, not a pipe or redirected file. |
