@@ -118,6 +118,24 @@ assert_contains "Alpine lifecycle pins the installed Xray digest" \
     "$alpine_text"
 assert_contains "Alpine lifecycle proves the hostile unzip was bypassed" \
     'test ! -e "$ALPINE_HOSTILE_UNZIP_LOG"' "$alpine_text"
+assert_contains "Alpine 3.22 enables quota-blind extraction coverage" \
+    'quota_blind: "1"' "$ci_text"
+assert_contains "the quota-blind matrix flag reaches the container" \
+    '-e ALPINE_QUOTA_BLIND="$ALPINE_QUOTA_BLIND"' "$ci_text"
+assert_contains "the quota-blind row runs the production-seam asset regressions" \
+    'S5_REPO_ROOT=$PWD sh tests/unit/test_xray_asset.sh' "$alpine_text"
+assert_contains "quota-blind lifecycle rejects failed regression assertions" \
+    "grep -Eq '^TESTS [1-9][0-9]* 0$'" "$alpine_text"
+assert_contains "quota-blind lifecycle rechecks lifecycle log redaction" \
+    'lifecycle_assert_logs_redacted "$work"' "$alpine_text"
+assert_contains "quota-blind regression log is checked against the install credential" \
+    'lifecycle_generation_absent "$work/quota-blind.log" "$work/pass"' "$alpine_text"
+assert_contains "quota-blind regression log is checked against the update credential" \
+    'lifecycle_generation_absent "$work/quota-blind.log" "$work/pass.update"' "$alpine_text"
+assert_contains "quota-blind lifecycle rejects leftover extraction FIFOs" \
+    "-name '.xray-stream.*'" "$alpine_text"
+assert_contains "quota-blind lifecycle rechecks namespace removal" \
+    'test ! -e /usr/local/libexec/xray-socks5' "$alpine_text"
 # An untouched log is only evidence that the installer bypassed the wrapper if the
 # wrapper would have corrupted what it extracted and would have recorded the call.
 # The positive control extracts one local member both ways and requires the bytes

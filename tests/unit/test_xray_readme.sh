@@ -50,6 +50,12 @@ for _doc in README.md README.zh-CN.md; do
         "($_docrepo/releases/tag/xray-v26.3.27)" "$_doctext"
     case "$_doc" in
     README.md)
+        assert_contains "English storage docs call capacity preflight advisory" \
+            'this is advisory because project or volume quotas may be invisible' "$_doctext"
+        assert_contains "English troubleshooting names statfs-blind quotas" \
+            'some quotas are invisible to `statfs`' "$_doctext"
+        assert_contains "English storage docs classify an actual short write" \
+            'reported as an incomplete storage write with observed and expected bytes' "$_doctext"
         assert_contains "English update docs retain a verified blank port" \
             'blank port keeps the current port only after its listener is verified' "$_doctext"
         assert_contains "English update docs rotate blank credentials" \
@@ -60,6 +66,12 @@ for _doc in README.md README.zh-CN.md; do
             "replaces it with this script's independently verified pinned Xray release" "$_doctext"
         ;;
     README.zh-CN.md)
+        assert_contains "Chinese storage docs call capacity preflight advisory" \
+            '该检查只是预估' "$_doctext"
+        assert_contains "Chinese troubleshooting names statfs-blind quotas" \
+            '部分配额对 `statfs` 不可见' "$_doctext"
+        assert_contains "Chinese storage docs classify an actual short write" \
+            '报告为不完整的存储写入并列出已写入／预期字节数' "$_doctext"
         assert_contains "Chinese update docs retain a verified blank port" \
             '更新时端口留空，仅在确认当前监听器属于本次安装后保留原端口' "$_doctext"
         assert_contains "Chinese update docs rotate blank credentials" \

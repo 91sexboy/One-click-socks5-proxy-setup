@@ -45,6 +45,7 @@ assert_not_contains "asset URL is not latest" '/releases/latest' "$source"
 assert_not_contains "asset URL is not dev-latest" 'dev-latest' "$source"
 assert_contains "asset download is HTTPS-only" "--proto '=https'" "$source"
 assert_contains "asset download is bounded" '--max-filesize' "$source"
+assert_contains "FIFO extraction command is prechecked" 'mktemp mkfifo ln' "$source"
 
 # The production service command uses Xray's config-test and explicit config path.
 assert_contains "config test uses Xray run test" 'run -test -c' "$source"
@@ -310,17 +311,224 @@ s5t_asset_reject good "an archive whose xray member is built for another archite
     architecture
 S5T_FILE_TYPE=''
 
-# Extraction has a refusal reason of its own that no crafted archive can reach:
-# the member inspection ahead of it has already accepted exactly one readable
-# xray. Fail the extraction itself at the unzip seam instead.
+# curl reports a failed -o write with status 23. That status is direct storage
+# evidence just like the extraction writer seam; response/transport failures keep
+# the existing download reason. Both paths remove the partial archive.
+S5_TEST_ASSET_PATH=''
+S5T_CURL_STATUS=0
+S5T_CURL_BYTES=0
+s5_curl_command() {
+    _s5tc_out=''
+    while [ "$#" -gt 0 ]; do
+        if [ "$1" = -o ]; then shift; _s5tc_out=$1; fi
+        shift
+    done
+    /usr/bin/head -c "$S5T_CURL_BYTES" /dev/zero >"$_s5tc_out"
+    return "$S5T_CURL_STATUS"
+}
+S5T_CURL_BYTES=7798784
+S5T_CURL_STATUS=23
+t_run s5_fetch_archive "$S5_TEST_ROOT/curl-partial.zip"
+assert_ne "curl output write failure is refused" 0 "$T_STATUS"
+assert_contains "curl output write failure reports its partial count" \
+    '7798784 bytes written of' "$T_OUT"
+assert_not_contains "curl output write failure is not a bad download" \
+    'asset verification failed: download' "$T_OUT"
+assert_file_absent "curl output write failure removes its partial archive" \
+    "$S5_TEST_ROOT/curl-partial.zip"
+S5T_CURL_BYTES=128
+S5T_CURL_STATUS=22
+t_run s5_fetch_archive "$S5_TEST_ROOT/curl-transport.zip"
+assert_ne "curl transport failure is refused" 0 "$T_STATUS"
+assert_contains "curl transport failure retains the download reason" \
+    'Xray asset verification failed: download.' "$T_OUT"
+assert_not_contains "curl transport failure is not invented as a write failure" \
+    'could not write all of' "$T_OUT"
+assert_file_absent "curl transport failure removes its partial archive" \
+    "$S5_TEST_ROOT/curl-transport.zip"
+S5T_CURL_BYTES=0
+S5T_CURL_STATUS=0
+S5_TEST_ASSET_PATH=$S5T_ASSETS/good.zip
+
+# Extraction exposes the producer and final writer as separate seams. Their
+# statuses are independent: a producer can fail after the writer reaches EOF,
+# while a quota-blind writer failure can close the FIFO and make an otherwise
+# healthy producer report SIGPIPE. The writer status is authoritative for the
+# latter because it is direct evidence that the target write failed; statfs is
+# only an advisory preflight and can still report ample global free space under
+# an LXD project/volume quota.
 S5T_UNZIP_FAIL=''
+S5T_UNZIP_BYTES=''
+S5T_UNZIP_STATUS=0
+S5T_WRITE_LIMIT=''
+S5T_WRITE_STATUS=0
 s5_unzip_command() {
     if [ -n "$S5T_UNZIP_FAIL" ] && [ "$1" = "$S5T_UNZIP_FAIL" ]; then return 9; fi
+    if [ -n "$S5T_UNZIP_BYTES" ] && [ "$1" = -p ]; then
+        /bin/sh -c '
+            printf "%s\n" "$$" >"$1"
+            /usr/bin/head -c "$2" /dev/zero || exit $?
+            exit "$3"
+        ' sh "$S5_TEST_ROOT/extract-producer.pid" \
+            "$S5T_UNZIP_BYTES" "$S5T_UNZIP_STATUS"
+        return $?
+    fi
     /usr/bin/unzip "$@"
 }
+s5_write_stream() {
+    if [ -n "$S5T_WRITE_LIMIT" ]; then
+        /usr/bin/head -c "$S5T_WRITE_LIMIT" >"$1"
+        [ "$S5T_WRITE_STATUS" -eq 0 ] || return "$S5T_WRITE_STATUS"
+        return 0
+    fi
+    /bin/cat >"$1"
+    [ "$S5T_WRITE_STATUS" -eq 0 ] || return "$S5T_WRITE_STATUS"
+}
+
 S5T_UNZIP_FAIL=-p
 s5t_asset_reject good "an archive whose xray member cannot be extracted" extract
+assert_file_absent "a failed extraction removes its partial member" \
+    "$S5_TEST_ROOT/work-good/xray"
+assert_eq "a failed extraction leaves no FIFO" 0 \
+    "$(find "$S5_TEST_ROOT/work-good" -type p 2>/dev/null | wc -l | tr -d '[:space:]')"
 S5T_UNZIP_FAIL=''
+
+# Producer failure and writer success must retain the extractor reason. The
+# writer drains every byte and exits zero, so this goes red if the implementation
+# observes only the last stage as a simple pipeline would.
+S5_WORKDIR=$S5_TEST_ROOT/work-producer-failure
+rm -rf "$S5_WORKDIR"
+mkdir -p "$S5_WORKDIR"
+rm -f "$S5_BIN" "$S5_TEST_ROOT/extract-producer.pid"
+S5T_UNZIP_BYTES=128
+S5T_UNZIP_STATUS=9
+S5T_WRITE_LIMIT=''
+S5T_WRITE_STATUS=0
+t_run s5_extract_binary "$S5T_ASSETS/good.zip" "$S5_WORKDIR/xray"
+assert_ne "a failed producer is refused when the writer succeeds" 0 "$T_STATUS"
+assert_contains "producer failure retains the extractor reason" \
+    'Xray asset verification failed: extract.' "$T_OUT"
+assert_not_contains "producer failure is not reported as storage" \
+    'could not write all of' "$T_OUT"
+assert_file_absent "producer failure removes the partial member" "$S5_WORKDIR/xray"
+assert_eq "producer failure leaves no FIFO" 0 \
+    "$(find "$S5_WORKDIR" -type p 2>/dev/null | wc -l | tr -d '[:space:]')"
+
+# A small stream fits in the FIFO buffer before the writer closes, so the
+# producer exits zero while the final writer returns nonzero. That must be a
+# storage write failure even though statfs reports far more than the 92,082 KiB
+# preflight requirement.
+S5T_FREE_KB=1048576
+S5T_UNZIP_BYTES=128
+S5T_UNZIP_STATUS=0
+S5T_WRITE_LIMIT=64
+S5T_WRITE_STATUS=74
+rm -f "$S5_TEST_ROOT/extract-producer.pid"
+t_run s5_extract_binary "$S5T_ASSETS/good.zip" "$S5_WORKDIR/xray"
+assert_ne "a failed writer is refused when the producer succeeds" 0 "$T_STATUS"
+assert_contains "writer failure is reported from its direct status" \
+    'could not write all of' "$T_OUT"
+assert_contains "writer failure reports observed and expected bytes" \
+    '64 bytes written of' "$T_OUT"
+assert_not_contains "writer failure is not called an asset size failure" \
+    'asset verification failed: binary-size' "$T_OUT"
+assert_file_absent "writer failure removes the partial member" "$S5_WORKDIR/xray"
+assert_eq "writer failure leaves no FIFO" 0 \
+    "$(find "$S5_WORKDIR" -type p 2>/dev/null | wc -l | tr -d '[:space:]')"
+
+# Exact field report: the producer has the pinned 36,577,406 bytes, the writer
+# reaches the LXD quota boundary at 7,798,784 bytes (15,232 x 512) and fails.
+# Closing the FIFO can make the producer fail with SIGPIPE too; writer/storage
+# remains the primary cause, and the producer must be reaped.
+S5T_UNZIP_BYTES=36577406
+S5T_UNZIP_STATUS=0
+S5T_WRITE_LIMIT=7798784
+S5T_WRITE_STATUS=74
+S5_ASSET_BINARY_SIZE=36577406
+rm -f "$S5_TEST_ROOT/extract-producer.pid"
+t_run s5_extract_binary "$S5T_ASSETS/good.zip" "$S5_WORKDIR/xray"
+assert_ne "the exact quota-boundary short write is refused" 0 "$T_STATUS"
+assert_contains "the exact quota-boundary report contains both byte counts" \
+    '7798784 bytes written of 36577406' "$T_OUT"
+assert_not_contains "the exact quota-boundary failure is not asset corruption" \
+    'Xray asset verification failed' "$T_OUT"
+assert_file_absent "the exact quota-boundary short member is removed" "$S5_WORKDIR/xray"
+assert_eq "the exact quota-boundary failure leaves no FIFO" 0 \
+    "$(find "$S5_WORKDIR" -type p 2>/dev/null | wc -l | tr -d '[:space:]')"
+_asset_producer_pid=$(cat "$S5_TEST_ROOT/extract-producer.pid")
+if kill -0 "$_asset_producer_pid" 2>/dev/null; then
+    t_bad "the failed writer's producer was not reaped: $_asset_producer_pid"
+else
+    t_ok
+fi
+
+# Exercise the real TERM cleanup path while producer and writer are both live.
+# The child installs production's signal handler, blocks its writer, and streams
+# enough producer data to remain active until the parent signals it. Cleanup must
+# reap that producer before deleting the FIFO/workdir and partial target. HUP, INT,
+# and TERM share s5_on_signal; the static contract below pins all three mappings.
+_asset_signal_work=$S5_TEST_ROOT/work-signal-extract
+rm -rf "$_asset_signal_work"
+mkdir -p "$_asset_signal_work"
+rm -f "$S5_TEST_ROOT/signal-producer.pid"
+(
+    S5_WORKDIR=$_asset_signal_work
+    S5_INSTALL_COMPLETE=1
+    S5_CREATED_PREFIX=1
+    S5_PREFIX_PRIVATE=0
+    S5_IN_CLEANUP=0
+    S5T_UNZIP_BYTES=1073741824
+    S5T_UNZIP_STATUS=0
+    s5_unzip_command() {
+        if [ "$1" = -p ]; then
+            /bin/sh -c '
+                printf "%s\n" "$$" >"$1"
+                /usr/bin/head -c "$2" /dev/zero
+            ' sh "$S5_TEST_ROOT/signal-producer.pid" "$S5T_UNZIP_BYTES"
+            return $?
+        fi
+        /usr/bin/unzip "$@"
+    }
+    s5_write_stream() {
+        : >"$1"
+        while :; do sleep 1; done
+    }
+    trap 's5_on_signal 143' HUP INT TERM
+    s5_extract_binary "$S5T_ASSETS/good.zip" "$S5_WORKDIR/xray"
+) &
+_asset_signal_shell=$!
+_asset_signal_ready=0
+_asset_signal_tries=0
+while [ "$_asset_signal_tries" -lt 50 ]; do
+    if [ -f "$S5_TEST_ROOT/signal-producer.pid" ] &&
+        find "$_asset_signal_work" -type p -print -quit 2>/dev/null | grep -q .; then
+        _asset_signal_ready=1
+        break
+    fi
+    sleep 0.1
+    _asset_signal_tries=$((_asset_signal_tries + 1))
+done
+assert_eq "signal extraction reaches a live producer and FIFO" 1 "$_asset_signal_ready"
+kill -TERM "$_asset_signal_shell" 2>/dev/null || true
+wait "$_asset_signal_shell" 2>/dev/null
+_asset_signal_status=$?
+assert_ne "TERM interrupts extraction" 0 "$_asset_signal_status"
+assert_file_absent "TERM cleanup removes the extraction workdir" "$_asset_signal_work"
+_asset_signal_producer=$(cat "$S5_TEST_ROOT/signal-producer.pid" 2>/dev/null)
+if [ -n "$_asset_signal_producer" ] && kill -0 "$_asset_signal_producer" 2>/dev/null; then
+    t_bad "TERM cleanup left extraction producer $_asset_signal_producer running"
+else
+    t_ok
+fi
+assert_contains "HUP maps to cleanup status 129" "trap 's5_on_signal 129' HUP" "$source"
+assert_contains "INT maps to cleanup status 130" "trap 's5_on_signal 130' INT" "$source"
+assert_contains "TERM maps to cleanup status 143" "trap 's5_on_signal 143' TERM" "$source"
+S5T_UNZIP_BYTES=''
+S5T_UNZIP_STATUS=0
+S5T_WRITE_LIMIT=''
+S5T_WRITE_STATUS=0
+S5T_FREE_KB=''
+S5_ASSET_BINARY_SIZE=$S5T_BIN_SIZE
 
 # What capacity answers is judged here, before any double exists. A double that
 # delegates to the command it stands in for answers in production's place, so a
@@ -432,21 +640,18 @@ S5T_FREE_KB=''
 S5_ASSET_SIZE=$_asset_size
 S5_ASSET_BINARY_SIZE=$_asset_bin_size
 
-# The same question decides what a short file means, which is the whole point:
-# the direction of the mismatch cannot, because a substituted extractor rewriting
-# line endings shortens the member too (ADR-0005).
+# Exact size acceptance has one responsibility: compare observed and pinned
+# bytes. A completed producer/writer pair with the wrong length is still an
+# artifact mismatch, regardless of what advisory statfs reports. Only a nonzero
+# writer status is evidence of a storage write failure.
 printf 'short\n' >"$S5_TEST_ROOT/truncated"
 S5T_FREE_KB=0
 t_run s5_accept_size "$S5_TEST_ROOT/truncated" binary-size 36577406
-assert_ne "a short file on a full filesystem is refused" 0 "$T_STATUS"
-assert_contains "it names the storage, not the artifact" \
-    'the filesystem is full or over quota' "$T_OUT"
-assert_not_contains "it does not blame asset verification" \
-    'asset verification failed' "$T_OUT"
-# A file longer than its pin cannot be an unfinished write, so an exhausted
-# filesystem must not be offered as its explanation -- that is the same
-# misdiagnosis in the other direction.
-S5T_FREE_KB=0
+assert_ne "a completed short stream is refused" 0 "$T_STATUS"
+assert_contains "a completed short stream stays an artifact size refusal" \
+    'Xray asset verification failed: binary-size is 6 bytes, expected 36577406.' "$T_OUT"
+assert_not_contains "statfs exhaustion does not invent a writer failure" \
+    'full or over quota' "$T_OUT"
 t_run s5_accept_size "$S5_TEST_ROOT/truncated" binary-size 3
 assert_ne "a file longer than its pin is refused" 0 "$T_STATUS"
 assert_contains "a file longer than its pin stays an artifact refusal" \

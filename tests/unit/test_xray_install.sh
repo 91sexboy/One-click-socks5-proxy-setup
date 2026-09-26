@@ -305,6 +305,44 @@ test_download_candidate_failure() { s5t_download_fault_case candidate; }
 test_download_candidate_remove_failure() { s5t_download_fault_case candidate-remove; }
 test_download_signal() { s5t_download_fault_case signal; }
 
+test_fresh_stage_failure_cleanup() {
+    t_xray_fixture 23456 real-download
+    s5_stage_engine() {
+        S5_WORKDIR=$S5_TEST_ROOT/fresh-stage
+        mkdir -p "$S5_WORKDIR"
+        printf 'partial xray\n' >"$S5_WORKDIR/xray"
+        printf 'stage write failed\n' >&2
+        return 74
+    }
+    chmod() {
+        if [ "${1:-}:${2:-}" = "0755:$S5_PREFIX" ]; then
+            printf 'unexpected prefix restore\n' >>"$S5_TEST_ROOT/fresh-stage.events"
+            return 75
+        fi
+        command chmod "$@"
+    }
+    T_OUT=$( (
+        s5_download_engine
+        _fsfc_status=$?
+        s5_cleanup
+        exit "$_fsfc_status"
+    ) 2>&1) && T_STATUS=0 || T_STATUS=$?
+    assert_ne "fresh staging failure aborts installation" 0 "$T_STATUS"
+    assert_contains "fresh staging retains its original diagnosis" \
+        'stage write failed' "$T_OUT"
+    assert_not_contains "fresh staging failure does not describe an existing installation as unusable" \
+        'service account cannot use this installation' "$T_OUT"
+    assert_not_contains "fresh staging failure does not attempt to restore a disposable prefix" \
+        'unexpected prefix restore' "$(cat "$S5_TEST_ROOT/fresh-stage.events" 2>/dev/null)"
+    assert_file_absent "fresh staging cleanup removes its work directory" "$S5_TEST_ROOT/fresh-stage"
+    assert_file_absent "fresh staging cleanup removes its newly created prefix" "$S5_PREFIX"
+    assert_file_absent "fresh staging failure publishes no binary" "$S5_BIN"
+    assert_file_absent "fresh staging failure publishes no config" "$S5_CFG"
+    assert_file_absent "fresh staging failure publishes no state" "$S5_STATE"
+    assert_file_absent "fresh staging failure publishes no service artifact" "$S5_SERVICE_ARTIFACT"
+    unset -f chmod s5_stage_engine
+}
+
 test_account_creation_failure() {
     for _acfamily in debian alpine; do
         for _acfailure in 0 1; do
@@ -512,7 +550,7 @@ s5t_digest_failure_install() {
 test_sha256_unit_failure() { s5t_digest_failure_install unit; }
 test_sha256_config_install_failure() { s5t_digest_failure_install config; }
 
-SCENARIOS='cleanup_stop_failure account_creation_failure account_lifecycle install config_corrupt binary_corrupt unit_corrupt account_corrupt cleanup_temps openrc_runtime locks download_cleanup download_remove_failure download_remove_zh download_release_failure download_candidate_failure download_candidate_remove_failure download_signal sha256_unit_failure sha256_config_install_failure'
+SCENARIOS='cleanup_stop_failure account_creation_failure account_lifecycle install config_corrupt binary_corrupt unit_corrupt account_corrupt cleanup_temps openrc_runtime locks download_cleanup download_remove_failure download_remove_zh download_release_failure download_candidate_failure download_candidate_remove_failure download_signal fresh_stage_failure_cleanup sha256_unit_failure sha256_config_install_failure'
 if [ "$#" -eq 0 ]; then
     # Expand the fixed scenario words into the default argument list.
     # shellcheck disable=SC2086

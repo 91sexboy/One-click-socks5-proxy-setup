@@ -249,22 +249,27 @@ jobs:
         include:
           - image: "alpine:3.20"
             hostile_unzip: "0"
+            quota_blind: "0"
           - image: "alpine:3.22"
             hostile_unzip: "1"
+            quota_blind: "1"
           - image: "alpine:3.24"
             hostile_unzip: "0"
+            quota_blind: "0"
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Run Alpine OpenRC lifecycle
         env:
           ALPINE_IMAGE: ${{ matrix.image }}
           ALPINE_HOSTILE_UNZIP: ${{ matrix.hostile_unzip }}
+          ALPINE_QUOTA_BLIND: ${{ matrix.quota_blind }}
         run: |
           # The lifecycle body is a file rather than a single-quoted argument:
           # one apostrophe in it used to close the argument and hand the rest to
           # the host shell, and as a file it is linted like every other script.
           docker run --rm --privileged -v "$PWD:/src" -w /src \
-            -e ALPINE_HOSTILE_UNZIP="$ALPINE_HOSTILE_UNZIP" "$ALPINE_IMAGE" \
+            -e ALPINE_HOSTILE_UNZIP="$ALPINE_HOSTILE_UNZIP" \
+            -e ALPINE_QUOTA_BLIND="$ALPINE_QUOTA_BLIND" "$ALPINE_IMAGE" \
             sh /src/.github/scripts/alpine-lifecycle.sh
 
   systemd-assertion-controls:
