@@ -12,7 +12,8 @@ CHECKOUT = 'actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09'
 UPLOADER = 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02'
 JOBS = {'lint', 'unit', 'xray-assets', 'xray-mixed', 'xray-systemd', 'openrc-integration',
         'systemd-assertion-controls', 'openrc-assertion-controls', 'memory-report'}
-LIFECYCLE_ROWS = {('alpine:3.20', '0'), ('alpine:3.22', '1'), ('alpine:3.24', '0')}
+LIFECYCLE_ROWS = {('alpine:3.20', '0', '0'), ('alpine:3.22', '1', '1'),
+                  ('alpine:3.24', '0', '0')}
 CONTROL_IMAGES = {'alpine:3.20', 'alpine:3.24'}
 MUTATIONS = {'fail', 'skip', 'unreachable', 'swallow'}
 RUNNERS = {('ubuntu-24.04', 'amd64'), ('ubuntu-24.04-arm', 'arm64')}
@@ -129,20 +130,24 @@ def check(workflow):
     require(jobs['unit']['runs-on'] == '${{ matrix.shell.runner }}', 'unit: runner binding changed')
     require(entry(jobs['unit'], 'sh tests/run.sh', 'Unit suite').get('env', {}).get('S5_TEST_SHELL') ==
             '${{ matrix.shell.command }}', 'unit: shell binding changed')
-    lifecycle_rows = [(row.get('image'), row.get('hostile_unzip'))
+    lifecycle_rows = [(row.get('image'), row.get('hostile_unzip'), row.get('quota_blind'))
                       for row in matrix(jobs['openrc-integration'], 'include')]
     require(len(lifecycle_rows) == len(LIFECYCLE_ROWS) and set(lifecycle_rows) == LIFECYCLE_ROWS,
-            'openrc-integration: required Alpine hostile-unzip rows changed')
+            'openrc-integration: required Alpine lifecycle rows changed')
     lifecycle_step = entry(jobs['openrc-integration'],
                            'sh /src/.github/scripts/alpine-lifecycle.sh')
     require(lifecycle_step.get('env', {}).get('ALPINE_IMAGE') == '${{ matrix.image }}' and
             lifecycle_step.get('env', {}).get('ALPINE_HOSTILE_UNZIP') ==
-            '${{ matrix.hostile_unzip }}' and '"$ALPINE_IMAGE"' in body(lifecycle_step),
+            '${{ matrix.hostile_unzip }}' and
+            lifecycle_step.get('env', {}).get('ALPINE_QUOTA_BLIND') ==
+            '${{ matrix.quota_blind }}' and '"$ALPINE_IMAGE"' in body(lifecycle_step),
             'openrc-integration: matrix bindings changed')
     # Its own message: a job-level binding the container never receives leaves the
     # hostile row running the ordinary gate, and that must not read as a binding.
     require('-e ALPINE_HOSTILE_UNZIP="$ALPINE_HOSTILE_UNZIP"' in body(lifecycle_step),
             'openrc-integration: hostile unzip flag not forwarded to the container')
+    require('-e ALPINE_QUOTA_BLIND="$ALPINE_QUOTA_BLIND"' in body(lifecycle_step),
+            'openrc-integration: quota-blind flag not forwarded to the container')
     require('docker run --rm ' in body(lifecycle_step),
             'openrc-integration: native container entrypoint missing')
     control_images = matrix(jobs['openrc-assertion-controls'], 'image')

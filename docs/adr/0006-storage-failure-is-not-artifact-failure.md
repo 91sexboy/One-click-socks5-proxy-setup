@@ -2,7 +2,10 @@
 
 ## Status
 
-Accepted. Implemented in the asset pipeline and the staging path of `socks5.sh`.
+Accepted in part. The advisory capacity preflight and observed-byte diagnostics
+remain accepted. [ADR-0007](0007-write-status-classifies-incomplete-extraction.md)
+supersedes this ADR's premise that filesystem free space can classify a later
+short write.
 
 ## Context
 
@@ -44,12 +47,20 @@ Three measurements, taken against the real code, fix the shape of the problem:
   the mode is put back by hand. The installer said none of that: only chmod's own
   untranslated line, with no statement of what it meant.
 
-The only signal that separates a write that could not complete from bytes that
-were never right is the filesystem's own answer about free space.
+This ADR originally concluded that the filesystem's free-space answer separated a
+write that could not complete from bytes that were never right. A later exact
+`EDQUOT` reproduction disproved that premise: quota enforcement can reject the
+write while filesystem-wide free blocks remain ample. ADR-0007 records the
+replacement decision based on producer and writer command status.
 
 ## Decision
 
-Ask the filesystem, and report the numbers.
+The capacity-preflight and observed-byte parts below remain historical context and
+accepted behavior. The post-write classification rule is superseded by ADR-0007:
+a failed writer is direct storage-failure evidence, while a successful transfer
+with the wrong size remains an artifact-size failure regardless of `statfs`.
+
+Ask the filesystem before staging, and report the numbers.
 
 - **Refuse up front when there is no room.** Staging checks, after the work
   directory exists and before the download starts, that there is room for the three

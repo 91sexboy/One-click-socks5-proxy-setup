@@ -125,11 +125,13 @@ def run_regressions(source):
             if name == FILES[0]:
                 line = 'S5_XRAY_BASE=' + url
                 rejects(name, text.replace(line, line + '\n' + line), 'duplicate distribution base')
-                anchor = '-o "$1" "$S5_XRAY_BASE/$S5_ASSET_NAME" || {'
+                anchor = ('-o "$1" "$S5_XRAY_BASE/$S5_ASSET_NAME"\n'
+                          '        _sfa_curl=$?')
                 if text.count(anchor) != 1:
                     raise AssertionError('installer transport mutation anchor missing')
                 fallback = ('-o "$1" "$S5_XRAY_BASE/$S5_ASSET_NAME" || '
-                            's5_curl_command -fsSL "' + upstream + '$S5_ASSET_NAME" || {')
+                            's5_curl_command -fsSL "' + upstream + '$S5_ASSET_NAME"\n'
+                            '        _sfa_curl=$?')
                 rejects(name, text.replace(anchor, fallback), 'transport failure triggers upstream fallback')
             else:
                 variable = '$XRAY_ASSET' if name == FILES[1] else '$ASSET'

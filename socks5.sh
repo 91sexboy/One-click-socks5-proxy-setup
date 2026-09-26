@@ -28,6 +28,9 @@ S5_OS_VERSION_ID=''
 S5_OS_FAMILY=''
 S5_INIT=''
 S5_WORKDIR=''
+S5_EXTRACT_PID=''
+S5_EXTRACT_FIFO=''
+S5_EXTRACT_TARGET=''
 S5_LOCK_HELD=0
 S5_LOCK_TOKEN=''
 S5_VERIFY_TEMP=''
@@ -982,17 +985,6 @@ s5_free_kb() {
     esac
 }
 
-# Whether the filesystem holding $1 has no usable room left. A write that could
-# not complete and a substituted extractor both leave a file shorter than its pin
-# (ADR-0005, ADR-0006), so the direction of a size mismatch identifies neither;
-# this is the one signal that separates them, and an unknown answer is not taken
-# as exhaustion. The slack covers a filesystem that reports a few blocks free but
-# could never have held the multi-megabyte artifact.
-s5_space_exhausted() {
-    _sspe_free=$(s5_free_kb "$1") || return 1
-    [ "$_sspe_free" -le 64 ]
-}
-
 s5_require_space() {
     # $1: the directory about to receive bytes. $2: how many. Refuse only on a
     # usable capacity answer that is short of the requirement.
@@ -1006,28 +998,13 @@ s5_require_space() {
 
 s5_accept_size() {
     # $1: the file just written. $2: the gate's stable reason slug. $3: the pinned
-    # byte count. Accept only the exact length, and report the length actually
-    # observed either way, so a report of this refusal is diagnosable without a
-    # rerun: two bytes short is a rewritten stream, twenty megabytes short is a
-    # write that ran out of room.
+    # byte count. This gate answers only whether completed bytes match the pin.
+    # A short completed stream can be a rewritten artifact; only a nonzero writer
+    # status is direct evidence that storage refused the write (ADR-0007).
     _sas_size=$(s5_bytecount "$1")
     case "$_sas_size" in '' | *[!0-9]*) _sas_size=0 ;; esac
     [ "$_sas_size" = "$3" ] && return 0
-    # Only a file shorter than its pin can be a write that did not finish, and only
-    # an exhausted filesystem explains one. A file longer than its pin is something
-    # no truncation produces -- a length-less response admitted one byte over the
-    # bound, or a tampered member -- and blaming the disk for it would reinstate the
-    # mirror image of the misdiagnosis this gate exists to remove.
-    _sas_short=0
-    case "$3" in
-    '' | *[!0-9]*) ;;
-    *) [ "$_sas_size" -lt "$3" ] && _sas_short=1 ;;
-    esac
-    if [ "$_sas_short" = 1 ] && s5_space_exhausted "$1"; then
-        s5_msg_err disk.write "$1" "$_sas_size" "$3"
-    else
-        s5_msg_err asset.size "$2" "$_sas_size" "$3"
-    fi
+    s5_msg_err asset.size "$2" "$_sas_size" "$3"
     return 1
 }
 
@@ -1083,10 +1060,22 @@ s5_fetch_archive() {
         # byte, and the size check also bounds what a length-less reply left on disk.
         s5_curl_command -q -fsSL --proto '=https' --proto-redir '=https' \
             --max-time 120 --max-filesize "$((S5_ASSET_SIZE + 1))" \
-            -o "$1" "$S5_XRAY_BASE/$S5_ASSET_NAME" || {
-            s5_msg_err asset.invalid download
+            -o "$1" "$S5_XRAY_BASE/$S5_ASSET_NAME"
+        _sfa_curl=$?
+        if [ "$_sfa_curl" -ne 0 ]; then
+            if [ "$_sfa_curl" -eq 23 ]; then
+                # curl 23 is CURLE_WRITE_ERROR: unlike response/transport errors,
+                # it directly says the -o target could not be written. Report the
+                # partial count before removing it; no stderr text is parsed.
+                _sfa_size=$(s5_bytecount "$1" 2>/dev/null || printf 0)
+                case "$_sfa_size" in '' | *[!0-9]*) _sfa_size=0 ;; esac
+                s5_msg_err disk.write "$1" "$_sfa_size" "$S5_ASSET_SIZE"
+            else
+                s5_msg_err asset.invalid download
+            fi
+            rm -f "$1" 2>/dev/null || true
             return 1
-        }
+        fi
         [ "$(s5_bytecount "$1")" -le "$((S5_ASSET_SIZE + 1))" ] || {
             s5_msg_err asset.invalid size
             return 1
@@ -1144,19 +1133,77 @@ s5_verify_archive_members() {
     fi
 }
 
+# Final stream-to-file writer for extracted members. It is deliberately narrow:
+# tests can inject a quota-blind short write at this seam, while production uses
+# the prechecked cat shipped by every supported base system. Its status, not stderr
+# wording or statfs, is the evidence that the target write failed.
+s5_write_stream() { cat >"$1"; }
+
+s5_extract_stream_cleanup() {
+    # A failed writer may leave the producer blocked or receiving SIGPIPE. Reap it
+    # before removing the invocation-owned FIFO, and make signal cleanup safe when
+    # it interrupts either side of the transfer.
+    if [ -n "$S5_EXTRACT_PID" ]; then
+        kill "$S5_EXTRACT_PID" 2>/dev/null || true
+        wait "$S5_EXTRACT_PID" 2>/dev/null || true
+        S5_EXTRACT_PID=''
+    fi
+    if [ -n "$S5_EXTRACT_FIFO" ]; then
+        rm -f "$S5_EXTRACT_FIFO" 2>/dev/null || true
+        S5_EXTRACT_FIFO=''
+    fi
+}
+
 s5_extract_binary() {
-    # $1: the verified archive. $2: scratch path for the extracted xray. Accept the
-    # binary only at the pinned size and SHA-256 and an arch-matching ELF type, then
-    # install it atomically at $S5_BIN and record its digest.
-    s5_unzip -p "$1" xray >"$2" 2>/dev/null || { s5_msg_err asset.invalid extract; return 1; }
-    s5_accept_size "$2" binary-size "$S5_ASSET_BINARY_SIZE" || return 1
-    [ "$(s5_sha256 "$2")" = "$S5_ASSET_BINARY_SHA256" ] || { s5_msg_err asset.invalid binary-sha256; return 1; }
-    chmod 0755 "$2" || return 1
-    _seb_file=$(s5_file_type "$2" 2>/dev/null) || return 1
+    # $1: the verified archive. $2: scratch path for the extracted xray. A FIFO
+    # keeps producer and writer statuses independently visible without pipefail:
+    # writer failure is storage, producer failure is extraction, and only two
+    # successful statuses reach the pinned size/SHA-256/ELF gates.
+    S5_EXTRACT_FIFO=$S5_WORKDIR/.xray-stream.$$
+    S5_EXTRACT_TARGET=$2
+    rm -f "$S5_EXTRACT_FIFO" "$2" 2>/dev/null || return 1
+    mkfifo "$S5_EXTRACT_FIFO" || { S5_EXTRACT_FIFO=''; S5_EXTRACT_TARGET=''; return 1; }
+    (s5_unzip -p "$1" xray >"$S5_EXTRACT_FIFO" 2>/dev/null) &
+    S5_EXTRACT_PID=$!
+    s5_write_stream "$2" <"$S5_EXTRACT_FIFO"
+    _seb_writer=$?
+    if [ "$_seb_writer" -ne 0 ]; then
+        # Stop a producer that has not observed the closed reader yet; its ensuing
+        # SIGPIPE/termination is secondary to the writer failure already observed.
+        kill "$S5_EXTRACT_PID" 2>/dev/null || true
+    fi
+    wait "$S5_EXTRACT_PID" 2>/dev/null
+    _seb_producer=$?
+    S5_EXTRACT_PID=''
+    rm -f "$S5_EXTRACT_FIFO" 2>/dev/null || true
+    S5_EXTRACT_FIFO=''
+    if [ "$_seb_writer" -ne 0 ]; then
+        _seb_size=$(s5_bytecount "$2" 2>/dev/null || printf 0)
+        case "$_seb_size" in '' | *[!0-9]*) _seb_size=0 ;; esac
+        s5_msg_err disk.write "$2" "$_seb_size" "$S5_ASSET_BINARY_SIZE"
+        rm -f "$2" 2>/dev/null || true
+        S5_EXTRACT_TARGET=''
+        return 1
+    fi
+    if [ "$_seb_producer" -ne 0 ]; then
+        s5_msg_err asset.invalid extract
+        rm -f "$2" 2>/dev/null || true
+        S5_EXTRACT_TARGET=''
+        return 1
+    fi
+    S5_EXTRACT_TARGET=''
+    s5_accept_size "$2" binary-size "$S5_ASSET_BINARY_SIZE" || { rm -f "$2" 2>/dev/null || true; return 1; }
+    [ "$(s5_sha256 "$2")" = "$S5_ASSET_BINARY_SHA256" ] || {
+        s5_msg_err asset.invalid binary-sha256
+        rm -f "$2" 2>/dev/null || true
+        return 1
+    }
+    chmod 0755 "$2" || { rm -f "$2" 2>/dev/null || true; return 1; }
+    _seb_file=$(s5_file_type "$2" 2>/dev/null) || { rm -f "$2" 2>/dev/null || true; return 1; }
     case "$S5_ARCHNAME:$_seb_file" in
     amd64:*'ELF 64-bit LSB executable, x86-64'*) ;;
     arm64:*'ELF 64-bit LSB executable, ARM aarch64'*) ;;
-    *) s5_msg_err asset.invalid architecture; return 1 ;;
+    *) s5_msg_err asset.invalid architecture; rm -f "$2" 2>/dev/null || true; return 1 ;;
     esac
     _seb_temp=$(mktemp "$S5_PREFIX/.xray.XXXXXX") || return 1
     chmod 0755 "$_seb_temp" || { rm -f "$_seb_temp"; return 1; }
@@ -1225,9 +1272,30 @@ s5_download_engine() {
         return 1
     fi
     s5_stage_engine
-    _sde_status=$?
-    s5_release_prefix_private || return 1
-    return "$_sde_status"
+    _sde_stage=$?
+    _sde_cleanup=0
+    _sde_restore=0
+    if [ "$S5_CREATED_PREFIX" = 1 ]; then
+        if [ "$_sde_stage" -ne 0 ]; then
+            # A failed fresh install owns this disposable private prefix. Unified
+            # cleanup removes it and its partial files; restoring 0755 would expose a
+            # namespace that was never a usable installation and emit a false warning.
+            return "$_sde_stage"
+        fi
+        # A successful fresh install still needs its public prefix mode, but its
+        # workdir remains available to the command-level cleanup after publication.
+        s5_release_prefix_private
+        return $?
+    fi
+    # Release staging quota before restoring traversal to an existing install.
+    # Both operations are attempted, and both diagnostics survive, even when the
+    # original staging failure remains the command's primary status.
+    s5_cleanup_download || _sde_cleanup=$?
+    s5_release_prefix_private || _sde_restore=$?
+    [ "$_sde_stage" -eq 0 ] || return "$_sde_stage"
+    [ "$_sde_cleanup" -eq 0 ] || return "$_sde_cleanup"
+    [ "$_sde_restore" -eq 0 ] || return "$_sde_restore"
+    return 0
 }
 
 s5_binary_ready() {
@@ -2141,6 +2209,23 @@ s5_cleanup() {
     S5_IN_CLEANUP=1
     trap '' HUP INT TERM
     _sclstatus=0
+    _scldownload=0
+    # Reap any extraction producer before removing the FIFO/work directory. The
+    # target is partial whenever signal cleanup finds it still registered.
+    s5_extract_stream_cleanup
+    if [ -n "$S5_EXTRACT_TARGET" ]; then
+        rm -f "$S5_EXTRACT_TARGET" 2>/dev/null || true
+        S5_EXTRACT_TARGET=''
+    fi
+    # Release staging quota before restoring traversal to an existing prefix on
+    # signal/EXIT paths too. A cleanup failure is retained, but cannot suppress
+    # the independent restore attempt or its diagnostic.
+    if ! s5_cleanup_download; then
+        # Download cleanup is independent of namespace rollback. Retain its
+        # failure for the final status, but still remove a failed fresh install
+        # and still attempt mode restoration for an existing installation.
+        _scldownload=1
+    fi
     # A handled signal can enter cleanup from inside the staging function, before
     # s5_download_engine regains control. Restore an existing installation here;
     # a fresh prefix stays private until its partial files and directory are removed.
@@ -2210,12 +2295,12 @@ s5_cleanup() {
     # too: s5_on_signal_lock is not the only handler that reaches a live temp, and a
     # successful run has already cleared it, so this is a no-op there.
     s5_release_verify_temp
-    s5_cleanup_download || true
     if [ "$S5_LOCK_HELD" = 1 ]; then
         s5_lock_release || true
     fi
     S5_IN_CLEANUP=0
-    return "$_sclstatus"
+    [ "$_sclstatus" -ne 0 ] && return "$_sclstatus"
+    return "$_scldownload"
 }
 
 s5_on_signal() {
@@ -2324,7 +2409,7 @@ s5_precheck() {
         ;;
     esac
     s5_install_runtime_dependencies "$_spcmode" || return 1
-    s5_require_commands awk sed grep tr tail head id getent mkdir rmdir rm mv cp cat printf stat mktemp ln sleep wc chmod || return 1
+    s5_require_commands awk sed grep tr tail head id getent mkdir rmdir rm mv cp cat printf stat mktemp mkfifo ln sleep wc chmod || return 1
     # Every mode reads a recorded digest, so the pinned digest tool is required
     # here rather than per mode, and by absolute path: a same-named PATH wrapper
     # would otherwise decide what counts as the pinned artifact.

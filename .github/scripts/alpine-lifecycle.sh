@@ -218,6 +218,40 @@ python3 tests/protocol/terminal_install.py \
   "$work/answers.reinstall" "$work/pass" 23456 0 >"$work/reinstall.log"
 sh .github/scripts/run-socks5.sh uninstall \
   "$work/answers.uninstall" "$work/uninstall-reinstall.log" "$work/pass"
+# The Alpine 3.22 quota-blind row runs the production writer seam with a
+# deterministic short-write injection. The focused asset suite proves that
+# statfs can report ample capacity while the writer fails, that disk.write wins
+# over the producer's secondary failure, and that FIFO/producers are reclaimed.
+# Run it only after uninstall so any namespace residue is attributable to the
+# regression itself rather than the real lifecycle above.
+if [ "${ALPINE_QUOTA_BLIND:-0}" = 1 ]; then
+  S5_REPO_ROOT=$PWD sh tests/unit/test_xray_asset.sh \
+    >"$work/quota-blind.log" 2>&1
+  grep -Eq '^TESTS [1-9][0-9]* 0$' "$work/quota-blind.log"
+  grep -qxF 'SKIPS 0' "$work/quota-blind.log"
+  lifecycle_assert_logs_redacted "$work"
+  lifecycle_generation_absent "$work/quota-blind.log" "$work/pass"
+  lifecycle_generation_absent "$work/quota-blind.log" "$work/pass.update"
+  test ! -e /usr/local/libexec/xray-socks5
+  test ! -e /etc/xray-socks5
+  test ! -e /var/lib/xray-socks5
+  test ! -e /etc/init.d/xray-socks5
+  test ! -e /run/xray-socks5.pid
+  if getent passwd xray-socks5 >/dev/null 2>&1 ||
+      getent group xray-socks5 >/dev/null 2>&1; then
+    exit 1
+  fi
+  if find /tmp /var/tmp -type p -name '.xray-stream.*' -print -quit 2>/dev/null |
+      grep -q .; then
+    printf 'quota-blind regression left an extraction FIFO\n' >&2
+    exit 1
+  fi
+  if find /tmp /var/tmp -maxdepth 1 -type d -name 's5test.*' -print -quit 2>/dev/null |
+      grep -q .; then
+    printf 'quota-blind regression left test or short-write scratch\n' >&2
+    exit 1
+  fi
+fi
 sh socks5.sh help </dev/null >"$work/help-after-uninstall.log"
 grep -q 'Usage: sh socks5.sh' "$work/help-after-uninstall.log"
 # ADR-0006: the capacity check reads the filesystem through stat, and BusyBox builds

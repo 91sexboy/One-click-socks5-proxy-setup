@@ -419,6 +419,9 @@ s5t_txn_case() {
     assert_eq "$_txn_fault preserves state" "$_txn_state" "$(t_sha256 "$S5_STATE")"
     assert_mode "$_txn_fault leaves private config permissions" 640 "$S5_CFG"
     assert_mode "$_txn_fault leaves private state permissions" 600 "$S5_STATE"
+    # Sourced production assigns the lock path; ShellCheck cannot follow that
+    # dynamic fixture boundary after the local fault functions are introduced.
+    # shellcheck disable=SC2153
     assert_file_absent "$_txn_fault releases lock" "$S5_LOCKDIR"
     case "$_txn_fault" in
     start|dataplane|state)
@@ -1086,6 +1089,79 @@ test_sha256_config_update_failure() {
     t_xray_assert_healthy
 }
 
+s5t_existing_stage_failure() {
+    _esf_cleanup_fault=$1
+    t_xray_fixture 23456 real-download
+    mkdir -p "$S5_PREFIX"
+    printf 'existing xray\n' >"$S5_BIN"
+    chmod 0755 "$S5_PREFIX" "$S5_BIN"
+    _esf_binary=$(t_sha256 "$S5_BIN")
+    s5_stage_engine() {
+        S5_WORKDIR=$S5_TEST_ROOT/existing-stage
+        mkdir -p "$S5_WORKDIR"
+        printf 'partial xray\n' >"$S5_WORKDIR/xray"
+        printf 'stage write failed\n' >&2
+        return 74
+    }
+    rm() {
+        if [ "${1:-}:${2:-}" = "-rf:$S5_WORKDIR" ]; then
+            printf 'cleanup\n' >>"$S5_TEST_ROOT/existing-stage.events"
+            case "$_esf_cleanup_fault" in
+            fail | cleanup-restore-fail) return 76 ;;
+            esac
+        fi
+        command rm "$@"
+    }
+    chmod() {
+        if [ "${1:-}:${2:-}" = "0755:$S5_PREFIX" ]; then
+            printf 'restore\n' >>"$S5_TEST_ROOT/existing-stage.events"
+            [ "$_esf_cleanup_fault" != cleanup-restore-fail ] || return 77
+        fi
+        command chmod "$@"
+    }
+    T_OUT=$(s5_download_engine 2>&1) && T_STATUS=0 || T_STATUS=$?
+    case "$_esf_cleanup_fault" in
+    cleanup-restore-fail)
+        assert_ne "combined cleanup and restore failure aborts the update" 0 "$T_STATUS"
+        ;;
+    *)
+        assert_eq "existing-prefix staging preserves the injected failure status" 74 "$T_STATUS"
+        ;;
+    esac
+    assert_contains "existing-prefix staging preserves the original diagnosis" \
+        'stage write failed' "$T_OUT"
+    assert_contains "existing-prefix staging releases scratch before restoring traversal" \
+        'cleanup
+restore' "$(cat "$S5_TEST_ROOT/existing-stage.events" 2>/dev/null)"
+    if [ "$_esf_cleanup_fault" = cleanup-restore-fail ]; then
+        assert_contains "cleanup failure remains diagnostic when prefix restoration also fails" \
+            'could not remove temporary download directory' "$T_OUT"
+        assert_contains "prefix restoration failure remains diagnostic after cleanup failure" \
+            'could not restore installation directory' "$T_OUT"
+        assert_contains "failed prefix restoration was attempted" \
+            'restore' "$(cat "$S5_TEST_ROOT/existing-stage.events" 2>/dev/null)"
+        assert_mode "failed restoration leaves the existing prefix private" 700 "$S5_PREFIX"
+    else
+        assert_mode "existing-prefix staging restores mode 0755" 755 "$S5_PREFIX"
+    fi
+    assert_eq "existing-prefix staging preserves the installed binary" \
+        "$_esf_binary" "$(t_sha256 "$S5_BIN")"
+    if [ "$_esf_cleanup_fault" = fail ] || [ "$_esf_cleanup_fault" = cleanup-restore-fail ]; then
+        assert_contains "staging cleanup failure remains diagnostic" \
+            'could not remove temporary download directory' "$T_OUT"
+        assert_dir_exists "failed staging cleanup retains its named evidence" "$S5_TEST_ROOT/existing-stage"
+        command rm -rf "$S5_TEST_ROOT/existing-stage"
+    else
+        assert_file_absent "successful staging cleanup removes scratch" "$S5_TEST_ROOT/existing-stage"
+        assert_eq "successful staging cleanup clears its workdir reference" '' "$S5_WORKDIR"
+    fi
+    unset -f rm chmod s5_stage_engine
+}
+
+test_existing_stage_failure() { s5t_existing_stage_failure ok; }
+test_existing_stage_cleanup_failure() { s5t_existing_stage_failure fail; }
+test_existing_stage_cleanup_restore_failure() { s5t_existing_stage_failure cleanup-restore-fail; }
+
 test_update_commit_cleanup_failure() {
     for _ucc_fault in first second rmdir; do
         t_xray_fixture 23999
@@ -1129,7 +1205,7 @@ test_update_commit_cleanup_failure() {
     done
 }
 
-SCENARIOS='uninstall_confirmation uninstall_messages family update owned_port rejected_candidate listener_failure rejected_command publish_signal config_symlink uninstall_leftovers uninstall_residue verifier_cleanup txn_mkdir_failure txn_copy_failure txn_chmod_failure stop_failure wait_stopped_failure publication_failure new_start_failure dataplane_failure state_write_failure rollback_restart_failure restore_failure uninstall_unknown rollback_exit uninstall_group_residue uninstall_resume uninstall_signal_resume uninstall_resume_drift uninstall_phase_gap_resume uninstall_final_window older_release_operations older_release_update binary_ready_gate older_release_download_failure transaction_contract_drift rollback_backup_drift uninstall_directory_drift transaction_all_commands transaction_unknown_residue sha256_binary_update_failure sha256_config_update_failure update_commit_cleanup_failure'
+SCENARIOS='uninstall_confirmation uninstall_messages family update owned_port rejected_candidate listener_failure rejected_command publish_signal config_symlink uninstall_leftovers uninstall_residue verifier_cleanup txn_mkdir_failure txn_copy_failure txn_chmod_failure stop_failure wait_stopped_failure publication_failure new_start_failure dataplane_failure state_write_failure rollback_restart_failure restore_failure uninstall_unknown rollback_exit uninstall_group_residue uninstall_resume uninstall_signal_resume uninstall_resume_drift uninstall_phase_gap_resume uninstall_final_window older_release_operations older_release_update binary_ready_gate older_release_download_failure transaction_contract_drift rollback_backup_drift uninstall_directory_drift transaction_all_commands transaction_unknown_residue sha256_binary_update_failure sha256_config_update_failure update_commit_cleanup_failure existing_stage_failure existing_stage_cleanup_failure existing_stage_cleanup_restore_failure'
 if [ "$#" -eq 0 ]; then
     # Expand the fixed scenario words into the default argument list.
     # shellcheck disable=SC2086
