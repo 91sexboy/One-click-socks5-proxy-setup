@@ -230,6 +230,9 @@ def check_raw_publisher(root):
             'raw publisher: permission boundary is missing')
     require('--clobber' not in workflow and '--force' not in workflow,
             'raw publisher: replacement path is forbidden')
+    require(workflow.count('2>/dev/null | \\\n            jq -r .object.sha || true') == 1 and
+            '--jq .object.sha 2>/dev/null || true' not in workflow,
+            'raw publisher: missing-tag lookup must not capture the gh error body')
     require(workflow.count('test "$GITHUB_REF" = refs/heads/xray-only') == 2 and
             workflow.count('DISTRIBUTION_TAG: ' + RAW_DISTRIBUTION_TAG) == 1,
             'raw publisher: branch or tag pin differs')
