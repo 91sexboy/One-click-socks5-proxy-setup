@@ -168,6 +168,8 @@ def run_regressions(source):
             ('.github/workflows/publish-xray-raw.yml', publisher,
              'test "$GITHUB_REF" = refs/heads/xray-only', 'test "$GITHUB_REF" = refs/heads/other', 'wrong dispatch branch'),
             ('.github/workflows/publish-xray-raw.yml', publisher,
+             '2>/dev/null | \\\n            jq -r .object.sha || true', '--jq .object.sha 2>/dev/null || true', '404 body captured as tag sha'),
+            ('.github/workflows/publish-xray-raw.yml', publisher,
              'gh release upload "$DISTRIBUTION_TAG" --repo "$GITHUB_REPOSITORY" "$path"',
              'gh release upload "$DISTRIBUTION_TAG" --clobber --repo "$GITHUB_REPOSITORY" "$path"',
              'replacement upload enabled'),
