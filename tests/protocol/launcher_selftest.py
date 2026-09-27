@@ -19,7 +19,7 @@ from selftest_support import TapTestCase, kill_process_group, run_tests
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tests/lib"))
-from release_contract import PINS
+from release_contract import RAW_ASSETS
 
 LAUNCHER = ROOT / "tests/protocol/start_engine.sh"
 
@@ -52,6 +52,9 @@ def scenario(shell, marker, mode, stale=False, invalid_pass=False):
         engine = root / "engine"
         engine.write_text('''#!/usr/bin/env python3
 import json, os, pathlib, socket, sys, time
+if sys.argv[1:] == ["version"]:
+    print("Xray 26.3.27 (synthetic launcher fixture)")
+    sys.exit(0)
 if "-test" in sys.argv:
     sys.exit(0)
 root = pathlib.Path(os.environ["FIXTURE_ROOT"])
@@ -78,27 +81,18 @@ import os, pathlib, sys, time
 name = pathlib.Path(sys.argv[0]).name
 root = pathlib.Path(os.environ["FIXTURE_ROOT"])
 if name == "curl":
-    with open(sys.argv[sys.argv.index("-o") + 1], "wb") as handle:
-        handle.truncate({PINS['amd64']['size']})
+    target = pathlib.Path(sys.argv[sys.argv.index("-o") + 1])
+    body = (root / "engine").read_text()
+    target.write_text(body + "#" + "x" * ({RAW_ASSETS['amd64'][1]} - len(body) - 2) + "\\n")
 elif name == "sha256sum":
     target = pathlib.Path(sys.argv[-1])
-    digest = "{PINS['amd64']['binary_sha']}" if target.name == "xray" else "{PINS['amd64']['sha']}"
-    print(digest + "  " + target.name)
-elif name == "unzip":
-    if sys.argv[1] == "-Z1":
-        print("xray\\ngeoip.dat\\ngeosite.dat\\nLICENSE\\nREADME.md")
-    else:
-        # The launcher gates the extracted member on the pinned size, so pad the
-        # engine up to it with one trailing comment line: the same program, at
-        # the byte count the real member has.
-        body = (root / "engine").read_text()
-        sys.stdout.write(body + "#" + "x" * ({PINS['amd64']['binary_size']} - len(body) - 2) + "\\n")
+    print("{RAW_ASSETS['amd64'][2]}  " + target.name)
 elif name == "file":
-    print("ELF 64-bit LSB executable, x86-64")
+    print("ELF 64-bit LSB executable, x86-64, statically linked")
 elif name == "sleep":
     time.sleep(0.01)
 '''
-        for name in ("curl", "sha256sum", "unzip", "file", "sleep"):
+        for name in ("curl", "sha256sum", "file", "sleep"):
             path = tools / name
             path.write_text(fixture_tool, encoding="ascii")
             path.chmod(0o755)
@@ -113,13 +107,10 @@ elif name == "sleep":
             # BusyBox resolves built-in applets before PATH; shell functions
             # keep the same explicit tool fixtures in all four supported shells.
             wrappers = "\n".join('%s() { "$FIXTURE_ROOT/bin/%s" "$@"; }' % (name, name)
-                                 for name in ("curl", "sha256sum", "unzip", "file", "sleep"))
-            # The launcher runs Info-ZIP at an absolute path through a seam it
-            # defines only when none is present, so the fixture extractor is
-            # substituted there rather than as a bare `unzip`.
+                                 for name in ("curl", "sha256sum", "file", "sleep"))
+            # Replace only the launcher transport and verification command seams.
             wrappers += '\ncurl_command() { "$FIXTURE_ROOT/bin/curl" "$@"; }'
             wrappers += '\nsha256_command() { "$FIXTURE_ROOT/bin/sha256sum" "$@"; }'
-            wrappers += '\nunzip_command() { "$FIXTURE_ROOT/bin/unzip" "$@"; }'
             wrappers += '\nfile_type_command() { "$FIXTURE_ROOT/bin/file" -b "$@"; }'
             wrappers += '\npython3() { : >"$FIXTURE_ROOT/probed"; "$REAL_PYTHON" "$@"; }'
             command = shell + ["-c", wrappers + '\n. "$1"', "launcher-fixture", str(LAUNCHER)]

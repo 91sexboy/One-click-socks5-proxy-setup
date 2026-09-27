@@ -2,6 +2,8 @@
 
 ## Status
 
+Historical for target-side ZIP delivery; superseded there by [ADR-0008](0008-raw-xray-release-assets.md).
+
 Accepted. Implemented in the asset pipeline of `socks5.sh`.
 
 ## Context

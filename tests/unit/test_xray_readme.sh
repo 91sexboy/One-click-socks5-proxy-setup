@@ -40,22 +40,22 @@ for _doc in README.md README.zh-CN.md; do
         'Alpine 3.20 / 3.22 / 3.24 amd64' "$_doctext"
     assert_contains "$_doc requires the canonical packaged curl path" \
         '/usr/bin/curl' "$_doctext"
-    assert_contains "$_doc requires the canonical packaged Info-ZIP path" \
+    assert_not_contains "$_doc no longer requires the packaged Info-ZIP path" \
         '/usr/bin/unzip' "$_doctext"
     assert_contains "$_doc requires the canonical packaged digest path" \
         '/usr/bin/sha256sum' "$_doctext"
     assert_contains "$_doc requires the canonical packaged file path" \
         '/usr/bin/file' "$_doctext"
     assert_contains "$_doc links to the verified local release mirror" \
-        "($_docrepo/releases/tag/xray-v26.3.27)" "$_doctext"
+        "($_docrepo/releases/tag/xray-v26.3.27-r1)" "$_doctext"
     case "$_doc" in
     README.md)
         assert_contains "English storage docs call capacity preflight advisory" \
-            'this is advisory because project or volume quotas may be invisible' "$_doctext"
+            'Capacity checks are advisory because project or volume quotas may be invisible' "$_doctext"
         assert_contains "English troubleshooting names statfs-blind quotas" \
             'some quotas are invisible to `statfs`' "$_doctext"
         assert_contains "English storage docs classify an actual short write" \
-            'reported as an incomplete storage write with observed and expected bytes' "$_doctext"
+            'an actual short write reports observed and expected bytes' "$_doctext"
         assert_contains "English update docs retain a verified blank port" \
             'blank port keeps the current port only after its listener is verified' "$_doctext"
         assert_contains "English update docs rotate blank credentials" \
@@ -67,11 +67,11 @@ for _doc in README.md README.zh-CN.md; do
         ;;
     README.zh-CN.md)
         assert_contains "Chinese storage docs call capacity preflight advisory" \
-            '该检查只是预估' "$_doctext"
+            '容量预检查只是预估' "$_doctext"
         assert_contains "Chinese troubleshooting names statfs-blind quotas" \
             '部分配额对 `statfs` 不可见' "$_doctext"
         assert_contains "Chinese storage docs classify an actual short write" \
-            '报告为不完整的存储写入并列出已写入／预期字节数' "$_doctext"
+            '实际短写会报告已写入和预期字节数' "$_doctext"
         assert_contains "Chinese update docs retain a verified blank port" \
             '更新时端口留空，仅在确认当前监听器属于本次安装后保留原端口' "$_doctext"
         assert_contains "Chinese update docs rotate blank credentials" \

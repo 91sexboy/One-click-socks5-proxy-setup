@@ -181,7 +181,6 @@ export S5_TEST_MODE S5_TEST_ROOT S5_LIB_ONLY
 # shellcheck source=/dev/null
 . "$SRC"
 S5_TEST_MODE=0
-S5_WORKDIR=$WORK
 S5_LANG=en
 S5_PORT=23456
 S5_USERNAME=alice

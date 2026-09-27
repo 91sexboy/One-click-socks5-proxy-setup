@@ -723,6 +723,7 @@ test_uninstall_final_window() {
 }
 
 s5t_make_older_state() {
+    t_xray_state_schema1
     _mos_oldbin=$S5_TEST_ROOT/older-xray
     printf '#!/bin/sh\nprintf older\\n\n' >"$_mos_oldbin"
     chmod 0755 "$_mos_oldbin"
@@ -763,6 +764,7 @@ test_older_release_operations() {
 test_older_release_update() {
     t_xray_fixture 23999
     t_xray_install
+    t_xray_state_schema1
     _oru_oldbin=$S5_TEST_ROOT/older-xray
     printf '#!/bin/sh\nprintf older\\n\n' >"$_oru_oldbin"
     chmod 0755 "$_oru_oldbin"
@@ -844,6 +846,7 @@ test_binary_ready_gate() {
 test_older_release_download_failure() {
     t_xray_fixture 23999
     t_xray_install
+    t_xray_state_schema1
     _ord_bin=$(t_sha256 "$S5_BIN")
     _ord_cfg=$(t_sha256 "$S5_CFG")
     awk -F '\t' '
@@ -992,6 +995,7 @@ test_transaction_all_commands() {
 test_sha256_binary_update_failure() {
     t_xray_fixture 23999
     t_xray_install
+    t_xray_state_schema1
     _sbu_old_bin=$(t_sha256 "$S5_BIN")
     _sbu_old_cfg=$(t_sha256 "$S5_CFG")
     _sbu_old_state=$(t_sha256 "$S5_STATE")
@@ -1097,14 +1101,14 @@ s5t_existing_stage_failure() {
     chmod 0755 "$S5_PREFIX" "$S5_BIN"
     _esf_binary=$(t_sha256 "$S5_BIN")
     s5_stage_engine() {
-        S5_WORKDIR=$S5_TEST_ROOT/existing-stage
-        mkdir -p "$S5_WORKDIR"
-        printf 'partial xray\n' >"$S5_WORKDIR/xray"
+        S5_BINARY_TEMP=$(mktemp "$S5_PREFIX/.xray.XXXXXX") || return 1
+        printf '%s\n' "$S5_BINARY_TEMP" >"$S5_TEST_ROOT/existing-stage.path"
+        printf 'partial xray\n' >"$S5_BINARY_TEMP"
         printf 'stage write failed\n' >&2
         return 74
     }
     rm() {
-        if [ "${1:-}:${2:-}" = "-rf:$S5_WORKDIR" ]; then
+        if [ "${1:-}" = -f ] && [ "${2:-}" = "$(cat "$S5_TEST_ROOT/existing-stage.path" 2>/dev/null)" ]; then
             printf 'cleanup\n' >>"$S5_TEST_ROOT/existing-stage.events"
             case "$_esf_cleanup_fault" in
             fail | cleanup-restore-fail) return 76 ;;
@@ -1121,25 +1125,19 @@ s5t_existing_stage_failure() {
     }
     T_OUT=$(s5_download_engine 2>&1) && T_STATUS=0 || T_STATUS=$?
     case "$_esf_cleanup_fault" in
-    cleanup-restore-fail)
-        assert_ne "combined cleanup and restore failure aborts the update" 0 "$T_STATUS"
-        ;;
-    *)
-        assert_eq "existing-prefix staging preserves the injected failure status" 74 "$T_STATUS"
-        ;;
+    cleanup-restore-fail) assert_ne "combined cleanup and restore failure aborts the update" 0 "$T_STATUS" ;;
+    *) assert_eq "existing-prefix staging preserves the injected failure status" 74 "$T_STATUS" ;;
     esac
     assert_contains "existing-prefix staging preserves the original diagnosis" \
         'stage write failed' "$T_OUT"
-    assert_contains "existing-prefix staging releases scratch before restoring traversal" \
+    assert_contains "existing-prefix staging removes candidate before restoring traversal" \
         'cleanup
 restore' "$(cat "$S5_TEST_ROOT/existing-stage.events" 2>/dev/null)"
     if [ "$_esf_cleanup_fault" = cleanup-restore-fail ]; then
         assert_contains "cleanup failure remains diagnostic when prefix restoration also fails" \
-            'could not remove temporary download directory' "$T_OUT"
+            'could not remove temporary download file' "$T_OUT"
         assert_contains "prefix restoration failure remains diagnostic after cleanup failure" \
             'could not restore installation directory' "$T_OUT"
-        assert_contains "failed prefix restoration was attempted" \
-            'restore' "$(cat "$S5_TEST_ROOT/existing-stage.events" 2>/dev/null)"
         assert_mode "failed restoration leaves the existing prefix private" 700 "$S5_PREFIX"
     else
         assert_mode "existing-prefix staging restores mode 0755" 755 "$S5_PREFIX"
@@ -1148,12 +1146,12 @@ restore' "$(cat "$S5_TEST_ROOT/existing-stage.events" 2>/dev/null)"
         "$_esf_binary" "$(t_sha256 "$S5_BIN")"
     if [ "$_esf_cleanup_fault" = fail ] || [ "$_esf_cleanup_fault" = cleanup-restore-fail ]; then
         assert_contains "staging cleanup failure remains diagnostic" \
-            'could not remove temporary download directory' "$T_OUT"
-        assert_dir_exists "failed staging cleanup retains its named evidence" "$S5_TEST_ROOT/existing-stage"
-        command rm -rf "$S5_TEST_ROOT/existing-stage"
+            'could not remove temporary download file' "$T_OUT"
+        command rm -f "$S5_PREFIX"/.xray.*
     else
-        assert_file_absent "successful staging cleanup removes scratch" "$S5_TEST_ROOT/existing-stage"
-        assert_eq "successful staging cleanup clears its workdir reference" '' "$S5_WORKDIR"
+        assert_eq "successful staging cleanup removes candidate" 0 \
+            "$(find "$S5_PREFIX" -maxdepth 1 -type f -name '.xray.*' | wc -l | tr -d '[:space:]')"
+        assert_eq "successful staging cleanup clears its candidate reference" '' "$S5_BINARY_TEMP"
     fi
     unset -f rm chmod s5_stage_engine
 }
@@ -1229,6 +1227,7 @@ done
 test_schema1_provenance_preserved() {
     t_xray_fixture 23999
     t_xray_install
+    t_xray_state_schema1
     _spp_before_asset=$(t_state_get asset)
     _spp_before_size=$(t_state_get archive_size)
     _spp_before_sha=$(t_state_get archive_sha256)
@@ -1248,6 +1247,7 @@ test_schema1_provenance_preserved() {
 test_legacy_normalizes_without_relabelling() {
     t_xray_fixture 23999
     t_xray_install
+    t_xray_state_schema1
     awk -F '\t' '$1 != "schema" && $1 != "family"' "$S5_STATE" >"$S5_STATE.next"
     mv "$S5_STATE.next" "$S5_STATE"
     chmod 0600 "$S5_STATE"
@@ -1265,5 +1265,61 @@ test_legacy_normalizes_without_relabelling() {
 
 test_schema1_provenance_preserved
 test_legacy_normalizes_without_relabelling
+
+# Exercise the actual raw download/publication path during an old ZIP upgrade,
+# including signals immediately before and after rename, not a downloader stub.
+for _raw_fault in success config-failure before-rename after-rename; do
+    t_xray_fixture 23999 real-download
+    S5_TEST_ASSET_PATH=$S5_TEST_ROOT/asset-xray
+    export S5_TEST_ASSET_PATH
+    s5_file_type_command() {
+        printf '%s\n' 'ELF 64-bit LSB executable, x86-64, statically linked'
+    }
+    t_xray_install
+    s5t_make_older_state
+    _raw_oldstate=$(t_sha256 "$S5_STATE")
+    _raw_oldbin=$(t_sha256 "$S5_BIN")
+    _raw_oldcfg=$(t_sha256 "$S5_CFG")
+    if [ "$_raw_fault" = config-failure ]; then printf '23\n' >"$S5_TEST_ROOT/cfgtest"; fi
+    (
+        trap 's5_on_signal 143' TERM
+        trap 's5_cleanup' EXIT
+        mv() {
+            if [ "${3:-}" = "$S5_BIN" ] && [ ! -e "$S5_TEST_ROOT/rename-injected" ]; then
+                case "$_raw_fault" in
+                before-rename|after-rename)
+                    : >"$S5_TEST_ROOT/rename-injected"
+                    if [ "$_raw_fault" = after-rename ]; then command mv "$@" || return 1; fi
+                    python3 -c 'import os, signal; os.kill(os.getppid(), signal.SIGTERM)'
+                    return 1
+                    ;;
+                esac
+            fi
+            command mv "$@"
+        }
+        s5_install_update
+    ) >"$S5_TEST_ROOT/raw-update.log" 2>&1
+    _raw_status=$?
+    if [ "$_raw_fault" = success ]; then
+        assert_eq "real ZIP-to-raw update succeeds" 0 "$_raw_status"
+        assert_eq "real binary replacement writes schema 2" 2 "$(t_state_get schema)"
+        assert_eq "real binary replacement records raw provenance" raw "$(t_state_get asset_format)"
+        assert_eq "real binary replacement has the selected digest" "$S5T_BIN_SHA256" "$(t_sha256 "$S5_BIN")"
+    else
+        case "$_raw_fault" in
+        *rename) assert_eq "$_raw_fault propagates TERM" 143 "$_raw_status" ;;
+        *) assert_ne "$_raw_fault fails" 0 "$_raw_status" ;;
+        esac
+        assert_eq "$_raw_fault restores exact ZIP-era state" "$_raw_oldstate" "$(t_sha256 "$S5_STATE")"
+        assert_eq "$_raw_fault restores exact old executable" "$_raw_oldbin" "$(t_sha256 "$S5_BIN")"
+        assert_eq "$_raw_fault restores exact configuration" "$_raw_oldcfg" "$(t_sha256 "$S5_CFG")"
+        assert_eq "$_raw_fault keeps old listener running" 23999 "$(cat "$S5_TEST_ROOT/svc_active")"
+    fi
+    assert_mode "$_raw_fault preserves public prefix mode" 755 "$S5_PREFIX"
+    assert_file_absent "$_raw_fault leaves no pending transaction" "$S5_TXNDIR"
+    assert_eq "$_raw_fault leaves no raw candidate" 0 \
+        "$(find "$S5_PREFIX" -name '.xray.*' | wc -l | tr -d '[:space:]')"
+    t_xray_assert_healthy
+done
 
 t_summary

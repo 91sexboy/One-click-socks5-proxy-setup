@@ -13,18 +13,14 @@ ARCH=${ARCH:-amd64}
 
 case "$ARCH" in
 amd64)
-    ASSET=Xray-linux-64.zip
-    SIZE=21136402
-    SHA=23cd9af937744d97776ee35ecad4972cf4b2109d1e0fe6be9930467608f7c8ae
-    BINARY_SIZE=36577406
-    BINARY_SHA=8255dd939c34cf966cc91517b6324dd3c8d0bcf49ffac8beca049a38c46845ed
+    ASSET=xray-v26.3.27-linux-amd64
+    SIZE=36577406
+    SHA=8255dd939c34cf966cc91517b6324dd3c8d0bcf49ffac8beca049a38c46845ed
     ;;
 arm64)
-    ASSET=Xray-linux-arm64-v8a.zip
-    SIZE=19716427
-    SHA=4d30283ae614e3057f730f67cd088a42be6fdf91f8639d82cb69e48cde80413c
-    BINARY_SIZE=34209918
-    BINARY_SHA=c2d20a7045250497083afea0d79db0672f6c89a25aaaf37c92de034d6b764b04
+    ASSET=xray-v26.3.27-linux-arm64
+    SIZE=34209918
+    SHA=c2d20a7045250497083afea0d79db0672f6c89a25aaaf37c92de034d6b764b04
     ;;
 *)
     printf 'unsupported architecture: %s\n' "$ARCH" >&2
@@ -38,30 +34,16 @@ fail() {
 }
 
 # Keep this independent launcher on the same packaged verification tools as
-# production: PATH wrappers cannot decide which bytes were downloaded, extracted
-# or hashed, and file(1) cannot inherit a MAGIC database override. Info-ZIP's four
-# implicit-option variables are isolated for both listing and extraction.
-#
-# Functions do not survive `sh start_engine.sh`; these guards yield only to
-# launcher_selftest.py, which dot-sources this file and substitutes fixture
-# adapters at the seams. That is not a way past the launcher: the extracted bytes
-# still face the pinned size, digest and architecture gates below.
+# production. Test selftests substitute these narrow seams explicitly.
 if ! command -v curl_command >/dev/null 2>&1; then
     curl_command() { /usr/bin/curl "$@"; }
 fi
 if ! command -v sha256_command >/dev/null 2>&1; then
     sha256_command() { /usr/bin/sha256sum "$1"; }
 fi
-if ! command -v unzip_command >/dev/null 2>&1; then
-    unzip_command() { /usr/bin/unzip "$@"; }
-fi
 if ! command -v file_type_command >/dev/null 2>&1; then
     file_type_command() { /usr/bin/file -b "$1"; }
 fi
-unzip_isolated() (
-    unset UNZIP UNZIPOPT ZIPINFO ZIPINFOOPT
-    unzip_command "$@"
-)
 file_type_isolated() (
     unset MAGIC
     file_type_command "$1"
@@ -103,41 +85,28 @@ trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
 
 if ! curl_command -q -fsSL --proto '=https' --proto-redir '=https' --max-filesize $((SIZE + 1)) \
-    -o "$WORK/$ASSET" "https://github.com/91sexboy/One-click-socks5-proxy-setup/releases/download/xray-v26.3.27/$ASSET"; then
-    fail 'Xray archive download failed'
+    -o "$WORK/xray" "https://github.com/91sexboy/One-click-socks5-proxy-setup/releases/download/xray-v26.3.27-r1/$ASSET"; then
+    fail 'Xray raw asset download failed'
 fi
-archive_size=$(wc -c <"$WORK/$ASSET" | tr -d '[:space:]') || fail 'cannot measure Xray archive'
-[ "$archive_size" = "$SIZE" ] || fail "Xray archive size mismatch: $archive_size"
-archive_sha=$(sha256_command "$WORK/$ASSET" | awk '{print $1}') || fail 'cannot hash Xray archive'
-[ "$archive_sha" = "$SHA" ] || fail 'Xray archive SHA-256 mismatch'
-unzip_isolated -Z1 "$WORK/$ASSET" >"$WORK/members" || fail 'cannot inspect Xray archive'
-[ "$(grep -cxF xray "$WORK/members" || true)" = 1 ] || fail 'archive must contain exactly one xray member'
-for member in geoip.dat geosite.dat LICENSE README.md; do
-    [ "$(grep -cxF "$member" "$WORK/members" || true)" = 1 ] || fail "archive missing $member"
-done
-[ "$(wc -l <"$WORK/members" | tr -d '[:space:]')" = 5 ] || fail 'archive contains unexpected member count'
-while IFS= read -r member; do
-    case "$member" in
-    '' | */* | *..* | *\\*) fail 'archive contains an unsafe member name' ;;
-    esac
-done <"$WORK/members"
-
-unzip_isolated -p "$WORK/$ASSET" xray >"$WORK/xray" || fail 'cannot extract xray member'
+binary_size=$(wc -c <"$WORK/xray" | tr -d '[:space:]') || fail 'cannot measure Xray raw asset'
+[ "$binary_size" = "$SIZE" ] || fail "Xray raw asset size mismatch: $binary_size"
+binary_sha=$(sha256_command "$WORK/xray" | awk '{print $1}') || fail 'cannot hash Xray raw asset'
+[ "$binary_sha" = "$SHA" ] || fail 'Xray raw asset SHA-256 mismatch'
 chmod 0755 "$WORK/xray" || fail 'cannot chmod xray'
-# Production (socks5.sh s5_extract_binary) gates the member on size, digest and
-# ELF architecture. The archive pins above say nothing about what extraction
-# produced, and the ELF check below still accepts a binary whose bytes changed.
-binary_size=$(wc -c <"$WORK/xray" | tr -d '[:space:]') || fail 'cannot measure extracted xray'
-[ "$binary_size" = "$BINARY_SIZE" ] || fail "extracted xray size mismatch: $binary_size"
-binary_sha=$(sha256_command "$WORK/xray" | awk '{print $1}') || fail 'cannot hash extracted xray'
-[ "$binary_sha" = "$BINARY_SHA" ] || fail 'extracted xray SHA-256 mismatch'
 _file=$(file_type_isolated "$WORK/xray" 2>/dev/null) || fail 'cannot inspect xray executable'
 case "$ARCH:$_file" in
 amd64:*'ELF 64-bit LSB executable, x86-64'*) ;;
 arm64:*'ELF 64-bit LSB executable, ARM aarch64'*) ;;
 *) fail 'xray ELF architecture does not match the requested architecture' ;;
 esac
+case "$_file" in
+*'dynamically linked'* | *'interpreter '*) fail 'xray executable is dynamically linked' ;;
+esac
+_version=$("$WORK/xray" version 2>/dev/null) || fail 'cannot read Xray version'
+case "${_version%%
+*}" in 'Xray 26.3.27 '*) ;; *) fail 'Xray version mismatch' ;; esac
 ENGINE="$WORK/xray"
+
 : >"$WORK/config.json" || fail 'cannot create Xray config'
 chmod 0600 "$WORK/config.json" || fail 'cannot protect Xray config'
 # This launcher stays independent of socks5.sh so a renderer defect cannot mask

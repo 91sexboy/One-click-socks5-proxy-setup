@@ -34,11 +34,8 @@ sudo test -f /var/lib/xray-socks5/state
 printf 'lifecycle: state-file-ok\n'
 sudo test -x /usr/local/libexec/xray-socks5/xray
 printf 'lifecycle: binary-file-ok\n'
-# Executable is not enough. README.md has the operator supply Info-ZIP on this
-# family, which makes extraction the least controlled step here, and a corrupted
-# binary stays executable. These repeat the amd64 pins from outside the installer,
-# so they still hold if its own size and digest checks regress; the job runs on
-# ubuntu-24.04 only, so the architecture is fixed.
+# Executable mode alone cannot prove the raw download's identity. These repeat
+# the amd64 pins independently of the installer; this job runs on amd64 only.
 test "$(sudo stat -c '%s' /usr/local/libexec/xray-socks5/xray)" = 36577406
 test "$(sudo sha256sum /usr/local/libexec/xray-socks5/xray | awk '{print $1}')" = \
   8255dd939c34cf966cc91517b6324dd3c8d0bcf49ffac8beca049a38c46845ed

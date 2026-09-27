@@ -2,6 +2,8 @@
 
 ## Status
 
+Historical for target-side ZIP delivery; superseded there by [ADR-0008](0008-raw-xray-release-assets.md).
+
 Accepted in part. The advisory capacity preflight and observed-byte diagnostics
 remain accepted. [ADR-0007](0007-write-status-classifies-incomplete-extraction.md)
 supersedes this ADR's premise that filesystem free space can classify a later

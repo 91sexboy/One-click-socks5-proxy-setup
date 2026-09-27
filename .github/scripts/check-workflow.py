@@ -130,22 +130,22 @@ def check(workflow):
     require(jobs['unit']['runs-on'] == '${{ matrix.shell.runner }}', 'unit: runner binding changed')
     require(entry(jobs['unit'], 'sh tests/run.sh', 'Unit suite').get('env', {}).get('S5_TEST_SHELL') ==
             '${{ matrix.shell.command }}', 'unit: shell binding changed')
-    lifecycle_rows = [(row.get('image'), row.get('hostile_unzip'), row.get('quota_blind'))
+    lifecycle_rows = [(row.get('image'), row.get('hostile_curl'), row.get('quota_blind'))
                       for row in matrix(jobs['openrc-integration'], 'include')]
     require(len(lifecycle_rows) == len(LIFECYCLE_ROWS) and set(lifecycle_rows) == LIFECYCLE_ROWS,
             'openrc-integration: required Alpine lifecycle rows changed')
     lifecycle_step = entry(jobs['openrc-integration'],
                            'sh /src/.github/scripts/alpine-lifecycle.sh')
     require(lifecycle_step.get('env', {}).get('ALPINE_IMAGE') == '${{ matrix.image }}' and
-            lifecycle_step.get('env', {}).get('ALPINE_HOSTILE_UNZIP') ==
-            '${{ matrix.hostile_unzip }}' and
+            lifecycle_step.get('env', {}).get('ALPINE_HOSTILE_CURL') ==
+            '${{ matrix.hostile_curl }}' and
             lifecycle_step.get('env', {}).get('ALPINE_QUOTA_BLIND') ==
             '${{ matrix.quota_blind }}' and '"$ALPINE_IMAGE"' in body(lifecycle_step),
             'openrc-integration: matrix bindings changed')
     # Its own message: a job-level binding the container never receives leaves the
     # hostile row running the ordinary gate, and that must not read as a binding.
-    require('-e ALPINE_HOSTILE_UNZIP="$ALPINE_HOSTILE_UNZIP"' in body(lifecycle_step),
-            'openrc-integration: hostile unzip flag not forwarded to the container')
+    require('-e ALPINE_HOSTILE_CURL="$ALPINE_HOSTILE_CURL"' in body(lifecycle_step),
+            'openrc-integration: hostile curl flag not forwarded to the container')
     require('-e ALPINE_QUOTA_BLIND="$ALPINE_QUOTA_BLIND"' in body(lifecycle_step),
             'openrc-integration: quota-blind flag not forwarded to the container')
     require('docker run --rm ' in body(lifecycle_step),

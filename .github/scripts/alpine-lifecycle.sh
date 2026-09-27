@@ -15,74 +15,61 @@ touch /run/openrc/softlevel
 rc-status -a >/dev/null 2>&1 || true
 umask 077
 work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT HUP INT TERM
+capacity_mounted=0
+alpine_cleanup() {
+  if [ "$capacity_mounted" = 1 ]; then
+    rc-service xray-socks5 stop >/dev/null 2>&1 || true
+    umount /usr/local/libexec || true
+  fi
+  rm -rf "$work"
+}
+trap alpine_cleanup EXIT
+trap 'exit 1' HUP INT TERM
 lifecycle_write_fixtures "$work"
 original_path=$PATH
-if [ "${ALPINE_HOSTILE_UNZIP:-0}" = 1 ]; then
+if [ "${ALPINE_HOSTILE_CURL:-0}" = 1 ]; then
   mkdir "$work/hostile-bin"
-  ALPINE_HOSTILE_UNZIP_LOG=$work/hostile-unzip.calls
-  export ALPINE_HOSTILE_UNZIP_LOG
-  cat >"$work/hostile-bin/unzip" <<'HOSTILE_UNZIP'
+  ALPINE_HOSTILE_CURL_LOG=$work/hostile-curl.calls
+  export ALPINE_HOSTILE_CURL_LOG
+  cat >"$work/hostile-bin/curl" <<'HOSTILE_CURL'
 #!/bin/sh
-printf 'called\n' >>"$ALPINE_HOSTILE_UNZIP_LOG"
-UNZIP=-aa
-export UNZIP
-exec /usr/bin/unzip "$@"
-HOSTILE_UNZIP
-  chmod 0755 "$work/hostile-bin/unzip"
+printf 'called\n' >>"$ALPINE_HOSTILE_CURL_LOG"
+exit 99
+HOSTILE_CURL
+  chmod 0755 "$work/hostile-bin/curl"
   PATH=$work/hostile-bin:$PATH
-  UNZIP=-aa
-  UNZIPOPT=-aa
-  ZIPINFO=-h
-  ZIPINFOOPT=-h
-  export PATH UNZIP UNZIPOPT ZIPINFO ZIPINFOOPT
+  export PATH
+fi
+if apk info -e unzip >/dev/null 2>&1; then
+  printf 'base image unexpectedly contains the unzip package\n' >&2
+  exit 1
 fi
 pkgs_before_install=$(apk info | sort | sha256sum)
 sh .github/scripts/run-socks5.sh install \
   "$work/answers" "$work/install.log" "$work/pass"
+if apk info -e unzip >/dev/null 2>&1; then
+  printf 'raw installation added an unnecessary unzip package\n' >&2
+  exit 1
+fi
 test "$(stat -c "%U:%G %a" /etc/init.d/xray-socks5)" = "root:root 755"
 test "$(stat -c "%U:%G %a" /etc/xray-socks5/config.json)" = "root:xray-socks5 640"
 test "$(stat -c "%U:%G %a" /var/lib/xray-socks5/state)" = "root:root 600"
 test "$(wc -c </usr/local/libexec/xray-socks5/xray | tr -cd '0-9')" = 36577406
 test "$(sha256sum /usr/local/libexec/xray-socks5/xray | awk '{print $1}')" = \
   8255dd939c34cf966cc91517b6324dd3c8d0bcf49ffac8beca049a38c46845ed
-if [ "${ALPINE_HOSTILE_UNZIP:-0}" = 1 ]; then
-  test ! -e "$ALPINE_HOSTILE_UNZIP_LOG"
-  # The positive control test_xray_asset.sh keeps for the same wrapper. A wrapper
-  # that happened to be harmless satisfies the line above exactly as a harmful one
-  # does, so run the wrapper itself and require the bytes it produces to differ
-  # from a clean extraction of the same member. The call made here also has to
-  # reach the log, or "never invoked" would be reading a log that never records.
-  # It runs after the install because the install is what brings Info-ZIP in: the
-  # BusyBox unzip Alpine ships ignores UNZIP entirely, so the control would prove
-  # nothing earlier. A local archive keeps it off the network, and the member only
-  # has to carry the CR LF pairs that -aa rewrites.
-  python3 - "$work/control.zip" <<'CONTROL_ZIP'
-import sys
-import zipfile
-
-with zipfile.ZipFile(sys.argv[1], "w") as archive:
-    archive.writestr("xray", b"\r\n".join(bytes([value]) for value in range(256)))
-CONTROL_ZIP
-  # The wrapper is still first on PATH, so the clean side names Info-ZIP
-  # absolutely and drops the inherited options in a subshell, the way socks5.sh's
-  # s5_unzip does.
-  (
-    unset UNZIP UNZIPOPT ZIPINFO ZIPINFOOPT
-    /usr/bin/unzip -p "$work/control.zip" xray >"$work/control.clean"
-  )
-  "$work/hostile-bin/unzip" -p "$work/control.zip" xray >"$work/control.hostile"
-  test -s "$ALPINE_HOSTILE_UNZIP_LOG"
-  if cmp -s "$work/control.clean" "$work/control.hostile"; then
-    printf "the hostile unzip wrapper extracted uncorrupted bytes\n" >&2
+if [ "${ALPINE_HOSTILE_CURL:-0}" = 1 ]; then
+  test ! -e "$ALPINE_HOSTILE_CURL_LOG"
+  if "$work/hostile-bin/curl" --version >/dev/null 2>&1; then
+    printf "the hostile curl wrapper unexpectedly succeeded\n" >&2
     exit 1
   fi
-  rm -f "$ALPINE_HOSTILE_UNZIP_LOG"
+  test -s "$ALPINE_HOSTILE_CURL_LOG"
+  rm -f "$ALPINE_HOSTILE_CURL_LOG"
   PATH=$original_path
-  unset UNZIP UNZIPOPT ZIPINFO ZIPINFOOPT ALPINE_HOSTILE_UNZIP_LOG
+  unset ALPINE_HOSTILE_CURL_LOG original_path
   export PATH
-  unset original_path
 fi
+
 # SPEC 5: re-running install over an existing installation is an
 # in-place update. Rotate the credentials, keep the port, and require
 # the new identity in both the config and the state.
@@ -220,8 +207,8 @@ sh .github/scripts/run-socks5.sh uninstall \
   "$work/answers.uninstall" "$work/uninstall-reinstall.log" "$work/pass"
 # The Alpine 3.22 quota-blind row runs the production writer seam with a
 # deterministic short-write injection. The focused asset suite proves that
-# statfs can report ample capacity while the writer fails, that disk.write wins
-# over the producer's secondary failure, and that FIFO/producers are reclaimed.
+# statfs can report ample capacity while direct raw download writing fails and
+# that the prefix-local partial candidate is reclaimed.
 # Run it only after uninstall so any namespace residue is attributable to the
 # regression itself rather than the real lifecycle above.
 if [ "${ALPINE_QUOTA_BLIND:-0}" = 1 ]; then
@@ -241,9 +228,9 @@ if [ "${ALPINE_QUOTA_BLIND:-0}" = 1 ]; then
       getent group xray-socks5 >/dev/null 2>&1; then
     exit 1
   fi
-  if find /tmp /var/tmp -type p -name '.xray-stream.*' -print -quit 2>/dev/null |
+  if find /usr/local/libexec -type f -name '.xray.*' -print -quit 2>/dev/null |
       grep -q .; then
-    printf 'quota-blind regression left an extraction FIFO\n' >&2
+    printf 'quota-blind regression left a prefix-local candidate\n' >&2
     exit 1
   fi
   if find /tmp /var/tmp -maxdepth 1 -type d -name 's5test.*' -print -quit 2>/dev/null |
@@ -254,27 +241,34 @@ if [ "${ALPINE_QUOTA_BLIND:-0}" = 1 ]; then
 fi
 sh socks5.sh help </dev/null >"$work/help-after-uninstall.log"
 grep -q 'Usage: sh socks5.sh' "$work/help-after-uninstall.log"
-# ADR-0006: the capacity check reads the filesystem through stat, and BusyBox builds
-# stat's -f support behind a config option. Without it the check answers nothing and
-# disables itself -- silently, and on the one platform whose operator reported the
-# failure it exists to explain, which is why a passing lifecycle is not evidence on
-# its own. Prove the applet answers, then prove the refusal is reachable end to end
-# rather than merely compiled in: a 12 MiB work filesystem cannot hold the 21 MB
-# archive and the 36 MB member, and the prefix is on another filesystem, so the
-# per-path requirement is the one reported.
+# The raw candidate is downloaded directly under the install prefix. A 40-MiB
+# filesystem is too small for the old ~90-MiB path but large enough for the
+# 35,721-KiB amd64 candidate; a 32-MiB filesystem must fail with that exact need.
 test "$(stat -f -c '%f %S' / | awk '{print ($1 > 0 && $2 > 0) ? "ok" : "bad"}')" = ok
 test "$(stat -c '%d' / | awk '{print ($1 > 0) ? "ok" : "bad"}')" = ok
-mount -t tmpfs -o size=12m,mode=1777 tmpfs /var/tmp
+mkdir -p /usr/local/libexec
+mount -t tmpfs -o size=40m,mode=755 tmpfs /usr/local/libexec
+capacity_mounted=1
+sh .github/scripts/run-socks5.sh install \
+  "$work/answers.reinstall" "$work/capacity-success.log" "$work/pass"
+sh .github/scripts/run-socks5.sh uninstall \
+  "$work/answers.uninstall" "$work/capacity-success-uninstall.log" "$work/pass"
+umount /usr/local/libexec
+capacity_mounted=0
+mount -t tmpfs -o size=32m,mode=755 tmpfs /usr/local/libexec
+capacity_mounted=1
 capacity_status=0
 sh .github/scripts/run-socks5.sh install \
   "$work/answers.reinstall" "$work/capacity.log" "$work/pass" || capacity_status=$?
-umount /var/tmp
+umount /usr/local/libexec
+capacity_mounted=0
 test "$capacity_status" -ne 0
 grep -q 'not enough space on the filesystem holding' "$work/capacity.log"
-grep -q '56362 KiB required' "$work/capacity.log"
-# The refusal happens after staging created the prefix, so cleanup owns removing it.
+grep -q '35721 KiB required' "$work/capacity.log"
 test ! -e /usr/local/libexec/xray-socks5
 test ! -e /etc/xray-socks5
 test ! -e /var/lib/xray-socks5
+lifecycle_generation_absent "$work/capacity-success.log" "$work/pass"
+lifecycle_generation_absent "$work/capacity-success-uninstall.log" "$work/pass"
 lifecycle_generation_absent "$work/capacity.log" "$work/pass"
 lifecycle_assert_logs_redacted "$work"
