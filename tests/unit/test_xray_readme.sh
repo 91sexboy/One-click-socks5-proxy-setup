@@ -92,23 +92,25 @@ import sys
 REPO = 'https://github.com/91sexboy/One-click-socks5-proxy-setup'
 COMMIT = '9271644340d2332725d0c83e818711481486668f'
 RUN = '34800667931'
+# Each cell leads with the readable MiB figure and keeps the exact source figure
+# behind it, so a rounded number cannot drift away from the bytes CI recorded.
 ROWS = [
-    ('amd64', '0', '35896', '11710464'),
-    ('amd64', '1', '35912', '11972608'),
-    ('amd64', '32', '36424', '13283328'),
-    ('amd64', '128', '40876', '19304448'),
-    ('arm64', '0', '29460', '6348800'),
-    ('arm64', '1', '29520', '6348800'),
-    ('arm64', '32', '30928', '8183808'),
-    ('arm64', '128', '35324', '14200832'),
+    ('amd64', '0', '35.1 (35896 KiB)', '11.2 (11710464 bytes)'),
+    ('amd64', '1', '35.1 (35912 KiB)', '11.4 (11972608 bytes)'),
+    ('amd64', '32', '35.6 (36424 KiB)', '12.7 (13283328 bytes)'),
+    ('amd64', '128', '39.9 (40876 KiB)', '18.4 (19304448 bytes)'),
+    ('arm64', '0', '28.8 (29460 KiB)', '6.1 (6348800 bytes)'),
+    ('arm64', '1', '28.8 (29520 KiB)', '6.1 (6348800 bytes)'),
+    ('arm64', '32', '30.2 (30928 KiB)', '7.8 (8183808 bytes)'),
+    ('arm64', '128', '34.5 (35324 KiB)', '13.5 (14200832 bytes)'),
 ]
 DOCS = {
-    'README.md': ('Measured memory', 'Phase cgroup peak (bytes)', (
+    'README.md': ('Measured memory', 'Phase cgroup peak (MiB)', (
         'instantaneous RSS snapshots', 'not a 60-second load test',
         'not isolated startup RSS peaks', 'outside the Xray cgroup',
         'not a minimum-memory guarantee', '14 days',
     )),
-    'README.zh-CN.md': ('内存实测', '阶段 cgroup 峰值 (bytes)', (
+    'README.zh-CN.md': ('内存实测', '阶段 cgroup 峰值 (MiB)', (
         '瞬时 RSS 快照', '不是持续 60 秒的负载测试',
         '不是独立启动 RSS 峰值', '位于 Xray cgroup 之外',
         '不是最低内存保证', '14 天',
@@ -134,7 +136,7 @@ def check(texts):
             tables.append(cells)
         require(len(tables) == 1, f'{name}: evidence table')
         table = tables[0]
-        require(len(table[0]) == 4 and table[0][2:] == ('RSS (KiB)', peak_header),
+        require(len(table[0]) == 4 and table[0][2:] == ('RSS (MiB)', peak_header),
                 f'{name}: evidence units')
         require(sorted(table[2:]) == sorted(ROWS), f'{name}: historical measurements')
         for path in (f'/commit/{COMMIT}', f'/actions/runs/{RUN}',
@@ -150,14 +152,15 @@ texts = {name: (Path(sys.argv[1]) / name).read_text() for name in DOCS}
 check(texts)
 mutations = 0
 for name, (heading, peak_header, caveats) in DOCS.items():
-    row = '| amd64 | 0 | 35896 | 11710464 |'
+    row = '| amd64 | 0 | 35.1 (35896 KiB) | 11.2 (11710464 bytes) |'
     changes = [
         (f'## {heading}', f'### {heading}', 'evidence section'),
         (row + '\n', '', 'historical measurements'),
         (row, row + '\n' + row, 'historical measurements'),
         ('35896', '35897', 'historical measurements'),
-        ('RSS (KiB)', 'RSS (MiB)', 'evidence units'),
-        (peak_header, peak_header.replace('bytes', 'KiB'), 'evidence units'),
+        ('35.1 (35896', '35.2 (35896', 'historical measurements'),
+        ('RSS (MiB)', 'RSS (KiB)', 'evidence units'),
+        (peak_header, peak_header.replace('MiB', 'KiB'), 'evidence units'),
         (COMMIT, '0' * 40, 'evidence provenance'),
         (RUN, '34800667930', 'evidence provenance'),
         ('103842545297', '103842545296', 'evidence provenance'),
