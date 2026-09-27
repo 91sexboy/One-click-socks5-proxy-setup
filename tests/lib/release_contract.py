@@ -235,12 +235,21 @@ def check_raw_publisher(root):
             '--jq .object.sha 2>/dev/null || true' not in workflow,
             'raw publisher: missing-tag lookup must not capture the gh error body')
     require('releases/tags/$DISTRIBUTION_TAG' not in workflow and
-            workflow.count('releases?per_page=100') == 3 and
-            workflow.count('select(.tag_name==$tag)') == 3,
+            workflow.count('releases?per_page=100') == 1 and
+            workflow.count('select(.tag_name==$tag)') == 1,
             'raw publisher: draft releases must be found through the release listing')
-    require(workflow.count("jq 'length')\" -le 1 ||") == 3 and
+    require(workflow.count("jq 'length')\" -le 1 ||") == 1 and
             'if length == 1 then .[0] else empty end' in workflow,
             'raw publisher: a tag claimed by more than one release must be refused')
+    require(workflow.count('releases/$RELEASE_ID') >= 3 and
+            "printf 'RELEASE_ID=%s" in workflow and
+            'gh release upload' not in workflow,
+            'raw publisher: every step after the claim must address the draft by id')
+    require('compare/$claimed...$GITHUB_SHA' not in workflow and
+            'test "$claimed" = "$GITHUB_SHA" ||' in workflow and
+            'test "$actual" = "$CLAIMED_SHA" ||' in workflow and
+            'jq -r .target_commitish)" = "$GITHUB_SHA" ||' in workflow,
+            'raw publisher: the tag and draft must belong to the exact dispatch commit and may not move')
     require(workflow.count('test "$GITHUB_REF" = refs/heads/xray-only') == 2 and
             workflow.count('DISTRIBUTION_TAG: ' + RAW_DISTRIBUTION_TAG) == 1,
             'raw publisher: branch or tag pin differs')
