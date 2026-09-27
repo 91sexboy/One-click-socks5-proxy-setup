@@ -541,9 +541,22 @@ S5_ASSET_BINARY_SIZE=$S5T_BIN_SIZE
 # that figure can refuse a host with gigabytes of room. Capacity reports the
 # filesystem's free blocks instead. The two figures differ only where the filesystem
 # keeps a reserve, so the strict case says when it cannot be told apart.
-_asset_fs=$(stat -f -c '%f %a %S' "$S5_TEST_ROOT")
-_asset_free=$(s5_free_kb "$S5_TEST_ROOT")
-assert_eq "capacity reads a usable answer from the filesystem" 0 "$?"
+# Both figures have to describe the same instant. A busy host changes its free
+# block count between two reads, and the resulting one-block gap looks like a
+# capacity defect while the production seam is untouched -- CI failed exactly that
+# way with 90082564 against 90082560. The capacity call is therefore sandwiched
+# between two stat reads and the pair is retried until the filesystem held still
+# across it, so what decides the assertion below is still the %f-versus-%a choice.
+_asset_attempt=0
+while :; do
+    _asset_fs=$(stat -f -c '%f %a %S' "$S5_TEST_ROOT")
+    _asset_free=$(s5_free_kb "$S5_TEST_ROOT")
+    _asset_free_status=$?
+    [ "$_asset_fs" = "$(stat -f -c '%f %a %S' "$S5_TEST_ROOT")" ] && break
+    _asset_attempt=$((_asset_attempt + 1))
+    [ "$_asset_attempt" -lt 20 ] || break
+done
+assert_eq "capacity reads a usable answer from the filesystem" 0 "$_asset_free_status"
 _asset_bfree=$(printf '%s\n' "$_asset_fs" | awk '{ printf "%d\n", $1 * ($3 / 1024) }')
 _asset_bavail=$(printf '%s\n' "$_asset_fs" | awk '{ printf "%d\n", $2 * ($3 / 1024) }')
 assert_eq "capacity counts every block root can write into" "$_asset_bfree" "$_asset_free"

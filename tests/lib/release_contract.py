@@ -238,6 +238,9 @@ def check_raw_publisher(root):
             workflow.count('releases?per_page=100') == 3 and
             workflow.count('select(.tag_name==$tag)') == 3,
             'raw publisher: draft releases must be found through the release listing')
+    require(workflow.count("jq 'length')\" -le 1 ||") == 3 and
+            'if length == 1 then .[0] else empty end' in workflow,
+            'raw publisher: a tag claimed by more than one release must be refused')
     require(workflow.count('test "$GITHUB_REF" = refs/heads/xray-only') == 2 and
             workflow.count('DISTRIBUTION_TAG: ' + RAW_DISTRIBUTION_TAG) == 1,
             'raw publisher: branch or tag pin differs')

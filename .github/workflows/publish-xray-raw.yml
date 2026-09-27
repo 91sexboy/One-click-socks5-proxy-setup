@@ -90,9 +90,12 @@ jobs:
             test "$actual" = "$GITHUB_SHA" || {
               echo "refusing tag owned by another commit: $actual" >&2; exit 1;
             }
-            release=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" | \
-              jq -c --arg tag "$DISTRIBUTION_TAG" \
-                '[.[] | select(.tag_name==$tag)] | if length == 1 then .[0] else empty end')
+            matches=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" | \
+              jq -c --arg tag "$DISTRIBUTION_TAG" '[.[] | select(.tag_name==$tag)]')
+            test "$(printf '%s' "$matches" | jq 'length')" -le 1 || {
+              echo "refusing: more than one release claims $DISTRIBUTION_TAG" >&2; exit 1;
+            }
+            release=$(printf '%s' "$matches" | jq -c 'if length == 1 then .[0] else empty end')
             if [ -n "$release" ]; then
               test "$(printf '%s' "$release" | jq -r .draft)" = true || {
                 echo "refusing to alter a published release" >&2; exit 1;
@@ -117,9 +120,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
-          release=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" | \
-            jq -c --arg tag "$DISTRIBUTION_TAG" \
-              '[.[] | select(.tag_name==$tag)] | if length == 1 then .[0] else empty end')
+          matches=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" | \
+            jq -c --arg tag "$DISTRIBUTION_TAG" '[.[] | select(.tag_name==$tag)]')
+          test "$(printf '%s' "$matches" | jq 'length')" -le 1 || {
+            echo "refusing: more than one release claims $DISTRIBUTION_TAG" >&2; exit 1;
+          }
+          release=$(printf '%s' "$matches" | jq -c 'if length == 1 then .[0] else empty end')
           test -n "$release" || { echo "cannot locate exact draft release" >&2; exit 1; }
           test "$(printf '%s' "$release" | jq -r .draft)" = true || {
             echo "refusing to alter a published release" >&2; exit 1;
@@ -159,9 +165,12 @@ jobs:
           set -eu
           actual=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$DISTRIBUTION_TAG" --jq .object.sha)
           test "$actual" = "$GITHUB_SHA"
-          release=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" | \
-            jq -c --arg tag "$DISTRIBUTION_TAG" \
-              '[.[] | select(.tag_name==$tag)] | if length == 1 then .[0] else empty end')
+          matches=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" | \
+            jq -c --arg tag "$DISTRIBUTION_TAG" '[.[] | select(.tag_name==$tag)]')
+          test "$(printf '%s' "$matches" | jq 'length')" -le 1 || {
+            echo "refusing: more than one release claims $DISTRIBUTION_TAG" >&2; exit 1;
+          }
+          release=$(printf '%s' "$matches" | jq -c 'if length == 1 then .[0] else empty end')
           test -n "$release" || { echo "cannot locate exact draft release" >&2; exit 1; }
           test "$(printf '%s' "$release" | jq -r .draft)" = true || {
             echo "refusing to alter a published release" >&2; exit 1;
