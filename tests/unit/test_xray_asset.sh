@@ -1,819 +1,438 @@
 #!/bin/sh
-# Xray release asset metadata and safe selection tests.
+# Raw Xray release metadata, direct staging, verification and cleanup.
 
 S5T_NAME=test_xray_asset
 . "${S5_REPO_ROOT}/tests/lib/assert.sh"
+. "${S5_REPO_ROOT}/tests/lib/xray-fixture.sh"
 ROOT=${S5_REPO_ROOT}
 t_mktestroot
 t_source_production ''
+S5_LANG=en
 
 assert_eq "Xray release is stable v26.3.27" v26.3.27 "$S5_XRAY_VERSION"
 assert_eq "Xray release commit is pinned" \
     d2758a023cd7f4174a5a5fa4ff66e487d4342ba0 "$S5_XRAY_COMMIT"
+assert_eq "raw distribution tag is revisioned" xray-v26.3.27-r1 \
+    "$S5_XRAY_DISTRIBUTION_TAG"
 
 S5_ARCHNAME=amd64
+# This exercises production before the later quota fixture selector.
+# shellcheck disable=SC2218
 s5_asset_select
-assert_eq "amd64 asset name" Xray-linux-64.zip "$S5_ASSET_NAME"
-assert_eq "amd64 archive size" 21136402 "$S5_ASSET_SIZE"
-assert_eq "amd64 archive digest" \
-    23cd9af937744d97776ee35ecad4972cf4b2109d1e0fe6be9930467608f7c8ae \
-    "$S5_ASSET_SHA256"
-assert_eq "amd64 extracted xray size" 36577406 "$S5_ASSET_BINARY_SIZE"
-assert_eq "amd64 extracted xray digest" \
+assert_eq "amd64 raw asset name" xray-v26.3.27-linux-amd64 "$S5_ASSET_NAME"
+assert_eq "amd64 raw size" 36577406 "$S5_ASSET_SIZE"
+assert_eq "amd64 raw digest" \
     8255dd939c34cf966cc91517b6324dd3c8d0bcf49ffac8beca049a38c46845ed \
-    "$S5_ASSET_BINARY_SHA256"
+    "$S5_ASSET_SHA256"
+assert_eq "amd64 downloaded and installed sizes are identical" \
+    "$S5_ASSET_SIZE" "$S5_ASSET_BINARY_SIZE"
+assert_eq "amd64 downloaded and installed digests are identical" \
+    "$S5_ASSET_SHA256" "$S5_ASSET_BINARY_SHA256"
 
 S5_ARCHNAME=arm64
+# shellcheck disable=SC2218
 s5_asset_select
-assert_eq "arm64 asset name" Xray-linux-arm64-v8a.zip "$S5_ASSET_NAME"
-assert_eq "arm64 archive size" 19716427 "$S5_ASSET_SIZE"
-assert_eq "arm64 archive digest" \
-    4d30283ae614e3057f730f67cd088a42be6fdf91f8639d82cb69e48cde80413c \
-    "$S5_ASSET_SHA256"
-assert_eq "arm64 extracted xray size" 34209918 "$S5_ASSET_BINARY_SIZE"
-assert_eq "arm64 extracted xray digest" \
+assert_eq "arm64 raw asset name" xray-v26.3.27-linux-arm64 "$S5_ASSET_NAME"
+assert_eq "arm64 raw size" 34209918 "$S5_ASSET_SIZE"
+assert_eq "arm64 raw digest" \
     c2d20a7045250497083afea0d79db0672f6c89a25aaaf37c92de034d6b764b04 \
-    "$S5_ASSET_BINARY_SHA256"
+    "$S5_ASSET_SHA256"
+assert_eq "arm64 downloaded and installed sizes are identical" \
+    "$S5_ASSET_SIZE" "$S5_ASSET_BINARY_SIZE"
+assert_eq "arm64 downloaded and installed digests are identical" \
+    "$S5_ASSET_SHA256" "$S5_ASSET_BINARY_SHA256"
 
 S5_ARCHNAME=riscv64
 t_run s5_asset_select
-assert_ne "unsupported architecture has no Xray asset" 0 "$T_STATUS"
+assert_ne "unsupported architecture has no raw asset" 0 "$T_STATUS"
 
-# The downloader must never use an unpinned channel or an unverified sidecar.
 source=$(cat "$ROOT/socks5.sh")
 assert_not_contains "asset URL is not latest" '/releases/latest' "$source"
-assert_not_contains "asset URL is not dev-latest" 'dev-latest' "$source"
+assert_not_contains "asset URL has no upstream fallback" 'XTLS/Xray-core/releases/download' "$source"
 assert_contains "asset download is HTTPS-only" "--proto '=https'" "$source"
 assert_contains "asset download is bounded" '--max-filesize' "$source"
-assert_contains "FIFO extraction command is prechecked" 'mktemp mkfifo ln' "$source"
+assert_not_contains "target installer no longer invokes unzip" '/usr/bin/unzip' "$source"
+assert_not_contains "target installer no longer creates extraction FIFOs" 'mkfifo' "$source"
+assert_contains "candidate is created beside the final binary" \
+    'mktemp "$S5_PREFIX/.xray.XXXXXX"' "$source"
 
-# The production service command uses Xray's config-test and explicit config path.
-assert_contains "config test uses Xray run test" 'run -test -c' "$source"
-assert_contains "service runs Xray with explicit config" 'run -c $S5_CFG' "$source"
-assert_contains "service prevents restart on Xray config error" \
-    'RestartPreventExitStatus=23' "$source"
-
-# No source-build toolchain belongs in an Xray-only product.
-for forbidden in 'git clone' 'make -f' 'gcc' '3proxy' 'users.cfg'; do
-    assert_not_contains "Xray path excludes $forbidden" "$forbidden" "$source"
-done
-
-# SPEC 7: the archive's members are inspected and the unsafe ones refused. Those
-# refusals are reachable only through S5_TEST_ASSET_PATH, which makes the
-# download step copy a local archive instead of fetching the pinned one. The
-# archive's byte size and SHA-256 are verified before any member is looked at, so
-# the s5_asset_select override below republishes those two from the fixture
-# itself; S5T_SIZE_OVERRIDE and S5T_SHA_OVERRIDE put a wrong one back to prove
-# the hook did not turn the gate into a bypass.
-# Production reaches both tools only at their absolute paths, so a PATH-probed
-# `file` would let this file run in an environment production itself refuses.
-if ! command -v python3 >/dev/null 2>&1 ||
-    [ ! -x /usr/bin/unzip ] ||
-    [ ! -x /usr/bin/file ]; then
-    t_skip "crafted Xray archives are inspected" \
-        "python3, /usr/bin/unzip or /usr/bin/file is unavailable"
-    t_summary
-fi
-
-S5_LANG=en
-S5_ARCHNAME=amd64
-S5T_ASSETS=$S5_TEST_ROOT/assets
-mkdir -p "$S5T_ASSETS"
-S5T_META=$(python3 "$ROOT/tests/lib/mkasset.py" "$S5T_ASSETS" \
-    good noxray duplicate extra subdir traversal symlink device) || S5T_META=''
-assert_ne "the crafted archives were built" '' "$S5T_META"
-
-# BusyBox ships an unzip without -Z, and the member listing the installer reads
-# comes from -Z1. Without it no member is inspected at all, so refusing to run is
-# the only honest outcome.
-if ! /usr/bin/unzip -Z1 "$S5T_ASSETS/good.zip" >/dev/null 2>&1; then
-    t_skip "crafted Xray archives are inspected" "/usr/bin/unzip has no -Z"
-    t_summary
-fi
-
-. "$ROOT/tests/lib/xray-fixture.sh"
-t_use_asset_fixture "$S5T_ASSETS/asset-xray" archive
-
-# s5t_asset_run <case>: drive the real download path against one crafted archive.
-s5t_asset_run() {
-    S5_TEST_ASSET_PATH=$S5T_ASSETS/$1.zip
-    S5_WORKDIR=$S5_TEST_ROOT/work-$1
-    rm -rf "$S5_WORKDIR"
-    mkdir -p "$S5_WORKDIR"
-    rm -f "$S5_BIN"
-    t_run s5_download_engine
+# A runnable shell fixture cannot satisfy production file(1)'s ELF gate, so the
+# seam reports the architecture while every byte, digest, mode and rename check
+# remains production code.
+t_raw_fixture() {
+    t_xray_fixture 23456 real-download
+    S5_TEST_ASSET_PATH=$S5_TEST_ROOT/asset-xray
+    export S5_TEST_ASSET_PATH
+    s5_file_type_command() {
+        printf '%s\n' 'ELF 64-bit LSB executable, x86-64, statically linked'
+    }
 }
 
-# s5t_asset_reject <case> <subject> <reason>: a refusal has to name the guarantee
-# it broke, so the reported reason is asserted alongside the status.
-s5t_asset_reject() {
-    s5t_asset_run "$1"
-    assert_ne "$2 is refused" 0 "$T_STATUS"
-    assert_contains "$2 reports $3" "Xray asset verification failed: $3." "$T_OUT"
-    assert_file_absent "$2 installs no binary" "$S5_BIN"
+t_candidate_count() {
+    find "$S5_PREFIX" -maxdepth 1 -type f -name '.xray.*' 2>/dev/null |
+        wc -l | tr -d '[:space:]'
 }
 
-# s5t_asset_size_reject <case> <subject> <reason> <observed> <pinned>: a size gate
-# carries the length it actually saw. A rewritten stream and a write that ran out
-# of room both leave a file shorter than its pin, so the reason alone cannot tell
-# a maintainer which one happened -- the numbers can (ADR-0006).
-s5t_asset_size_reject() {
-    s5t_asset_run "$1"
-    assert_ne "$2 is refused" 0 "$T_STATUS"
-    assert_contains "$2 reports $3 with the bytes it observed" \
-        "Xray asset verification failed: $3 is $4 bytes, expected $5." "$T_OUT"
-    assert_file_absent "$2 installs no binary" "$S5_BIN"
-}
+t_raw_fixture
+t_run s5_download_engine
+assert_eq "valid raw candidate installs" 0 "$T_STATUS"
+assert_file_exists "raw publication creates final xray" "$S5_BIN"
+assert_mode "published xray is executable" 755 "$S5_BIN"
+assert_eq "published xray matches the raw candidate" \
+    "$S5T_BIN_SHA256" "$(t_sha256 "$S5_BIN")"
+assert_eq "successful publication leaves no prefix candidate" 0 "$(t_candidate_count)"
+assert_eq "successful publication clears the tracked candidate" '' "$S5_BINARY_TEMP"
 
-# The positive control. Without it a fixture malformed in some unrelated way
-# would make every refusal below pass for the wrong reason.
-s5t_asset_run good
-assert_eq "a well-formed archive is accepted" 0 "$T_STATUS"
-assert_eq "an accepted archive reports nothing" '' "$T_OUT"
-assert_file_exists "an accepted archive installs xray" "$S5_BIN"
-assert_eq "the installed xray is the verified member" "$S5T_BIN_SHA256" \
-    "$(t_sha256 "$S5_BIN")"
-assert_mode "the installed xray is executable" 755 "$S5_BIN"
+# Exact-size and digest gates remove every refused candidate.
+t_raw_fixture
+S5T_SIZE_OVERRIDE=$((S5T_BIN_SIZE + 1))
+t_run s5_download_engine
+assert_ne "short raw asset is refused" 0 "$T_STATUS"
+assert_contains "short raw asset reports observed and expected bytes" \
+    "is $S5T_BIN_SIZE bytes, expected $((S5T_BIN_SIZE + 1))" "$T_OUT"
+assert_file_absent "short raw asset is never published" "$S5_BIN"
+assert_eq "short raw candidate is removed" 0 "$(t_candidate_count)"
 
-# A same-named PATH executable can reintroduce implicit options after the caller
-# cleaned its own environment. Prove the hostile control changes the fixture,
-# then require production's absolute command seam to bypass it completely.
-_sapath=$PATH
-mkdir -p "$S5_TEST_ROOT/hostile-bin"
-cat >"$S5_TEST_ROOT/hostile-bin/unzip" <<'HOSTILE_UNZIP'
-#!/bin/sh
-printf 'called\n' >>"$S5_TEST_ROOT/hostile-unzip.calls"
-UNZIP=-aa
-export UNZIP
-exec /usr/bin/unzip "$@"
-HOSTILE_UNZIP
-chmod 0755 "$S5_TEST_ROOT/hostile-bin/unzip"
-PATH=$S5_TEST_ROOT/hostile-bin:$PATH
-export PATH
-"$S5_TEST_ROOT/hostile-bin/unzip" -p "$S5T_ASSETS/good.zip" xray \
-    >"$S5_TEST_ROOT/hostile-xray"
-assert_ne "the hostile PATH control changes extracted xray bytes" "$S5T_BIN_SHA256" \
-    "$(t_sha256 "$S5_TEST_ROOT/hostile-xray")"
-rm -f "$S5_TEST_ROOT/hostile-unzip.calls"
-unzip() {
-    printf 'function-called\n' >>"$S5_TEST_ROOT/hostile-unzip.calls"
-    UNZIP=-aa
-    export UNZIP
-    /usr/bin/unzip "$@"
-}
-s5t_asset_run good
-assert_eq "production bypasses a hostile unzip on PATH" 0 "$T_STATUS"
-assert_eq "PATH isolation installs the verified xray member" "$S5T_BIN_SHA256" \
-    "$(t_sha256 "$S5_BIN")"
-assert_file_absent "hostile PATH and function unzips are never invoked" \
-    "$S5_TEST_ROOT/hostile-unzip.calls"
-PATH=$_sapath
-export PATH
-# Both doubles end with their case. Restoring PATH does not remove a shell
-# function, and leaving it defined would put a hostile unzip under every case
-# below, where nothing reads hostile-unzip.calls again.
-unset -f unzip
+# Correct size but wrong digest is independent of the size gate.
+t_raw_fixture
+S5T_SHA_OVERRIDE=1111111111111111111111111111111111111111111111111111111111111111
+t_run s5_download_engine
+assert_ne "wrong raw digest is refused" 0 "$T_STATUS"
+assert_contains "wrong raw digest reports SHA-256" 'sha256' "$T_OUT"
+assert_file_absent "wrong-digest asset is never published" "$S5_BIN"
+assert_eq "wrong-digest candidate is removed" 0 "$(t_candidate_count)"
 
-# The tools that acquire and judge the accepted member are pinned for the same
-# reason as the extractor. PATH executables or shell functions can otherwise
-# replace the download or make arbitrary bytes match an arbitrary pin; file(1)
-# also reads MAGIC as a database override and reports the real member as data.
-mkdir -p "$S5_TEST_ROOT/hostile-tools"
-# Freeze the fixture's archive metadata before PATH becomes hostile. The fixture
-# selector otherwise uses the test helper's PATH-resolved sha256sum to build its
-# independent expected value, which would test the harness instead of production.
-S5T_SIZE_OVERRIDE=$(wc -c <"$S5T_ASSETS/good.zip" | tr -d '[:space:]')
-S5T_SHA_OVERRIDE=$(/usr/bin/sha256sum "$S5T_ASSETS/good.zip" | awk '{print $1}')
-cat >"$S5_TEST_ROOT/hostile-tools/curl" <<'HOSTILE_CURL'
-#!/bin/sh
-printf 'path-curl-called\n' >>"$S5_TEST_ROOT/hostile-curl.calls"
-exit 90
-HOSTILE_CURL
-cat >"$S5_TEST_ROOT/hostile-tools/sha256sum" <<'HOSTILE_SHA'
-#!/bin/sh
-printf 'path-sha-called\n' >>"$S5_TEST_ROOT/hostile-sha.calls"
-printf '%064d  %s\n' 0 "$1"
-HOSTILE_SHA
-cat >"$S5_TEST_ROOT/hostile-tools/file" <<'HOSTILE_FILE'
-#!/bin/sh
-printf 'path-file-called\n' >>"$S5_TEST_ROOT/hostile-file.calls"
-printf '%s\n' 'ELF 64-bit LSB executable, ARM aarch64'
-HOSTILE_FILE
-chmod 0755 "$S5_TEST_ROOT/hostile-tools/curl" \
-    "$S5_TEST_ROOT/hostile-tools/sha256sum" "$S5_TEST_ROOT/hostile-tools/file"
-PATH=$S5_TEST_ROOT/hostile-tools:$PATH
-export PATH
-curl() {
-    printf 'function-curl-called\n' >>"$S5_TEST_ROOT/hostile-curl.calls"
-    return 90
-}
-sha256sum() {
-    printf 'function-sha-called\n' >>"$S5_TEST_ROOT/hostile-sha.calls"
-    printf '%064d  %s\n' 0 "$1"
-}
-file() {
-    printf 'function-file-called\n' >>"$S5_TEST_ROOT/hostile-file.calls"
-    printf '%s\n' 'ELF 64-bit LSB executable, ARM aarch64'
-}
-MAGIC=/dev/null
-export MAGIC
-"$S5_TEST_ROOT/hostile-tools/curl" --version >/dev/null 2>&1 || :
-assert_file_exists "the hostile curl control records a direct invocation" \
-    "$S5_TEST_ROOT/hostile-curl.calls"
-rm -f "$S5_TEST_ROOT/hostile-curl.calls"
-t_run s5_curl_command --version
-assert_eq "the packaged curl seam remains callable under hostile resolution" 0 "$T_STATUS"
-assert_file_absent "the packaged curl seam bypasses PATH and function wrappers" \
-    "$S5_TEST_ROOT/hostile-curl.calls"
-s5t_asset_run good
-assert_eq "production bypasses hostile digest and type commands" 0 "$T_STATUS"
-assert_eq "tool isolation installs the verified xray member" "$S5T_BIN_SHA256" \
-    "$(/usr/bin/sha256sum "$S5_BIN" | awk '{print $1}')"
-assert_file_absent "hostile transport commands are never invoked" \
-    "$S5_TEST_ROOT/hostile-curl.calls"
-assert_file_absent "hostile digest commands are never invoked" \
-    "$S5_TEST_ROOT/hostile-sha.calls"
-assert_file_absent "hostile type commands are never invoked" \
-    "$S5_TEST_ROOT/hostile-file.calls"
-assert_eq "the caller's MAGIC value is preserved" /dev/null "$MAGIC"
-unset MAGIC
-unset -f curl sha256sum file
-PATH=$_sapath
-export PATH
-S5T_SIZE_OVERRIDE=''
-S5T_SHA_OVERRIDE=''
-
-# Info-ZIP treats UNZIP and UNZIPOPT as leading command-line options. `-aa`
-# forces text conversion and used to alter binary bytes while `unzip -p` still
-# exited zero. Production must isolate every archive operation from those
-# inherited settings without modifying the caller's environment.
-UNZIP=-aa
-export UNZIP
-s5t_asset_run good
-assert_eq "UNZIP options cannot alter accepted xray bytes" 0 "$T_STATUS"
-assert_eq "UNZIP-isolated extraction installs the verified member" "$S5T_BIN_SHA256" \
-    "$(t_sha256 "$S5_BIN")"
-assert_eq "the caller's UNZIP value is preserved" -aa "$UNZIP"
-unset UNZIP
-
-UNZIPOPT=-aa
-export UNZIPOPT
-s5t_asset_run good
-assert_eq "UNZIPOPT options cannot alter accepted xray bytes" 0 "$T_STATUS"
-assert_eq "UNZIPOPT-isolated extraction installs the verified member" "$S5T_BIN_SHA256" \
-    "$(t_sha256 "$S5_BIN")"
-assert_eq "the caller's UNZIPOPT value is preserved" -aa "$UNZIPOPT"
-unset UNZIPOPT
-
-s5t_asset_reject noxray "an archive with no xray member" members
-s5t_asset_reject duplicate "an archive with a duplicate xray member" members
-s5t_asset_reject extra "an archive with an unexpected extra member" members
-s5t_asset_reject subdir "an archive whose xray member carries a path separator" members
-s5t_asset_reject traversal "an archive with a parent-directory member" members
-s5t_asset_reject symlink "an archive whose xray member is a symlink" members
-s5t_asset_reject device "an archive with a device member" members
-
-# A local archive still has to clear the archive gate that runs ahead of the
-# member inspection, or the hook itself would be the way past it.
-S5T_SIZE_OVERRIDE=1
-s5t_asset_size_reject good "an archive of an unexpected size" size \
-    "$(wc -c <"$S5T_ASSETS/good.zip" | tr -cd '0-9')" 1
-S5T_SIZE_OVERRIDE=''
-S5T_SHA_OVERRIDE=0000000000000000000000000000000000000000000000000000000000000000
-s5t_asset_reject good "an archive with an unexpected digest" sha256
-S5T_SHA_OVERRIDE=''
-# The extracted binary's exact-size gate (distinct from its SHA-256, and checked
-# just before it) had no failing input of its own -- only a wrong binary digest was
-# injected. Inject a wrong expected size and require the binary-size reason, so the
-# gate cannot be dropped with only the archive-size case (a different variable) left
-# to notice.
-S5T_BIN_SIZE=999999
-s5t_asset_size_reject good "an archive whose xray member has an unexpected size" \
-    binary-size "${S5T_META%% *}" 999999
-S5T_BIN_SIZE=${S5T_META%% *}
-S5T_BIN_SHA256=1111111111111111111111111111111111111111111111111111111111111111
-s5t_asset_reject good "an archive whose xray member has an unexpected digest" \
-    binary-sha256
-S5T_BIN_SHA256=${S5T_META##* }
-
-# The verified member must also be an ELF for the architecture being installed.
-# mkasset builds one x86-64 stub for every case, so that gate is reached at the
-# file(1) seam rather than through PATH -- PATH is the surface production
-# deliberately stopped trusting for the type decision. The double delegates to
-# the real command while inert, so every other case is still judged by file(1).
-S5T_FILE_TYPE=''
+# Architecture, linkage and version are checked only after byte identity.
+t_raw_fixture
 s5_file_type_command() {
-    if [ -n "$S5T_FILE_TYPE" ]; then printf '%s\n' "$S5T_FILE_TYPE"; return 0; fi
-    /usr/bin/file -b "$@"
+    printf '%s\n' 'ELF 64-bit LSB executable, ARM aarch64, statically linked'
 }
-S5T_FILE_TYPE='ELF 64-bit LSB executable, ARM aarch64, version 1 (SYSV)'
-s5t_asset_reject good "an archive whose xray member is built for another architecture" \
-    architecture
-S5T_FILE_TYPE=''
+t_run s5_download_engine
+assert_ne "wrong ELF architecture is refused" 0 "$T_STATUS"
+assert_contains "wrong ELF architecture reports architecture" 'architecture' "$T_OUT"
+s5_cleanup
+assert_eq "wrong-architecture candidate is removed" 0 "$(t_candidate_count)"
 
-# curl reports a failed -o write with status 23. That status is direct storage
-# evidence just like the extraction writer seam; response/transport failures keep
-# the existing download reason. Both paths remove the partial archive.
+t_raw_fixture
+s5_file_type_command() {
+    printf '%s\n' 'ELF 64-bit LSB executable, x86-64, dynamically linked, interpreter /lib64/ld-linux.so.2'
+}
+t_run s5_download_engine
+assert_ne "dynamically linked candidate is refused" 0 "$T_STATUS"
+assert_contains "dynamic candidate reports linkage" 'linkage' "$T_OUT"
+s5_cleanup
+assert_eq "dynamic candidate is removed" 0 "$(t_candidate_count)"
+
+t_raw_fixture
+s5_xray_version_command() { printf '%s\n' 'Xray 99.0.0 (synthetic)'; }
+t_run s5_download_engine
+assert_ne "wrong Xray version is refused" 0 "$T_STATUS"
+assert_contains "wrong Xray version reports version" 'version' "$T_OUT"
+s5_cleanup
+assert_eq "wrong-version candidate is removed" 0 "$(t_candidate_count)"
+
+# The download seam classifies curl's direct write status without parsing stderr.
+t_raw_fixture
 S5_TEST_ASSET_PATH=''
-S5T_CURL_STATUS=0
-S5T_CURL_BYTES=0
+unset S5_TEST_ASSET_PATH
 s5_curl_command() {
-    _s5tc_out=''
+    _tca_out=''
     while [ "$#" -gt 0 ]; do
-        if [ "$1" = -o ]; then shift; _s5tc_out=$1; fi
+        if [ "$1" = -o ]; then shift; _tca_out=$1; fi
         shift
     done
-    /usr/bin/head -c "$S5T_CURL_BYTES" /dev/zero >"$_s5tc_out"
-    return "$S5T_CURL_STATUS"
+    head -c 64 "$S5_TEST_ROOT/asset-xray" >"$_tca_out"
+    return 23
 }
-S5T_CURL_BYTES=7798784
-S5T_CURL_STATUS=23
-t_run s5_fetch_archive "$S5_TEST_ROOT/curl-partial.zip"
+t_run s5_download_engine
 assert_ne "curl output write failure is refused" 0 "$T_STATUS"
-assert_contains "curl output write failure reports its partial count" \
-    '7798784 bytes written of' "$T_OUT"
-assert_not_contains "curl output write failure is not a bad download" \
-    'asset verification failed: download' "$T_OUT"
-assert_file_absent "curl output write failure removes its partial archive" \
-    "$S5_TEST_ROOT/curl-partial.zip"
-S5T_CURL_BYTES=128
-S5T_CURL_STATUS=22
-t_run s5_fetch_archive "$S5_TEST_ROOT/curl-transport.zip"
+assert_contains "curl write failure reports observed and expected bytes" \
+    "64 bytes written of $S5T_BIN_SIZE" "$T_OUT"
+assert_contains "curl write failure is classified as storage" 'full or over quota' "$T_OUT"
+assert_eq "curl write failure removes candidate" 0 "$(t_candidate_count)"
+
+t_raw_fixture
+S5_TEST_ASSET_PATH=''
+unset S5_TEST_ASSET_PATH
+s5_curl_command() { return 28; }
+t_run s5_download_engine
 assert_ne "curl transport failure is refused" 0 "$T_STATUS"
-assert_contains "curl transport failure retains the download reason" \
+assert_contains "transport failure retains the download reason" \
     'Xray asset verification failed: download.' "$T_OUT"
-assert_not_contains "curl transport failure is not invented as a write failure" \
-    'could not write all of' "$T_OUT"
-assert_file_absent "curl transport failure removes its partial archive" \
-    "$S5_TEST_ROOT/curl-transport.zip"
-S5T_CURL_BYTES=0
-S5T_CURL_STATUS=0
-S5_TEST_ASSET_PATH=$S5T_ASSETS/good.zip
+assert_not_contains "transport failure is not reported as storage" 'full or over quota' "$T_OUT"
+assert_eq "transport failure removes candidate" 0 "$(t_candidate_count)"
 
-# Extraction exposes the producer and final writer as separate seams. Their
-# statuses are independent: a producer can fail after the writer reaches EOF,
-# while a quota-blind writer failure can close the FIFO and make an otherwise
-# healthy producer report SIGPIPE. The writer status is authoritative for the
-# latter because it is direct evidence that the target write failed; statfs is
-# only an advisory preflight and can still report ample global free space under
-# an LXD project/volume quota.
-S5T_UNZIP_FAIL=''
-S5T_UNZIP_BYTES=''
-S5T_UNZIP_STATUS=0
-S5T_WRITE_LIMIT=''
-S5T_WRITE_STATUS=0
-s5_unzip_command() {
-    if [ -n "$S5T_UNZIP_FAIL" ] && [ "$1" = "$S5T_UNZIP_FAIL" ]; then return 9; fi
-    if [ -n "$S5T_UNZIP_BYTES" ] && [ "$1" = -p ]; then
-        /bin/sh -c '
-            printf "%s\n" "$$" >"$1"
-            /usr/bin/head -c "$2" /dev/zero || exit $?
-            exit "$3"
-        ' sh "$S5_TEST_ROOT/extract-producer.pid" \
-            "$S5T_UNZIP_BYTES" "$S5T_UNZIP_STATUS"
-        return $?
-    fi
-    /usr/bin/unzip "$@"
+# A successful short transfer is artifact identity failure, not storage evidence.
+t_raw_fixture
+S5_TEST_ASSET_PATH=''
+unset S5_TEST_ASSET_PATH
+s5_curl_command() {
+    _tcs_out=''
+    while [ "$#" -gt 0 ]; do
+        if [ "$1" = -o ]; then shift; _tcs_out=$1; fi
+        shift
+    done
+    head -c 64 "$S5_TEST_ROOT/asset-xray" >"$_tcs_out"
+    return 0
 }
-s5_write_stream() {
-    if [ -n "$S5T_WRITE_LIMIT" ]; then
-        /usr/bin/head -c "$S5T_WRITE_LIMIT" >"$1"
-        [ "$S5T_WRITE_STATUS" -eq 0 ] || return "$S5T_WRITE_STATUS"
-        return 0
-    fi
-    /bin/cat >"$1"
-    [ "$S5T_WRITE_STATUS" -eq 0 ] || return "$S5T_WRITE_STATUS"
+t_run s5_download_engine
+assert_ne "successful short response is refused" 0 "$T_STATUS"
+assert_contains "successful short response is a size failure" 'expected' "$T_OUT"
+assert_not_contains "successful short response is not storage" 'full or over quota' "$T_OUT"
+assert_eq "successful short response removes candidate" 0 "$(t_candidate_count)"
+
+# Candidate is private during verification and is the same inode renamed into
+# place; no extracted or publication copy is introduced.
+t_raw_fixture
+_s5t_inode_file=$S5_TEST_ROOT/candidate.inode
+_s5t_mode_file=$S5_TEST_ROOT/candidate.mode
+s5_xray_version_command() {
+    stat -c '%i' "$1" >"$_s5t_inode_file"
+    stat -c '%a' "$1" >"$_s5t_mode_file"
+    printf '%s\n' 'Xray 26.3.27 (synthetic test fixture)'
 }
+_s5t_runlog=$S5_TEST_ROOT/inode-run.log
+s5_download_engine >"$_s5t_runlog" 2>&1
+_s5t_status=$?
+assert_eq "inode-observation install succeeds" 0 "$_s5t_status"
+assert_eq "candidate has private execute mode during version check" 700     "$(cat "$_s5t_mode_file")"
+assert_eq "published binary is the verified candidate inode"     "$(cat "$_s5t_inode_file")" "$(stat -c '%i' "$S5_BIN")"
 
-S5T_UNZIP_FAIL=-p
-s5t_asset_reject good "an archive whose xray member cannot be extracted" extract
-assert_file_absent "a failed extraction removes its partial member" \
-    "$S5_TEST_ROOT/work-good/xray"
-assert_eq "a failed extraction leaves no FIFO" 0 \
-    "$(find "$S5_TEST_ROOT/work-good" -type p 2>/dev/null | wc -l | tr -d '[:space:]')"
-S5T_UNZIP_FAIL=''
+# Fresh capacity is exactly one raw binary. The seam records the request rather
+# than depending on this host's current free-space count.
+t_raw_fixture
+_s5t_space_path=''
+_s5t_space_bytes=''
+s5_require_space() { _s5t_space_path=$1; _s5t_space_bytes=$2; return 0; }
+_s5t_runlog=$S5_TEST_ROOT/capacity-run.log
+s5_download_engine >"$_s5t_runlog" 2>&1
+_s5t_status=$?
+assert_eq "capacity-observation install succeeds" 0 "$_s5t_status"
+assert_eq "fresh capacity is checked on the install prefix" "$S5_PREFIX" "$_s5t_space_path"
+assert_eq "fresh capacity requires one raw binary" "$S5T_BIN_SIZE" "$_s5t_space_bytes"
 
-# Producer failure and writer success must retain the extractor reason. The
-# writer drains every byte and exits zero, so this goes red if the implementation
-# observes only the last stage as a simple pipeline would.
-S5_WORKDIR=$S5_TEST_ROOT/work-producer-failure
-rm -rf "$S5_WORKDIR"
-mkdir -p "$S5_WORKDIR"
-rm -f "$S5_BIN" "$S5_TEST_ROOT/extract-producer.pid"
-S5T_UNZIP_BYTES=128
-S5T_UNZIP_STATUS=9
-S5T_WRITE_LIMIT=''
-S5T_WRITE_STATUS=0
-t_run s5_extract_binary "$S5T_ASSETS/good.zip" "$S5_WORKDIR/xray"
-assert_ne "a failed producer is refused when the writer succeeds" 0 "$T_STATUS"
-assert_contains "producer failure retains the extractor reason" \
-    'Xray asset verification failed: extract.' "$T_OUT"
-assert_not_contains "producer failure is not reported as storage" \
-    'could not write all of' "$T_OUT"
-assert_file_absent "producer failure removes the partial member" "$S5_WORKDIR/xray"
-assert_eq "producer failure leaves no FIFO" 0 \
-    "$(find "$S5_WORKDIR" -type p 2>/dev/null | wc -l | tr -d '[:space:]')"
+# Prefix mode and partial candidate cleanup are both attempted on an existing
+# installation even when staging fails.
+t_raw_fixture
+mkdir -p "$S5_PREFIX"
+chmod 0755 "$S5_PREFIX"
+printf 'existing\n' >"$S5_BIN"
+chmod 0755 "$S5_BIN"
+S5_CREATED_PREFIX=0
+s5_fetch_binary() { printf 'partial\n' >"$1"; return 1; }
+t_run s5_download_engine
+assert_ne "failed update staging is refused" 0 "$T_STATUS"
+assert_mode "failed update restores prefix traversal" 755 "$S5_PREFIX"
+assert_eq "failed update removes prefix candidate" 0 "$(t_candidate_count)"
+assert_contains "failed update preserves the installed binary" 'existing' "$(cat "$S5_BIN")"
 
-# A small stream fits in the FIFO buffer before the writer closes, so the
-# producer exits zero while the final writer returns nonzero. That must be a
-# storage write failure even though statfs reports far more than the 92,082 KiB
-# preflight requirement.
-S5T_FREE_KB=1048576
-S5T_UNZIP_BYTES=128
-S5T_UNZIP_STATUS=0
-S5T_WRITE_LIMIT=64
-S5T_WRITE_STATUS=74
-rm -f "$S5_TEST_ROOT/extract-producer.pid"
-t_run s5_extract_binary "$S5T_ASSETS/good.zip" "$S5_WORKDIR/xray"
-assert_ne "a failed writer is refused when the producer succeeds" 0 "$T_STATUS"
-assert_contains "writer failure is reported from its direct status" \
-    'could not write all of' "$T_OUT"
-assert_contains "writer failure reports observed and expected bytes" \
-    '64 bytes written of' "$T_OUT"
-assert_not_contains "writer failure is not called an asset size failure" \
-    'asset verification failed: binary-size' "$T_OUT"
-assert_file_absent "writer failure removes the partial member" "$S5_WORKDIR/xray"
-assert_eq "writer failure leaves no FIFO" 0 \
-    "$(find "$S5_WORKDIR" -type p 2>/dev/null | wc -l | tr -d '[:space:]')"
+# Unified signal/EXIT cleanup tracks the same candidate path without a FIFO or
+# external work directory.
+t_raw_fixture
+mkdir -p "$S5_PREFIX"
+chmod 0700 "$S5_PREFIX"
+S5_CREATED_PREFIX=0
+S5_PREFIX_PRIVATE=1
+S5_BINARY_TEMP=$(mktemp "$S5_PREFIX/.xray.XXXXXX")
+printf 'partial\n' >"$S5_BINARY_TEMP"
+t_run s5_cleanup
+assert_eq "cleanup removes tracked prefix candidate" 0 "$(t_candidate_count)"
+assert_mode "cleanup restores existing prefix traversal" 755 "$S5_PREFIX"
 
-# Exact field report: the producer has the pinned 36,577,406 bytes, the writer
-# reaches the LXD quota boundary at 7,798,784 bytes (15,232 x 512) and fails.
-# Closing the FIFO can make the producer fail with SIGPIPE too; writer/storage
-# remains the primary cause, and the producer must be reaped.
-S5T_UNZIP_BYTES=36577406
-S5T_UNZIP_STATUS=0
-S5T_WRITE_LIMIT=7798784
-S5T_WRITE_STATUS=74
-S5_ASSET_BINARY_SIZE=36577406
-rm -f "$S5_TEST_ROOT/extract-producer.pid"
-t_run s5_extract_binary "$S5T_ASSETS/good.zip" "$S5_WORKDIR/xray"
-assert_ne "the exact quota-boundary short write is refused" 0 "$T_STATUS"
-assert_contains "the exact quota-boundary report contains both byte counts" \
-    '7798784 bytes written of 36577406' "$T_OUT"
-assert_not_contains "the exact quota-boundary failure is not asset corruption" \
-    'Xray asset verification failed' "$T_OUT"
-assert_file_absent "the exact quota-boundary short member is removed" "$S5_WORKDIR/xray"
-assert_eq "the exact quota-boundary failure leaves no FIFO" 0 \
-    "$(find "$S5_WORKDIR" -type p 2>/dev/null | wc -l | tr -d '[:space:]')"
-_asset_producer_pid=$(cat "$S5_TEST_ROOT/extract-producer.pid")
-if kill -0 "$_asset_producer_pid" 2>/dev/null; then
-    t_bad "the failed writer's producer was not reaped: $_asset_producer_pid"
-else
-    t_ok
-fi
-
-# Exercise the real TERM cleanup path while producer and writer are both live.
-# The child installs production's signal handler, blocks its writer, and streams
-# enough producer data to remain active until the parent signals it. Cleanup must
-# reap that producer before deleting the FIFO/workdir and partial target. HUP, INT,
-# and TERM share s5_on_signal; the static contract below pins all three mappings.
-_asset_signal_work=$S5_TEST_ROOT/work-signal-extract
-rm -rf "$_asset_signal_work"
-mkdir -p "$_asset_signal_work"
-rm -f "$S5_TEST_ROOT/signal-producer.pid"
-(
-    S5_WORKDIR=$_asset_signal_work
-    S5_INSTALL_COMPLETE=1
-    S5_CREATED_PREFIX=1
-    S5_PREFIX_PRIVATE=0
-    S5_IN_CLEANUP=0
-    S5T_UNZIP_BYTES=1073741824
-    S5T_UNZIP_STATUS=0
-    s5_unzip_command() {
-        if [ "$1" = -p ]; then
-            /bin/sh -c '
-                printf "%s\n" "$$" >"$1"
-                /usr/bin/head -c "$2" /dev/zero
-            ' sh "$S5_TEST_ROOT/signal-producer.pid" "$S5T_UNZIP_BYTES"
-            return $?
-        fi
-        /usr/bin/unzip "$@"
+# Pin a stat snapshot at the syscall boundary, not the production seam. This
+# both avoids the live filesystem read race and proves that changing %f to %a
+# loses the root reserve, including on hosts that have no reserve themselves.
+t_raw_fixture
+_tfs_snapshot() (
+    stat() {
+        case "$*" in
+        "-f -c %f %S $S5_TEST_ROOT") printf '100 4096\n' ;;
+        "-f -c %a %S $S5_TEST_ROOT") printf '90 4096\n' ;;
+        *) return 1 ;;
+        esac
     }
-    s5_write_stream() {
-        : >"$1"
-        while :; do sleep 1; done
-    }
-    trap 's5_on_signal 143' HUP INT TERM
-    s5_extract_binary "$S5T_ASSETS/good.zip" "$S5_WORKDIR/xray"
-) &
-_asset_signal_shell=$!
-_asset_signal_ready=0
-_asset_signal_tries=0
-while [ "$_asset_signal_tries" -lt 50 ]; do
-    if [ -f "$S5_TEST_ROOT/signal-producer.pid" ] &&
-        find "$_asset_signal_work" -type p -print -quit 2>/dev/null | grep -q .; then
-        _asset_signal_ready=1
-        break
-    fi
-    sleep 0.1
-    _asset_signal_tries=$((_asset_signal_tries + 1))
+    s5_free_kb "$S5_TEST_ROOT"
+)
+t_run _tfs_snapshot
+assert_eq "production capacity seam reads the stat snapshot" 0 "$T_STATUS"
+assert_eq "capacity includes the ten root-reserved blocks" 400 "$T_OUT"
+assert_ne "capacity does not substitute unprivileged availability" 360 "$T_OUT"
+t_run s5_fs_free_command "$S5_TEST_ROOT"
+assert_eq "packaged stat can read real filesystem capacity" 0 "$T_STATUS"
+for _tfs_block in 512 1024 4096 65536; do
+    s5_fs_free_command() { printf '100 %s\n' "$_tfs_block"; }
+    t_run s5_free_kb "$S5_TEST_ROOT"
+    assert_eq "capacity converts $_tfs_block byte blocks" "$((100 * _tfs_block / 1024))" "$T_OUT"
 done
-assert_eq "signal extraction reaches a live producer and FIFO" 1 "$_asset_signal_ready"
-kill -TERM "$_asset_signal_shell" 2>/dev/null || true
-wait "$_asset_signal_shell" 2>/dev/null
-_asset_signal_status=$?
-assert_ne "TERM interrupts extraction" 0 "$_asset_signal_status"
-assert_file_absent "TERM cleanup removes the extraction workdir" "$_asset_signal_work"
-_asset_signal_producer=$(cat "$S5_TEST_ROOT/signal-producer.pid" 2>/dev/null)
-if [ -n "$_asset_signal_producer" ] && kill -0 "$_asset_signal_producer" 2>/dev/null; then
-    t_bad "TERM cleanup left extraction producer $_asset_signal_producer running"
-else
-    t_ok
-fi
-assert_contains "HUP maps to cleanup status 129" "trap 's5_on_signal 129' HUP" "$source"
-assert_contains "INT maps to cleanup status 130" "trap 's5_on_signal 130' INT" "$source"
-assert_contains "TERM maps to cleanup status 143" "trap 's5_on_signal 143' TERM" "$source"
-S5T_UNZIP_BYTES=''
-S5T_UNZIP_STATUS=0
-S5T_WRITE_LIMIT=''
-S5T_WRITE_STATUS=0
-S5T_FREE_KB=''
-S5_ASSET_BINARY_SIZE=$S5T_BIN_SIZE
 
-# What capacity answers is judged here, before any double exists. A double that
-# delegates to the command it stands in for answers in production's place, so a
-# change to production's own seam would leave every assertion below green -- these
-# two cases are the ones that must fail when that seam changes, so they cannot run
-# inside the doubled region that starts further down.
-#
-# What df calls Available is the space an unprivileged user may write, excluding the
-# reserve only root can use -- and every staging command runs as root, so reading
-# that figure can refuse a host with gigabytes of room. Capacity reports the
-# filesystem's free blocks instead. The two figures differ only where the filesystem
-# keeps a reserve, so the strict case says when it cannot be told apart.
-# Both figures have to describe the same instant. A busy host changes its free
-# block count between two reads, and the resulting one-block gap looks like a
-# capacity defect while the production seam is untouched -- CI failed exactly that
-# way with 90082564 against 90082560. The capacity call is therefore sandwiched
-# between two stat reads and the pair is retried until the filesystem held still
-# across it, so what decides the assertion below is still the %f-versus-%a choice.
-_asset_attempt=0
-while :; do
-    _asset_fs=$(stat -f -c '%f %a %S' "$S5_TEST_ROOT")
-    _asset_free=$(s5_free_kb "$S5_TEST_ROOT")
-    _asset_free_status=$?
-    [ "$_asset_fs" = "$(stat -f -c '%f %a %S' "$S5_TEST_ROOT")" ] && break
-    _asset_attempt=$((_asset_attempt + 1))
-    [ "$_asset_attempt" -lt 20 ] || break
-done
-assert_eq "capacity reads a usable answer from the filesystem" 0 "$_asset_free_status"
-_asset_bfree=$(printf '%s\n' "$_asset_fs" | awk '{ printf "%d\n", $1 * ($3 / 1024) }')
-_asset_bavail=$(printf '%s\n' "$_asset_fs" | awk '{ printf "%d\n", $2 * ($3 / 1024) }')
-assert_eq "capacity counts every block root can write into" "$_asset_bfree" "$_asset_free"
-if [ "$_asset_bfree" -gt "$_asset_bavail" ]; then
-    assert_ne "the reserve root can use is not excluded" "$_asset_bavail" "$_asset_free"
-else
-    t_skip "the reserve root can use is not excluded" \
-        "this filesystem keeps no reserve, so the two figures are identical"
-fi
-
-# The combined requirement below turns on filesystem identity, and identity must not
-# move while the host is writing. A df row does move -- its used, available and
-# capacity columns change between the two lookups, so one filesystem compares
-# unequal to itself and the sum is silently skipped exactly when a busy
-# single-filesystem container needs it. The device is what cannot move, so that is
-# what identity has to be.
 mkdir -p "$S5_TEST_ROOT/fsid"
-assert_eq "filesystem identity is the device, not a figure that moves" \
+assert_eq "filesystem identity is the device" \
     "$(stat -c '%d' "$S5_TEST_ROOT")" "$(s5_fs_id "$S5_TEST_ROOT")"
 _asset_fsid=$(s5_fs_id "$S5_TEST_ROOT")
 head -c 8388608 /dev/zero >"$S5_TEST_ROOT/fsid/churn" 2>/dev/null
-assert_eq "two paths on one filesystem still agree after it is written to" \
+assert_eq "filesystem identity survives free-space churn" \
     "$_asset_fsid" "$(s5_fs_id "$S5_TEST_ROOT/fsid")"
-rm -f "$S5_TEST_ROOT/fsid/churn"
+# This command intentionally precedes the later removal-failure double.
+# shellcheck disable=SC2218
+command rm -f "$S5_TEST_ROOT/fsid/churn"
 
-# A full or quota-limited filesystem is the other way the pinned size gate fails,
-# and it is not an artifact problem: a real Alpine 3.22 container reported
-# binary-size while /usr/bin/unzip exited 0 and left 12 MiB of a pinned 36 MiB on
-# disk (ADR-0006). Capacity is asked for through one seam, so both the refusal and
-# the misdiagnosis it replaces are reachable without filling a filesystem. From here
-# down that seam is a double, which is why the two cases above ran before it.
-S5T_FREE_KB=''
-s5_fs_free_command() {
-    # A 1024-byte fundamental block makes the free count and the kibibyte the same
-    # number, so each case below states the figure it means.
-    if [ -n "$S5T_FREE_KB" ]; then printf '%s 1024\n' "$S5T_FREE_KB"; return 0; fi
-    stat -f -c '%f %S' "$1"
-}
 
-# Staging refuses before the download when the work directory cannot hold the
-# archive and the extracted member together.
-S5T_FREE_KB=0
-s5t_asset_run good
-assert_ne "staging without room is refused" 0 "$T_STATUS"
-assert_contains "the refusal names the filesystem it measured" \
-    'not enough space on the filesystem holding' "$T_OUT"
-assert_contains "the refusal reports what is available" 'KiB available.' "$T_OUT"
-assert_not_contains "a full filesystem is never called an asset failure" \
-    'asset verification failed' "$T_OUT"
-assert_file_absent "a refused staging run installs no binary" "$S5_BIN"
-
-# One root filesystem holds the archive, the extracted member and the published
-# copy against the same free space, so the requirement is their sum: two per-path
-# checks would both pass on a host that cannot hold all three. Identity comes from
-# the filesystem id, which cannot move while the host is writing -- a df row can,
-# and comparing rows skipped this branch exactly when a busy container needed it.
-# The pinned release sizes are used here because the fixture's bytes round to the
-# same kibibyte either way, which would make the two requirements indistinguishable.
-S5T_FREE_KB=''
-S5T_FS_ID=''
-s5_fs_id_command() {
-    if [ -n "$S5T_FS_ID" ]; then
-        case "$1" in
-        "$S5_PREFIX") printf '%s\n' "${S5T_FS_ID##* }" ;;
-        *) printf '%s\n' "${S5T_FS_ID%% *}" ;;
-        esac
-        return 0
-    fi
-    stat -c '%d' "$1"
-}
-_asset_size=$S5_ASSET_SIZE
-_asset_bin_size=$S5_ASSET_BINARY_SIZE
-S5_ASSET_SIZE=21136402
-S5_ASSET_BINARY_SIZE=36577406
-# 60000 KiB clears each requirement on its own (56362 KiB and 35721 KiB) but not
-# the sum of all three files (92082 KiB).
-S5T_FREE_KB=60000
-S5T_FS_ID='2051 2051'
-S5_WORKDIR=$S5_TEST_ROOT/work-shared
-mkdir -p "$S5_WORKDIR"
-t_run s5_stage_engine
-assert_ne "one filesystem short of the whole requirement is refused" 0 "$T_STATUS"
-assert_contains "the refusal asks for all three files at once" '92082 KiB required' "$T_OUT"
-
-# Separate filesystems keep the per-path requirements, which this free space meets,
-# so staging proceeds past capacity -- it fails later on the deliberately mismatched
-# pins, which is not what this case is about.
-S5T_FS_ID='2051 2062'
-t_run s5_stage_engine
-assert_not_contains "separate filesystems are not asked for the sum" \
-    'not enough space' "$T_OUT"
-S5T_FS_ID=''
-S5T_FREE_KB=''
-S5_ASSET_SIZE=$_asset_size
-S5_ASSET_BINARY_SIZE=$_asset_bin_size
-
-# Exact size acceptance has one responsibility: compare observed and pinned
-# bytes. A completed producer/writer pair with the wrong length is still an
-# artifact mismatch, regardless of what advisory statfs reports. Only a nonzero
-# writer status is evidence of a storage write failure.
-printf 'short\n' >"$S5_TEST_ROOT/truncated"
-S5T_FREE_KB=0
-t_run s5_accept_size "$S5_TEST_ROOT/truncated" binary-size 36577406
-assert_ne "a completed short stream is refused" 0 "$T_STATUS"
-assert_contains "a completed short stream stays an artifact size refusal" \
-    'Xray asset verification failed: binary-size is 6 bytes, expected 36577406.' "$T_OUT"
-assert_not_contains "statfs exhaustion does not invent a writer failure" \
-    'full or over quota' "$T_OUT"
-t_run s5_accept_size "$S5_TEST_ROOT/truncated" binary-size 3
-assert_ne "a file longer than its pin is refused" 0 "$T_STATUS"
-assert_contains "a file longer than its pin stays an artifact refusal" \
-    'Xray asset verification failed: binary-size is 6 bytes, expected 3.' "$T_OUT"
-assert_not_contains "a file longer than its pin is never blamed on the disk" \
-    'full or over quota' "$T_OUT"
-S5T_FREE_KB=1048576
-t_run s5_accept_size "$S5_TEST_ROOT/truncated" binary-size 36577406
-assert_ne "the same short file with room available is still refused" 0 "$T_STATUS"
-assert_contains "with room available the artifact reason stands, with its numbers" \
-    'Xray asset verification failed: binary-size is 6 bytes, expected 36577406.' "$T_OUT"
-assert_not_contains "a host with room is not told its filesystem is full" \
-    'full or over quota' "$T_OUT"
-
-# Capacity is advisory: the pinned size and SHA-256 remain the authority, so a host
-# whose filesystem answers nothing usable must still install rather than be refused.
-# The refusal and the exhaustion verdict both read through s5_free_kb, so failing
-# the seam it calls is what proves an unknown answer disables the check rather than
-# standing in for "no room".
-S5T_FREE_KB=''
-s5_fs_free_command() { return 1; }
-s5t_asset_run good
-assert_eq "a host whose filesystem answers nothing still installs" 0 "$T_STATUS"
-assert_eq "it installs the verified xray member" "$S5T_BIN_SHA256" \
-    "$(t_sha256 "$S5_BIN")"
-s5_fs_free_command() {
-    if [ -n "$S5T_FREE_KB" ]; then printf '%s 1024\n' "$S5T_FREE_KB"; return 0; fi
-    stat -f -c '%f %S' "$1"
-}
-
-# Both seams are inert again. Without this control a double left switched on
-# would make every later case refuse for the injected reason instead of its own.
-s5t_asset_run good
-assert_eq "the restored command seams accept a well-formed archive" 0 "$T_STATUS"
-assert_eq "the restored seams install the verified xray member" "$S5T_BIN_SHA256" \
-    "$(t_sha256 "$S5_BIN")"
-
-# SPEC 4 pins the binary namespace at root:root 0755 and SPEC 5 keeps a
-# recognized installation restartable and updatable after the release pins
-# change. Staging makes the prefix private so a partially written .xray.XXXXXX
-# cannot be read, and an update reuses a directory already at the documented
-# mode -- so publication has to hand 0755 back on the refusal path as well as
-# the successful one. Nothing else on the update path restores it, and a
-# private prefix locks the service account out of its own installation.
+# Update publication must never acquire fresh-install ownership, including the
+# signal window inside rename. Otherwise cleanup removes the live binary before
+# rollback verifies it and the old installation becomes unrecoverable.
+t_raw_fixture
 mkdir -p "$S5_PREFIX"
-chmod 0755 "$S5_PREFIX"
-s5t_asset_run good
-assert_eq "an update over an existing prefix is accepted" 0 "$T_STATUS"
-assert_mode "a successful update leaves the binary namespace at 0755" 755 "$S5_PREFIX"
-chmod 0755 "$S5_PREFIX"
-S5T_SHA_OVERRIDE=0000000000000000000000000000000000000000000000000000000000000000
-s5t_asset_run good
-assert_ne "a refused update fails" 0 "$T_STATUS"
-assert_contains "the refused update reports the gate it broke" \
-    'Xray asset verification failed: sha256.' "$T_OUT"
-assert_mode "a refused update leaves the binary namespace at 0755" 755 "$S5_PREFIX"
-S5T_SHA_OVERRIDE=''
+printf 'old binary\n' >"$S5_BIN"
+chmod 0755 "$S5_PREFIX" "$S5_BIN"
+S5_BINARY_REPLACED=1
+mv() {
+    printf '%s\n' "$S5_CREATED_BIN" >"$S5_TEST_ROOT/rename-owner"
+    command mv "$@"
+}
+t_run s5_download_engine
+assert_eq "update raw publication succeeds" 0 "$T_STATUS"
+assert_eq "update rename never marks the binary as fresh" 0 "$(cat "$S5_TEST_ROOT/rename-owner")"
+unset -f mv
 
-# When the restore itself cannot run, chmod's own line is untranslated and says
-# nothing about the consequence, so the installer has to name it: the operator who
-# reported this saw that line and no statement of what it meant. The stub fails
-# only the 0755 restore of this prefix, so staging still opens its private window.
-# The double is a function, not a PATH stub, because BusyBox shells resolve their
-# own chmod applet before PATH and only a function reaches production's bare
-# command under every shell in the matrix. It lives inside the substitution so the
-# rest of this file keeps calling the real command.
-/bin/chmod 0700 "$S5_PREFIX"
-S5_PREFIX_PRIVATE=1
-if T_OUT=$(
-    chmod() {
-        case "$1:$2" in
-        0755:*/usr/local/libexec/xray-socks5)
-            printf "chmod: changing permissions of '%s': Quota exceeded\n" "$2" >&2
-            return 1
-            ;;
+# A failed removal keeps the tracked path so a later cleanup can retry it.
+t_raw_fixture
+mkdir -p "$S5_PREFIX"
+S5_BINARY_TEMP=$(mktemp "$S5_PREFIX/.xray.XXXXXX")
+_s5t_failed_temp=$S5_BINARY_TEMP
+rm() { return 1; }
+s5_cleanup_binary_temp >"$S5_TEST_ROOT/remove.log" 2>&1
+assert_ne "candidate removal failure is observable" 0 "$?"
+assert_eq "failed removal retains candidate identity" "$_s5t_failed_temp" "$S5_BINARY_TEMP"
+unset -f rm
+s5_cleanup_binary_temp
+assert_file_absent "later cleanup retries the retained candidate" "$_s5t_failed_temp"
+assert_eq "successful retry clears candidate identity" '' "$S5_BINARY_TEMP"
+
+# Combined preflight must happen before making a rollback copy. On independent
+# filesystems each requirement belongs to its own path; unknown ids fall back to
+# the separate checks rather than disabling the check entirely.
+for _s5t_devices in shared split unknown; do
+    t_raw_fixture
+    mkdir -p "$S5_TXNDIR" "$S5_PREFIX"
+    s5_fs_id_command() {
+        case "$_s5t_devices:$1" in
+        unknown:*) return 1 ;;
+        split:"$S5_TXNDIR") printf '2\n' ;;
+        *) printf '1\n' ;;
         esac
-        /bin/chmod "$@"
     }
-    s5_release_prefix_private 2>&1
-); then _asset_restore=0; else _asset_restore=$?; fi
-assert_ne "a failed mode restore fails" 0 "$_asset_restore"
-assert_contains "a failed mode restore is reported in words" \
-    'could not restore installation directory' "$T_OUT"
-assert_contains "the report names the mode the installation contract requires" \
-    'to 0755' "$T_OUT"
-# A prefix left private is not a cosmetic loss: s5_verify_installed_artifacts
-# holds the prefix to exactly 0755, so every later command -- uninstall included
-# -- refuses until the mode is back. The report has to say so.
-assert_contains "the report names the consequence for the service account" \
-    'service account' "$T_OUT"
-assert_contains "the report warns that later commands refuse" \
-    'later commands refuse to run' "$T_OUT"
-assert_mode "a failed restore leaves the prefix private" 700 "$S5_PREFIX"
+    s5_require_space() { printf '%s %s\n' "$1" "$2" >>"$S5_TEST_ROOT/space.calls"; }
+    t_run s5_require_update_space 123
+    assert_eq "$_s5t_devices update preflight succeeds" 0 "$T_STATUS"
+    if [ "$_s5t_devices" = shared ]; then
+        _s5t_expected="$S5_TXNDIR $((123 + S5_ASSET_SIZE))"
+    else
+        _s5t_expected="$S5_TXNDIR 123
+$S5_PREFIX $S5_ASSET_SIZE"
+    fi
+    assert_eq "$_s5t_devices preflight accounts for backup and raw candidate" \
+        "$_s5t_expected" "$(cat "$S5_TEST_ROOT/space.calls" 2>/dev/null)"
+done
 
-# The restore refuses for one more reason, which reaches the same report without a
-# double and shows the window stays open so cleanup retries it.
-_asset_prefix=$S5_PREFIX
-S5_PREFIX=$S5_TEST_ROOT/prefix-not-a-directory
-: >"$S5_PREFIX"
-S5_PREFIX_PRIVATE=1
-# Not t_run: it captures through a command substitution, so an assignment made by
-# the function would never reach this shell and the flag assertion below would hold
-# whatever production did with it.
-if s5_release_prefix_private 2>"$S5_TEST_ROOT/prefix.err"; then
-    _asset_notdir=0
-else
-    _asset_notdir=$?
-fi
-assert_ne "a prefix that is not a directory fails the restore" 0 "$_asset_notdir"
-assert_contains "that refusal is reported too" \
-    'could not restore installation directory' "$(cat "$S5_TEST_ROOT/prefix.err")"
-# Load-bearing: cleanup retries the restore only while this window is open, and a
-# prefix left at 0700 makes every later command, uninstall included, refuse.
-assert_eq "a failed restore leaves the private window open" 1 "$S5_PREFIX_PRIVATE"
-S5_PREFIX=$_asset_prefix
-/bin/chmod 0755 "$S5_PREFIX"
-S5_PREFIX_PRIVATE=0
+# A successful oversized response is refused before any version execution.
+t_raw_fixture
+S5T_SIZE_OVERRIDE=$((S5T_BIN_SIZE - 1))
+t_run s5_download_engine
+assert_ne "oversized raw fixture is refused" 0 "$T_STATUS"
+assert_file_absent "oversized candidate never publishes" "$S5_BIN"
+assert_eq "oversized candidate is removed" 0 "$(t_candidate_count)"
 
-# The signal handler can interrupt inside s5_stage_engine, before the ordinary
-# return path closes the private staging window. Drive cleanup from that exact
-# point and require it to hand the existing installation's traversal mode back.
-chmod 0755 "$S5_PREFIX"
-S5_PREFIX_PRIVATE=0
-s5_stage_engine() {
-    assert_mode "the signal arrives while staging is private" 700 "$S5_PREFIX"
-    s5_cleanup
-    assert_mode "signal cleanup restores the binary namespace" 755 "$S5_PREFIX"
-    return 143
+# Verification failures must not execute the downloaded bytes.
+t_raw_fixture
+s5_xray_version_command() { : >"$S5_TEST_ROOT/version-called"; return 0; }
+S5T_SHA_OVERRIDE=1111111111111111111111111111111111111111111111111111111111111111
+t_run s5_download_engine
+assert_ne "unverified candidate is refused" 0 "$T_STATUS"
+assert_file_absent "digest failure never runs version" "$S5_TEST_ROOT/version-called"
+
+# The exact quota failure that motivated this change stays a storage error even
+# when statfs reports ample space. Inject curl's documented write-error status.
+t_raw_fixture
+unset S5_TEST_ASSET_PATH
+s5_asset_select() {
+    S5_ASSET_SIZE=36577406
+    S5_ASSET_NAME=xray-v26.3.27-linux-amd64
+    S5_ASSET_SHA256=8255dd939c34cf966cc91517b6324dd3c8d0bcf49ffac8beca049a38c46845ed
+}
+s5_fs_free_command() { printf '999999 4096\n'; }
+s5_curl_command() {
+    while [ "$1" != -o ]; do shift; done
+    shift
+    head -c 7798784 /dev/zero >"$1"
+    return 23
 }
 t_run s5_download_engine
-assert_ne "an interrupted staging run fails" 0 "$T_STATUS"
-assert_mode "the interrupted update leaves the binary namespace at 0755" 755 "$S5_PREFIX"
-assert_eq "signal cleanup closes the private-prefix window" 0 "$S5_PREFIX_PRIVATE"
+assert_ne "quota-blind raw short write refuses installation" 0 "$T_STATUS"
+assert_contains "quota-blind diagnosis retains exact byte counts" \
+    '7798784 bytes written of 36577406' "$T_OUT"
+assert_contains "quota-blind diagnosis is storage" 'full or over quota' "$T_OUT"
+assert_not_contains "quota-blind failure is not artifact corruption" 'asset verification failed' "$T_OUT"
+assert_eq "quota-blind failure removes candidate" 0 "$(t_candidate_count)"
 
-# A fresh install owns the prefix and should keep it private until cleanup has
-# removed every partial staging file and the directory itself.
-rm -rf "$S5_PREFIX"
-S5_CREATED_PREFIX=1
-S5_PREFIX_PRIVATE=0
-s5_stage_engine() {
-    assert_mode "fresh staging remains private" 700 "$S5_PREFIX"
-    : >"$S5_PREFIX/.xray.interrupted"
-    s5_cleanup
-    assert_file_absent "fresh signal cleanup removes the owned prefix" "$S5_PREFIX"
-    return 143
-}
-t_run s5_download_engine
-assert_ne "an interrupted fresh staging run fails" 0 "$T_STATUS"
-assert_file_absent "the interrupted fresh install leaves no prefix" "$S5_PREFIX"
-assert_eq "fresh signal cleanup clears the private-prefix window" 0 "$S5_PREFIX_PRIVATE"
+# Observe a real handled signal inside download, not a direct cleanup call.
+for _tsignal in HUP INT TERM; do
+    t_raw_fixture
+    mkdir -p "$S5_PREFIX"
+    chmod 0755 "$S5_PREFIX"
+    printf 'old binary\n' >"$S5_BIN"
+    chmod 0755 "$S5_BIN"
+    (
+        trap 's5_on_signal 129' HUP
+        trap 's5_on_signal 130' INT
+        trap 's5_on_signal 143' TERM
+        s5_fetch_binary() {
+            printf 'partial\n' >"$1"
+            printf '%s\n' "$1" >"$S5_TEST_ROOT/signal-candidate"
+            python3 - "$_tsignal" <<'PY'
+import os, signal, sys
+os.kill(os.getppid(), getattr(signal, 'SIG' + sys.argv[1]))
+PY
+            return 1
+        }
+        s5_download_engine
+    ) >"$S5_TEST_ROOT/signal.log" 2>&1
+    _tsignal_status=$?
+    case "$_tsignal" in HUP) _texpected=129 ;; INT) _texpected=130 ;; TERM) _texpected=143 ;; esac
+    assert_eq "$_tsignal returns its signal status" "$_texpected" "$_tsignal_status"
+    assert_file_absent "$_tsignal removes partial raw bytes" "$(cat "$S5_TEST_ROOT/signal-candidate")"
+    assert_mode "$_tsignal restores existing prefix" 755 "$S5_PREFIX"
+    assert_eq "$_tsignal preserves old executable" 'old binary' "$(cat "$S5_BIN")"
+done
+
+# Absolute tool seams and MAGIC isolation still hold after removing unzip.
+t_raw_fixture
+s5_sha256_command() { /usr/bin/sha256sum "$1"; }
+mkdir "$S5_TEST_ROOT/hostile-bin"
+for _hostile in curl sha256sum file; do
+    printf '#!/bin/sh\nprintf called >>"$S5_TEST_ROOT/hostile.calls"\nexit 99\n' \
+        >"$S5_TEST_ROOT/hostile-bin/$_hostile"
+    chmod 0755 "$S5_TEST_ROOT/hostile-bin/$_hostile"
+done
+PATH="$S5_TEST_ROOT/hostile-bin:$PATH"
+t_run "$S5_TEST_ROOT/hostile-bin/curl"
+assert_eq "hostile PATH tool positive control fails" 99 "$T_STATUS"
+command rm -f "$S5_TEST_ROOT/hostile.calls"
+curl() { : >"$S5_TEST_ROOT/hostile.calls"; return 99; }
+sha256sum() { : >"$S5_TEST_ROOT/hostile.calls"; return 99; }
+file() { : >"$S5_TEST_ROOT/hostile.calls"; return 99; }
+t_run s5_curl_command --version
+assert_eq "curl seam bypasses PATH and functions" 0 "$T_STATUS"
+t_run s5_sha256 "$S5_TEST_ROOT/asset-xray"
+assert_eq "digest seam bypasses PATH and functions" "$S5T_BIN_SHA256" "$T_OUT"
+s5_file_type_command() { /usr/bin/file -b "$@"; }
+MAGIC=$S5_TEST_ROOT/missing-magic
+export MAGIC
+t_run s5_file_type "$S5_TEST_ROOT/asset-xray"
+assert_eq "file seam ignores hostile MAGIC" 0 "$T_STATUS"
+assert_contains "file classification uses packaged magic" 'script' "$T_OUT"
+assert_file_absent "verification never invokes hostile tool" "$S5_TEST_ROOT/hostile.calls"
+assert_eq "file seam leaves caller MAGIC intact" "$S5_TEST_ROOT/missing-magic" "$MAGIC"
+unset MAGIC
+unset -f curl sha256sum file
 
 t_summary

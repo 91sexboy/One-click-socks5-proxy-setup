@@ -27,9 +27,9 @@ Deploy an authenticated **SOCKS5 + HTTP CONNECT proxy** on Ubuntu, Debian, CentO
 
 - Use a **root shell** and a working native service manager from the [supported systems](#supported-targets) table.
 - Ensure the server can reach GitHub to download the installer and the pinned Xray release.
-- On systemd-based systems, prepare the runtime tools first: `curl` at `/usr/bin/curl`, CA certificates, the distribution Info-ZIP package providing `/usr/bin/unzip` with `-Z` support, `file` at `/usr/bin/file`, `sha256sum` at `/usr/bin/sha256sum` (coreutils, normally already present), Python 3, `ss`, and the standard account-management tools. Those four transport/verification tools are invoked by absolute path, so a copy installed elsewhere is reported as missing. Missing commands are reported by the installer.
+- On systemd-based systems, prepare the runtime tools first: `curl` at `/usr/bin/curl`, CA certificates, `file` at `/usr/bin/file`, `sha256sum` at `/usr/bin/sha256sum` (coreutils, normally already present), Python 3, `ss`, and the standard account-management tools. Those three transport/verification tools are invoked by absolute path, so a copy installed elsewhere is reported as missing. Missing commands are reported by the installer.
 - On Alpine, the installer provisions its runtime packages through `apk` during precheck, **before installation confirmation**. You still need `curl` to download the script; if missing, bootstrap it with `apk add --no-cache curl ca-certificates`.
-- Leave about **90 MiB free** on the filesystem holding `/var/tmp` (or `/tmp`) and `/usr/local`: the pinned archive, the binary extracted from it, and the published copy all exist at once. The installer checks filesystem capacity before downloading, but this is advisory because project or volume quotas may be invisible to the free-space count. If an actual extraction write stops early, it is reported as an incomplete storage write with observed and expected bytes rather than as a bad release artifact.
+- Leave about **35 MiB free on amd64** or **33 MiB on arm64** on the filesystem holding `/usr/local`. The raw candidate is downloaded directly into a private file beside its final pathname and becomes the installed executable by atomic rename, so no archive or second binary copy is staged. A binary-changing update additionally retains the old executable for rollback, requiring about **70 MiB additional free space on amd64** or **66 MiB on arm64** when both paths share a filesystem. These figures exclude runtime dependencies, filesystem metadata and logs. Capacity checks are advisory because project or volume quotas may be invisible to the free-space count; an actual short write reports observed and expected bytes.
 - Allow the chosen **TCP port** in your host firewall and cloud security group as appropriate. The script does not configure either, or set up NAT/port forwarding.
 
 ### 2. Download and run
@@ -45,9 +45,11 @@ sh socks5.sh
 
 Without an argument, the script runs `install`.
 
-Xray `v26.3.27` is downloaded from [this repository's Release mirror](https://github.com/91sexboy/One-click-socks5-proxy-setup/releases/tag/xray-v26.3.27): unchanged official ZIPs, about **21.14 MB on amd64** or **19.72 MB on arm64**. Both archive and executable sizes and SHA-256 values are verified; there is no fallback to another download source.
+Xray `v26.3.27` is downloaded as an architecture-specific raw executable from [the revisioned `xray-v26.3.27-r1` Release](https://github.com/91sexboy/One-click-socks5-proxy-setup/releases/tag/xray-v26.3.27-r1), about **34.9 MiB on amd64** or **32.6 MiB on arm64**. Each file is the unchanged `xray` member reproducibly extracted from the pinned official ZIP; the Release includes checksums, machine-readable provenance and the exact upstream license. Size, SHA-256, ELF architecture, static linkage and reported version are checked, with no fallback source.
 
-After installation and verification succeed, the installer removes its own downloaded ZIP and temporary extracted copy. The installed executable remains at `/usr/local/libexec/xray-socks5/xray` (about 36.58 MB on amd64 or 34.21 MB on arm64). It does not sweep old temporary directories or recovery backups; forced termination or power loss can leave temporary files.
+The original `xray-v26.3.27` ZIP Release remains available for older installer revisions. Existing ZIP installations keep their recorded provenance when only configuration changes; a verified binary replacement writes the new raw-asset state format.
+
+The candidate is written as a private `/usr/local/libexec/xray-socks5/.xray.*` file, verified before execution, changed to its final ownership and mode, then atomically renamed to `/usr/local/libexec/xray-socks5/xray`. Failure and handled-signal paths remove the invocation-owned candidate. A hard power loss can leave a private `.xray.*` residue; the installer does not sweep unrelated historical files or recovery backups.
 
 ### 3. Choose language and credentials
 
@@ -190,7 +192,7 @@ Run `sh socks5.sh uninstall` as root and confirm. It removes the managed install
 
 | Symptom | What to check |
 | --- | --- |
-| A required command is missing | Install the named runtime tool; for archive inspection, use Info-ZIP with `unzip -Z` support. |
+| A required command is missing | Install the named runtime tool. Target installation no longer requires Info-ZIP or `unzip`. |
 | Not enough space is reported, or a file could not be written completely | Free space or raise the container/project/volume disk quota. The preflight reports filesystem capacity when available; an actual short write reports observed and expected bytes even when that preflight showed ample space, because some quotas are invisible to `statfs`. |
 | The local install succeeds but remote clients cannot connect | Check the advertised address, chosen TCP port, host/cloud firewall, and any NAT or forwarding. |
 | `SERVER_IPV4` appears in the card | Use a reachable IPv4 explicitly or replace the placeholder in the client configuration. |

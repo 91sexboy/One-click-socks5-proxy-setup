@@ -2,6 +2,8 @@
 
 ## Status
 
+Historical for target-side ZIP delivery; superseded there by [ADR-0008](0008-raw-xray-release-assets.md).
+
 Accepted. Supersedes the failure-classification part of
 [ADR-0006](0006-storage-failure-is-not-artifact-failure.md); its advisory capacity
 preflight and observed-byte diagnostics remain accepted.

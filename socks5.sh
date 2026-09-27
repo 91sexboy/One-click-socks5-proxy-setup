@@ -9,7 +9,8 @@ set -u
 S5_PROJECT=xray-socks5
 S5_XRAY_VERSION=v26.3.27
 S5_XRAY_COMMIT=d2758a023cd7f4174a5a5fa4ff66e487d4342ba0
-S5_XRAY_BASE=https://github.com/91sexboy/One-click-socks5-proxy-setup/releases/download/xray-$S5_XRAY_VERSION
+S5_XRAY_DISTRIBUTION_TAG=xray-v26.3.27-r1
+S5_XRAY_BASE=https://github.com/91sexboy/One-click-socks5-proxy-setup/releases/download/$S5_XRAY_DISTRIBUTION_TAG
 S5_ADDR_ENDPOINT=https://icanhazip.com
 S5_SERVICE_USER=xray-socks5
 S5_SERVICE_GROUP=xray-socks5
@@ -27,10 +28,7 @@ S5_OS_ID=''
 S5_OS_VERSION_ID=''
 S5_OS_FAMILY=''
 S5_INIT=''
-S5_WORKDIR=''
-S5_EXTRACT_PID=''
-S5_EXTRACT_FIFO=''
-S5_EXTRACT_TARGET=''
+S5_BINARY_TEMP=''
 S5_LOCK_HELD=0
 S5_LOCK_TOKEN=''
 S5_VERIFY_TEMP=''
@@ -209,7 +207,7 @@ s5_msg() {
     disk.write) [ "$#" -eq 3 ] || return 1; case "$S5_LANG" in zh) printf '无法写完 %s：已写入 %s 字节，应为 %s 字节；文件系统已满或超出配额。' "$1" "$2" "$3" ;; en) printf 'could not write all of %s: %s bytes written of %s; the filesystem is full or over quota.' "$1" "$2" "$3" ;; esac ;;
     digest.failed) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法计算已安装资源的 SHA-256：%s。' "$1" ;; en) printf 'could not compute SHA-256 for installed artifact: %s.' "$1" ;; esac ;;
     cleanup.service) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '无法确认 Xray 服务已停止；已保留安装文件和账户。' ;; en) printf 'could not verify that the Xray service stopped; installation files and account were retained.' ;; esac ;;
-    cleanup.download) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法删除下载临时目录：%s。' "$1" ;; en) printf 'could not remove temporary download directory: %s.' "$1" ;; esac ;;
+    cleanup.download) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法删除下载临时文件：%s。' "$1" ;; en) printf 'could not remove temporary download file: %s.' "$1" ;; esac ;;
     prefix.mode) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法将安装目录恢复为 0755：%s；在该权限恢复之前，服务账户无法使用本安装，后续命令也会拒绝执行。' "$1" ;; en) printf 'could not restore installation directory %s to 0755; until that mode is restored the service account cannot use this installation and later commands refuse to run.' "$1" ;; esac ;;
     config.invalid) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf 'Xray 配置测试失败；旧配置未改变。' ;; en) printf 'Xray configuration test failed; the old configuration was unchanged.' ;; esac ;;
     transaction.pending) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '存在待处理的恢复目录，拒绝覆盖：%s。' "$1" ;; en) printf 'pending recovery directory must be resolved before updating: %s.' "$1" ;; esac ;;
@@ -261,7 +259,6 @@ s5_msg() {
     uninstall.notdir) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '自有路径不是目录：%s。' "$1" ;; en) printf 'owned path is not a directory: %s' "$1" ;; esac ;;
     uninstall.nonempty) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '拒绝删除非空自有目录：%s。' "$1" ;; en) printf 'refusing non-empty owned directory: %s' "$1" ;; esac ;;
     uninstall.directory) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法删除自有目录：%s。' "$1" ;; en) printf 'could not remove owned directory: %s' "$1" ;; esac ;;
-    detect.unzip) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '缺少必要命令：支持 -Z 的 unzip（Info-ZIP）。' ;; en) printf 'required command(s) are missing: unzip with -Z (Info-ZIP).' ;; esac ;;
     usage.unknown) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '未知命令：%s。' "$1" ;; en) printf 'unknown command: %s.' "$1" ;; esac ;;
     extra) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '命令不接受额外参数：%s。' "$1" ;; en) printf 'the command does not accept extra arguments: %s.' "$1" ;; esac ;;
     *) return 1 ;;
@@ -681,21 +678,22 @@ s5_prompt_password() {
 s5_asset_select() {
     case "$S5_ARCHNAME" in
     amd64)
-        S5_ASSET_NAME=Xray-linux-64.zip
-        S5_ASSET_SIZE=21136402
-        S5_ASSET_SHA256=23cd9af937744d97776ee35ecad4972cf4b2109d1e0fe6be9930467608f7c8ae
-        S5_ASSET_BINARY_SIZE=36577406
-        S5_ASSET_BINARY_SHA256=8255dd939c34cf966cc91517b6324dd3c8d0bcf49ffac8beca049a38c46845ed
+        S5_ASSET_NAME=xray-v26.3.27-linux-amd64
+        S5_ASSET_SIZE=36577406
+        S5_ASSET_SHA256=8255dd939c34cf966cc91517b6324dd3c8d0bcf49ffac8beca049a38c46845ed
         ;;
     arm64)
-        S5_ASSET_NAME=Xray-linux-arm64-v8a.zip
-        S5_ASSET_SIZE=19716427
-        S5_ASSET_SHA256=4d30283ae614e3057f730f67cd088a42be6fdf91f8639d82cb69e48cde80413c
-        S5_ASSET_BINARY_SIZE=34209918
-        S5_ASSET_BINARY_SHA256=c2d20a7045250497083afea0d79db0672f6c89a25aaaf37c92de034d6b764b04
+        S5_ASSET_NAME=xray-v26.3.27-linux-arm64
+        S5_ASSET_SIZE=34209918
+        S5_ASSET_SHA256=c2d20a7045250497083afea0d79db0672f6c89a25aaaf37c92de034d6b764b04
         ;;
     *) return 1 ;;
     esac
+    # Raw distribution performs no transformation: downloaded and installed
+    # identity are the same bytes. These aliases keep the installed-binary seams
+    # explicit while state schema 2 records and enforces their equality.
+    S5_ASSET_BINARY_SIZE=$S5_ASSET_SIZE
+    S5_ASSET_BINARY_SHA256=$S5_ASSET_SHA256
 }
 
 s5_mkdir_parents() {
@@ -862,9 +860,8 @@ s5_config_render() {
     # metadata at 169.254.169.254. These are blackholed ahead of the direct
     # outbound, which is the default for everything else.
     #
-    # Literal CIDRs rather than geoip:private: the installer inspects geoip.dat
-    # inside the archive but extracts only the xray executable, so no geoip
-    # database is ever on disk and a geoip rule would fail at runtime.
+    # Literal CIDRs rather than geoip:private: raw executable delivery installs
+    # no GeoIP database, so a geoip rule would fail at runtime.
     #
     # IPIfNonMatch is what makes a hostname target subject to these rules. With
     # the default AsIs an "ip" rule can only ever match a literal address, so
@@ -1049,33 +1046,23 @@ s5_record_digest() {
     fi
 }
 
-s5_fetch_archive() {
-    # $1: destination path for the release archive. Acquire it (a local fixture in
-    # test mode, else the pinned HTTPS download) and accept it only as the pinned
-    # artifact byte for byte -- exact size and SHA-256.
+s5_fetch_binary() {
+    # $1 is a private same-directory candidate. Acceptance remains exact size and
+    # SHA-256; curl's status only distinguishes a storage write refusal from a
+    # transport failure.
     if [ -n "${S5_TEST_ASSET_PATH:-}" ]; then
-        cp "$S5_TEST_ASSET_PATH" "$1" || return 1
+        cp "$S5_TEST_ASSET_PATH" "$1" || { rm -f "$1" 2>/dev/null || true; return 1; }
     else
         s5_msg_print asset.download "$S5_ASSET_NAME" >&2
-        # -q comes first so no user or system curlrc can add an option to this
-        # request; --proto/--proto-redir pin HTTPS, --max-time caps the transfer,
-        # and --max-filesize aborts mid-stream only when the response advertises a
-        # Content-Length over the limit -- a chunked reply with no length escapes it.
-        # The exact-size and SHA-256 checks below are therefore the authoritative
-        # acceptance: they reject anything that is not the pinned artifact byte for
-        # byte, and the size check also bounds what a length-less reply left on disk.
         s5_curl_command -q -fsSL --proto '=https' --proto-redir '=https' \
             --max-time 120 --max-filesize "$((S5_ASSET_SIZE + 1))" \
             -o "$1" "$S5_XRAY_BASE/$S5_ASSET_NAME"
-        _sfa_curl=$?
-        if [ "$_sfa_curl" -ne 0 ]; then
-            if [ "$_sfa_curl" -eq 23 ]; then
-                # curl 23 is CURLE_WRITE_ERROR: unlike response/transport errors,
-                # it directly says the -o target could not be written. Report the
-                # partial count before removing it; no stderr text is parsed.
-                _sfa_size=$(s5_bytecount "$1" 2>/dev/null || printf 0)
-                case "$_sfa_size" in '' | *[!0-9]*) _sfa_size=0 ;; esac
-                s5_msg_err disk.write "$1" "$_sfa_size" "$S5_ASSET_SIZE"
+        _sfb_curl=$?
+        if [ "$_sfb_curl" -ne 0 ]; then
+            if [ "$_sfb_curl" -eq 23 ]; then
+                _sfb_size=$(s5_bytecount "$1" 2>/dev/null || printf 0)
+                case "$_sfb_size" in '' | *[!0-9]*) _sfb_size=0 ;; esac
+                s5_msg_err disk.write "$1" "$_sfb_size" "$S5_ASSET_SIZE"
             else
                 s5_msg_err asset.invalid download
             fi
@@ -1084,168 +1071,102 @@ s5_fetch_archive() {
         fi
         [ "$(s5_bytecount "$1")" -le "$((S5_ASSET_SIZE + 1))" ] || {
             s5_msg_err asset.invalid size
+            rm -f "$1" 2>/dev/null || true
             return 1
         }
     fi
-    s5_accept_size "$1" size "$S5_ASSET_SIZE" || return 1
-    [ "$(s5_sha256 "$1")" = "$S5_ASSET_SHA256" ] || { s5_msg_err asset.invalid sha256; return 1; }
+    s5_accept_size "$1" size "$S5_ASSET_SIZE" || { rm -f "$1" 2>/dev/null || true; return 1; }
+    [ "$(s5_sha256 "$1")" = "$S5_ASSET_SHA256" ] || {
+        s5_msg_err asset.invalid sha256
+        rm -f "$1" 2>/dev/null || true
+        return 1
+    }
 }
 
-# The supported distribution packages install Info-ZIP here. An absolute
-# command seam prevents aliases, functions and PATH wrappers from changing the
-# extractor while remaining replaceable by focused tests.
-s5_unzip_command() { /usr/bin/unzip "$@"; }
-
-# Info-ZIP reads these variables as implicit command-line options. A subshell
-# gives the external process a clean option environment and preserves every
-# caller value without relying on assignment-before-function semantics.
-s5_unzip() (
-    unset UNZIP UNZIPOPT ZIPINFO ZIPINFOOPT
-    s5_unzip_command "$@"
-)
-
-# The same packages install file(1) here. An absolute command seam prevents
-# aliases, functions and PATH wrappers from deciding what type the extracted
-# binary is while remaining replaceable by focused tests.
+# The packaged file(1) is selected absolutely and isolated from MAGIC so PATH or
+# an inherited database cannot decide whether verified bytes match the target.
 s5_file_type_command() { /usr/bin/file -b "$@"; }
-
-# file reads MAGIC as its magic-database override, and a database that matches
-# nothing reports the pinned executable as data. A subshell gives the external
-# process a clean environment and preserves every caller value.
 s5_file_type() (
     unset MAGIC
     s5_file_type_command "$@"
 )
 
-s5_verify_archive_members() {
-    # $1: the accepted archive. $2: scratch path for its member listing. Refuse any
-    # archive that is not exactly {xray, geoip.dat, geosite.dat, LICENSE, README.md},
-    # carries a path-bearing or traversing member name, or holds a member whose Unix
-    # mode is not a regular 10xx file.
-    s5_unzip -Z1 "$1" >"$2" 2>/dev/null || { s5_msg_err asset.invalid members; return 1; }
-    [ "$(grep -cxF xray "$2" || true)" = 1 ] || { s5_msg_err asset.invalid members; return 1; }
-    for _svam_entry in geoip.dat geosite.dat LICENSE README.md; do
-        [ "$(grep -cxF "$_svam_entry" "$2" || true)" = 1 ] || { s5_msg_err asset.invalid members; return 1; }
-    done
-    [ "$(wc -l <"$2" | tr -cd '0-9')" = 5 ] || { s5_msg_err asset.invalid members; return 1; }
-    while IFS= read -r _svam_entry; do
-        case "$_svam_entry" in '' | */* | *..* | *\\*) s5_msg_err asset.invalid members; return 1 ;; esac
-    done <"$2"
-    if ! s5_unzip -Z -v "$1" 2>/dev/null |
-        awk '/Unix file attributes/ { seen++; if ($4 !~ /^\(10[0-7]/) bad=1 }
-             END { exit (seen == 5 && !bad) ? 0 : 1 }'; then
-        s5_msg_err asset.invalid members
-        return 1
-    fi
-}
+# Narrow execution seam: tests can provide a synthetic version answer without
+# bypassing the preceding byte and ELF gates.
+s5_xray_version_command() { "$1" version; }
 
-# Final stream-to-file writer for extracted members. It is deliberately narrow:
-# tests can inject a quota-blind short write at this seam, while production uses
-# the prechecked cat shipped by every supported base system. Its status, not stderr
-# wording or statfs, is the evidence that the target write failed.
-s5_write_stream() { cat >"$1"; }
-
-s5_extract_stream_cleanup() {
-    # A failed writer may leave the producer blocked or receiving SIGPIPE. Reap it
-    # before removing the invocation-owned FIFO, and make signal cleanup safe when
-    # it interrupts either side of the transfer.
-    if [ -n "$S5_EXTRACT_PID" ]; then
-        kill "$S5_EXTRACT_PID" 2>/dev/null || true
-        wait "$S5_EXTRACT_PID" 2>/dev/null || true
-        S5_EXTRACT_PID=''
-    fi
-    if [ -n "$S5_EXTRACT_FIFO" ]; then
-        rm -f "$S5_EXTRACT_FIFO" 2>/dev/null || true
-        S5_EXTRACT_FIFO=''
-    fi
-}
-
-s5_extract_binary() {
-    # $1: the verified archive. $2: scratch path for the extracted xray. A FIFO
-    # keeps producer and writer statuses independently visible without pipefail:
-    # writer failure is storage, producer failure is extraction, and only two
-    # successful statuses reach the pinned size/SHA-256/ELF gates.
-    S5_EXTRACT_FIFO=$S5_WORKDIR/.xray-stream.$$
-    S5_EXTRACT_TARGET=$2
-    rm -f "$S5_EXTRACT_FIFO" "$2" 2>/dev/null || return 1
-    mkfifo "$S5_EXTRACT_FIFO" || { S5_EXTRACT_FIFO=''; S5_EXTRACT_TARGET=''; return 1; }
-    (s5_unzip -p "$1" xray >"$S5_EXTRACT_FIFO" 2>/dev/null) &
-    S5_EXTRACT_PID=$!
-    s5_write_stream "$2" <"$S5_EXTRACT_FIFO"
-    _seb_writer=$?
-    if [ "$_seb_writer" -ne 0 ]; then
-        # Stop a producer that has not observed the closed reader yet; its ensuing
-        # SIGPIPE/termination is secondary to the writer failure already observed.
-        kill "$S5_EXTRACT_PID" 2>/dev/null || true
-    fi
-    wait "$S5_EXTRACT_PID" 2>/dev/null
-    _seb_producer=$?
-    S5_EXTRACT_PID=''
-    rm -f "$S5_EXTRACT_FIFO" 2>/dev/null || true
-    S5_EXTRACT_FIFO=''
-    if [ "$_seb_writer" -ne 0 ]; then
-        _seb_size=$(s5_bytecount "$2" 2>/dev/null || printf 0)
-        case "$_seb_size" in '' | *[!0-9]*) _seb_size=0 ;; esac
-        s5_msg_err disk.write "$2" "$_seb_size" "$S5_ASSET_BINARY_SIZE"
-        rm -f "$2" 2>/dev/null || true
-        S5_EXTRACT_TARGET=''
-        return 1
-    fi
-    if [ "$_seb_producer" -ne 0 ]; then
-        s5_msg_err asset.invalid extract
-        rm -f "$2" 2>/dev/null || true
-        S5_EXTRACT_TARGET=''
-        return 1
-    fi
-    S5_EXTRACT_TARGET=''
-    s5_accept_size "$2" binary-size "$S5_ASSET_BINARY_SIZE" || { rm -f "$2" 2>/dev/null || true; return 1; }
-    [ "$(s5_sha256 "$2")" = "$S5_ASSET_BINARY_SHA256" ] || {
+s5_verify_binary_candidate() {
+    s5_accept_size "$1" binary-size "$S5_ASSET_SIZE" || return 1
+    [ "$(s5_sha256 "$1")" = "$S5_ASSET_SHA256" ] || {
         s5_msg_err asset.invalid binary-sha256
-        rm -f "$2" 2>/dev/null || true
         return 1
     }
-    chmod 0755 "$2" || { rm -f "$2" 2>/dev/null || true; return 1; }
-    _seb_file=$(s5_file_type "$2" 2>/dev/null) || { rm -f "$2" 2>/dev/null || true; return 1; }
-    case "$S5_ARCHNAME:$_seb_file" in
+    _svbc_file=$(s5_file_type "$1" 2>/dev/null) || return 1
+    case "$S5_ARCHNAME:$_svbc_file" in
     amd64:*'ELF 64-bit LSB executable, x86-64'*) ;;
     arm64:*'ELF 64-bit LSB executable, ARM aarch64'*) ;;
-    *) s5_msg_err asset.invalid architecture; rm -f "$2" 2>/dev/null || true; return 1 ;;
+    *) s5_msg_err asset.invalid architecture; return 1 ;;
     esac
-    _seb_temp=$(mktemp "$S5_PREFIX/.xray.XXXXXX") || return 1
-    chmod 0755 "$_seb_temp" || { rm -f "$_seb_temp"; return 1; }
-    cat "$2" >"$_seb_temp" || { rm -f "$_seb_temp"; return 1; }
+    case "$_svbc_file" in
+    *'dynamically linked'* | *'interpreter '*) s5_msg_err asset.invalid linkage; return 1 ;;
+    esac
+    chmod 0700 "$1" || return 1
+    _svbc_version=$(s5_xray_version_command "$1" 2>/dev/null) || return 1
+    _svbc_first=${_svbc_version%%
+*}
+    case "$_svbc_first" in
+    "Xray ${S5_XRAY_VERSION#v} "*) ;;
+    *) s5_msg_err asset.invalid version; return 1 ;;
+    esac
+}
+
+s5_publish_binary_candidate() {
+    [ "$1" = "$S5_BINARY_TEMP" ] || return 1
+    chmod 0755 "$1" || return 1
     if [ "${S5_SKIP_OWNERSHIP:-0}" != 1 ]; then
-        chown root:root "$_seb_temp" || { rm -f "$_seb_temp"; return 1; }
+        chown root:root "$1" || return 1
     fi
-    mv -f "$_seb_temp" "$S5_BIN" || { rm -f "$_seb_temp"; return 1; }
-    S5_CREATED_BIN=1
+    # Arm fresh-install cleanup before the pathname becomes authoritative. Update
+    # already has its rollback copy and S5_BINARY_REPLACED set.
+    if [ "$S5_BINARY_REPLACED" != 1 ]; then S5_CREATED_BIN=1; fi
+    mv -f "$1" "$S5_BIN" || return 1
+    S5_BINARY_TEMP=''
     s5_record_digest binary "$S5_BIN" || return 1
     S5_BINARY_SHA256=$S5_RECORDED_DIGEST
-    [ "$S5_BINARY_SHA256" = "$S5_ASSET_BINARY_SHA256" ]
+    [ "$S5_BINARY_SHA256" = "$S5_ASSET_SHA256" ]
+}
+
+s5_cleanup_binary_temp() {
+    [ -n "$S5_BINARY_TEMP" ] || return 0
+    if ! rm -f "$S5_BINARY_TEMP" 2>/dev/null; then
+        s5_msg_err cleanup.download "$S5_BINARY_TEMP"
+        return 1
+    fi
+    S5_BINARY_TEMP=''
+}
+
+s5_require_update_space() {
+    # $1 is the already verified installed byte count. The backup and candidate
+    # coexist; two independent checks on one filesystem can each pass while the
+    # sum cannot fit. Check their sum before writing either large file.
+    s5_valid_decimal "$1" || return 1
+    _srus_id=$(s5_fs_id "$S5_TXNDIR" 2>/dev/null) || _srus_id=''
+    if [ -n "$_srus_id" ] && [ "$_srus_id" = "$(s5_fs_id "$S5_PREFIX" 2>/dev/null)" ]; then
+        s5_require_space "$S5_TXNDIR" "$(($1 + S5_ASSET_SIZE))"
+    else
+        s5_require_space "$S5_TXNDIR" "$1" || return 1
+        s5_require_space "$S5_PREFIX" "$S5_ASSET_SIZE"
+    fi
 }
 
 s5_stage_engine() {
-    [ -n "$S5_WORKDIR" ] || S5_WORKDIR=$(mktemp -d "$(s5_tmp_base)/xray-socks5-download.XXXXXX") || return 1
-    # Three files exist at once: the archive and the member extracted from it in the
-    # work directory, and the published copy under the prefix. Checking here names a
-    # filesystem that cannot hold them up front, instead of letting it surface as a
-    # short file at the size gate, which reads as a bad artifact (ADR-0006).
-    # A container with one root filesystem -- where this was reported -- holds all
-    # three against the same free space, so it is told the whole requirement rather
-    # than each half, which two separate checks would both pass. Anything that does
-    # not report the same filesystem for both paths keeps the per-path requirements.
-    _sseid=$(s5_fs_id "$S5_WORKDIR" 2>/dev/null) || _sseid=''
-    if [ -n "$_sseid" ] && [ "$_sseid" = "$(s5_fs_id "$S5_PREFIX" 2>/dev/null)" ]; then
-        s5_require_space "$S5_WORKDIR" \
-            "$((S5_ASSET_SIZE + S5_ASSET_BINARY_SIZE + S5_ASSET_BINARY_SIZE))" || return 1
-    else
-        s5_require_space "$S5_WORKDIR" "$((S5_ASSET_SIZE + S5_ASSET_BINARY_SIZE))" || return 1
-        s5_require_space "$S5_PREFIX" "$S5_ASSET_BINARY_SIZE" || return 1
-    fi
-    _ssezip=$S5_WORKDIR/$S5_ASSET_NAME
-    s5_fetch_archive "$_ssezip" || return 1
-    s5_verify_archive_members "$_ssezip" "$S5_WORKDIR/members" || return 1
-    s5_extract_binary "$_ssezip" "$S5_WORKDIR/xray" || return 1
+    # The candidate is downloaded directly beside its final pathname and becomes
+    # the installed file by rename, so fresh staging needs one raw binary only.
+    s5_require_space "$S5_PREFIX" "$S5_ASSET_SIZE" || return 1
+    S5_BINARY_TEMP=$(mktemp "$S5_PREFIX/.xray.XXXXXX") || return 1
+    s5_fetch_binary "$S5_BINARY_TEMP" || return 1
+    s5_verify_binary_candidate "$S5_BINARY_TEMP" || return 1
+    s5_publish_binary_candidate "$S5_BINARY_TEMP"
 }
 
 s5_release_prefix_private() {
@@ -1288,15 +1209,13 @@ s5_download_engine() {
             # namespace that was never a usable installation and emit a false warning.
             return "$_sde_stage"
         fi
-        # A successful fresh install still needs its public prefix mode, but its
-        # workdir remains available to the command-level cleanup after publication.
+        # A successful fresh install has already renamed its only candidate.
         s5_release_prefix_private
         return $?
     fi
-    # Release staging quota before restoring traversal to an existing install.
-    # Both operations are attempted, and both diagnostics survive, even when the
-    # original staging failure remains the command's primary status.
-    s5_cleanup_download || _sde_cleanup=$?
+    # Release a partial candidate before restoring traversal to an existing
+    # install. Both operations are attempted so both diagnostics survive.
+    s5_cleanup_binary_temp || _sde_cleanup=$?
     s5_release_prefix_private || _sde_restore=$?
     [ "$_sde_stage" -eq 0 ] || return "$_sde_stage"
     [ "$_sde_cleanup" -eq 0 ] || return "$_sde_cleanup"
@@ -1671,11 +1590,11 @@ s5_state_write() {
         _ssw_binsha=$S5_INSTALLED_BINARY_SHA256
         ;;
     *)
-        _ssw_schema=1
+        _ssw_schema=2
         _ssw_release=$S5_XRAY_VERSION
         _ssw_commit=$S5_XRAY_COMMIT
-        _ssw_distribution=xray-$S5_XRAY_VERSION
-        _ssw_format=zip
+        _ssw_distribution=$S5_XRAY_DISTRIBUTION_TAG
+        _ssw_format=raw
         _ssw_asset=$S5_ASSET_NAME
         _ssw_size=$S5_ASSET_SIZE
         _ssw_sha=$S5_ASSET_SHA256
@@ -2095,7 +2014,7 @@ s5_verify_dataplane() {
             _svd=$?
         fi
     else
-        _svpf=$(mktemp "${S5_WORKDIR:-${S5_ROOTDIR:-/var/tmp}}/.s5pass.XXXXXX") || return 1
+        _svpf=$(mktemp "${S5_ROOTDIR:-/var/tmp}/.s5pass.XXXXXX") || return 1
         # Restart has no workdir, so signal cleanup must track this credential file explicitly.
         S5_VERIFY_TEMP=$_svpf
         chmod 0600 "$_svpf" || { rm -f "$_svpf"; S5_VERIFY_TEMP=''; return 1; }
@@ -2349,14 +2268,6 @@ s5_cleanup_own_temps() {
     return 0
 }
 
-s5_cleanup_download() {
-    [ -n "$S5_WORKDIR" ] || return 0
-    if ! rm -rf "$S5_WORKDIR" 2>/dev/null; then
-        s5_msg_err cleanup.download "$S5_WORKDIR"
-        return 1
-    fi
-    S5_WORKDIR=''
-}
 
 s5_cleanup() {
     [ "$S5_IN_CLEANUP" = 1 ] && return 0
@@ -2364,22 +2275,9 @@ s5_cleanup() {
     trap '' HUP INT TERM
     _sclstatus=0
     _scldownload=0
-    # Reap any extraction producer before removing the FIFO/work directory. The
-    # target is partial whenever signal cleanup finds it still registered.
-    s5_extract_stream_cleanup
-    if [ -n "$S5_EXTRACT_TARGET" ]; then
-        rm -f "$S5_EXTRACT_TARGET" 2>/dev/null || true
-        S5_EXTRACT_TARGET=''
-    fi
-    # Release staging quota before restoring traversal to an existing prefix on
-    # signal/EXIT paths too. A cleanup failure is retained, but cannot suppress
-    # the independent restore attempt or its diagnostic.
-    if ! s5_cleanup_download; then
-        # Download cleanup is independent of namespace rollback. Retain its
-        # failure for the final status, but still remove a failed fresh install
-        # and still attempt mode restoration for an existing installation.
-        _scldownload=1
-    fi
+    # Release a partial prefix-local candidate before restoring traversal to an
+    # existing install. A fresh prefix remains private until namespace cleanup.
+    if ! s5_cleanup_binary_temp; then _scldownload=1; fi
     # A handled signal can enter cleanup from inside the staging function, before
     # s5_download_engine regains control. Restore an existing installation here;
     # a fresh prefix stays private until its partial files and directory are removed.
@@ -2444,8 +2342,7 @@ s5_cleanup() {
             S5_PREFIX_PRIVATE=0
         fi
     fi
-    # The verifier's credential temp is recorded in S5_VERIFY_TEMP. On the update
-    # path it lands in /var/tmp with no S5_WORKDIR to sweep it, so release it here
+    # The verifier's credential temp is recorded in S5_VERIFY_TEMP. Release it
     # too: s5_on_signal_lock is not the only handler that reaches a live temp, and a
     # successful run has already cleared it, so this is a no-op there.
     s5_release_verify_temp
@@ -2496,9 +2393,6 @@ s5_runtime_packages() {
     [ "$S5_INIT" = openrc ] || return 0
     _spkgs_list=''
     [ -x /usr/bin/curl ] || _spkgs_list="$_spkgs_list curl ca-certificates"
-    # BusyBox provides a stripped unzip without -Z, so a present unzip proves
-    # nothing about archive inspection; Info-ZIP is always requested.
-    _spkgs_list="$_spkgs_list unzip"
     # file(1) is invoked by absolute path, so provisioning asks about that path
     # too: a copy elsewhere on PATH would skip the package the precheck needs.
     [ -x /usr/bin/file ] || _spkgs_list="$_spkgs_list file"
@@ -2526,22 +2420,6 @@ s5_install_runtime_dependencies() {
     return 0
 }
 
-# BusyBox ships a stripped unzip that rejects -Z outright, and the member listing
-# the archive inspection reads comes from -Z1, so a present unzip proves nothing.
-# Bare -Z prints the zipinfo usage on Info-ZIP; either a zero status or that
-# banner is proof, and accepting both keeps an unusual Info-ZIP build from being
-# refused.
-s5_unzip_lists_members() {
-    if _suzl=$(s5_unzip -Z 2>&1); then
-        _suzl=''
-        return 0
-    fi
-    case "$_suzl" in
-    *ZipInfo* | *zipinfo*) _suzl=''; return 0 ;;
-    esac
-    _suzl=''
-    return 1
-}
 
 s5_precheck() {
     _spcmode=${1:-install}
@@ -2563,7 +2441,7 @@ s5_precheck() {
         ;;
     esac
     s5_install_runtime_dependencies "$_spcmode" || return 1
-    s5_require_commands awk sed grep tr tail head id getent mkdir rmdir rm mv cp cat printf stat mktemp mkfifo ln sleep wc chmod || return 1
+    s5_require_commands awk sed grep tr tail head id getent mkdir rmdir rm mv cp cat printf stat mktemp ln sleep wc chmod || return 1
     # Every mode reads a recorded digest, so the pinned digest tool is required
     # here rather than per mode, and by absolute path: a same-named PATH wrapper
     # would otherwise decide what counts as the pinned artifact.
@@ -2598,21 +2476,12 @@ s5_precheck() {
         ;;
     *) s5_msg_err detect.init; return 1 ;;
     esac
-    # The official packages on every supported family install curl, Info-ZIP and
-    # file(1) at these paths. Require and probe those executables so a same-named
-    # PATH wrapper cannot alter the download, archive extraction or binary type.
+    # The packaged absolute paths prevent PATH wrappers from altering transport
+    # or binary classification.
     case "$_spcmode" in
     install | update)
         [ -x /usr/bin/curl ] || {
             s5_msg_err detect.commands curl
-            return 1
-        }
-        [ -x /usr/bin/unzip ] || {
-            s5_msg_err detect.commands unzip
-            return 1
-        }
-        s5_unzip_lists_members || {
-            s5_msg_err detect.unzip
             return 1
         }
         [ -x /usr/bin/file ] || {
@@ -2857,7 +2726,7 @@ s5_install_update() {
         # The rollback copy is as large as the engine itself, and it is written
         # before anything is replaced, so a filesystem without room for it is named
         # here rather than while a live installation is half updated.
-        s5_require_space "$S5_TXNDIR" "$(s5_bytecount "$S5_BIN" 2>/dev/null)" || return 1
+        s5_require_update_space "$S5_INSTALLED_BINARY_SIZE" || return 1
         cp "$S5_BIN" "$_sioldbin" || return 1
         if [ "${S5_SKIP_OWNERSHIP:-0}" != 1 ]; then chown root:root "$_sioldbin" || return 1; fi
         chmod 0600 "$_sioldbin" || return 1
@@ -2962,11 +2831,8 @@ s5_cmd_install() {
         trap - EXIT HUP INT TERM
         return 1
     fi
-    _siccleanup=0
-    s5_cleanup_download || _siccleanup=$?
     s5_lock_release || return 1
     trap - EXIT HUP INT TERM
-    [ "$_siccleanup" -eq 0 ] || return 1
     if [ "$_siupdate" = 1 ]; then s5_msg_print install.updated; else s5_msg_print install.done; fi
     if [ -t 1 ]; then
         s5_render_card || s5_msg_warn install.card.hidden

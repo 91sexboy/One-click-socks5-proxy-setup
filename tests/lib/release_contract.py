@@ -14,7 +14,8 @@ import tempfile
 VERSION = 'v26.3.27'
 COMMIT = 'd2758a023cd7f4174a5a5fa4ff66e487d4342ba0'
 BASE = 'https://github.com/91sexboy/One-click-socks5-proxy-setup/releases/download/'
-DISTRIBUTION_TAG = 'xray-v26.3.27'
+SOURCE_DISTRIBUTION_TAG = 'xray-v26.3.27'
+DISTRIBUTION_TAG = 'xray-v26.3.27-r1'
 PINS = {
     'amd64': {
         'asset': 'Xray-linux-64.zip',
@@ -85,34 +86,36 @@ def assignments(text, names):
     return result
 
 
-def release_url(text, asset):
+def release_url(text, tag, asset):
     active = '\n'.join(line for line in text.splitlines()
                        if not line.lstrip().startswith('#'))
     urls = re.findall(r'https?://[^\s"\']+', active)
-    require(urls == [BASE + DISTRIBUTION_TAG + '/' + asset],
+    require(urls == [BASE + tag + '/' + asset],
             'Xray download URL: wrong mirror, tag or fallback')
 
 
 def check_installer(root, shell):
-    require(assignments((root / 'socks5.sh').read_text(), ['S5_XRAY_BASE']) == {
-        'S5_XRAY_BASE': BASE + 'xray-$S5_XRAY_VERSION'},
+    values = assignments((root / 'socks5.sh').read_text(),
+                         ['S5_XRAY_DISTRIBUTION_TAG', 'S5_XRAY_BASE'])
+    require(values == {
+        'S5_XRAY_DISTRIBUTION_TAG': DISTRIBUTION_TAG,
+        'S5_XRAY_BASE': BASE + '$S5_XRAY_DISTRIBUTION_TAG'},
         'installer: wrong or duplicate distribution base')
-    # Fresh selectors and a failing transport expose metadata drift and fallbacks.
-    script = '''
+    script = r'''
 . "$1/socks5.sh" || exit 1
 S5_LANG=en
 S5_ARCHNAME=$2
 S5_ASSET_NAME= S5_ASSET_SIZE= S5_ASSET_SHA256=
 S5_ASSET_BINARY_SIZE= S5_ASSET_BINARY_SHA256=
 s5_asset_select || exit 1
-printf '%s\\n' "$S5_XRAY_VERSION" "$S5_XRAY_COMMIT" "$S5_XRAY_BASE" \\
-    "$S5_ASSET_NAME" "$S5_ASSET_SIZE" "$S5_ASSET_SHA256" \\
+printf '%s\n' "$S5_XRAY_VERSION" "$S5_XRAY_COMMIT" "$S5_XRAY_DISTRIBUTION_TAG" "$S5_XRAY_BASE" \
+    "$S5_ASSET_NAME" "$S5_ASSET_SIZE" "$S5_ASSET_SHA256" \
     "$S5_ASSET_BINARY_SIZE" "$S5_ASSET_BINARY_SHA256"
 : >"$S5_TEST_ROOT/curl.calls"
-s5_curl_command() { printf '%s\\n' curl-call "$@" >>"$S5_TEST_ROOT/curl.calls"; return 1; }
+s5_curl_command() { printf '%s\n' curl-call "$@" >>"$S5_TEST_ROOT/curl.calls"; return 1; }
 _fetch_status=0
-s5_fetch_archive "$S5_TEST_ROOT/archive" >/dev/null 2>&1 || _fetch_status=$?
-printf 'fetch-status=%s\\n' "$_fetch_status"
+s5_fetch_binary "$S5_TEST_ROOT/candidate" >/dev/null 2>&1 || _fetch_status=$?
+printf 'fetch-status=%s\n' "$_fetch_status"
 cat "$S5_TEST_ROOT/curl.calls"
 '''
     with tempfile.TemporaryDirectory(prefix='s5-pin-selector-') as directory:
@@ -120,18 +123,18 @@ cat "$S5_TEST_ROOT/curl.calls"
         env = dict(os.environ, S5_LIB_ONLY='1', S5_TEST_MODE='1',
                    S5_TEST_ROOT=directory, S5_ASSUME_ROOT='1', S5_SKIP_OWNERSHIP='1')
         env.pop('S5_TEST_ASSET_PATH', None)
-        for arch, pins in PINS.items():
+        for arch in PINS:
+            raw_name, raw_size, raw_sha = RAW_ASSETS[arch]
             result = subprocess.run(
                 shlex.split(shell) + ['-c', script, 'release-contract', str(root), arch],
                 env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 timeout=15, check=False)
-            expected = [VERSION, COMMIT, BASE + DISTRIBUTION_TAG] + list(pins.values())
-            # -q leads, so no user or system curlrc can add an option to the
-            # download; its position is part of the contract, not a detail.
+            expected = [VERSION, COMMIT, DISTRIBUTION_TAG, BASE + DISTRIBUTION_TAG,
+                        raw_name, raw_size, raw_sha, raw_size, raw_sha]
             expected += ['fetch-status=1', 'curl-call', '-q', '-fsSL', '--proto', '=https',
                          '--proto-redir', '=https', '--max-time', '120', '--max-filesize',
-                         str(int(pins['size']) + 1), '-o', directory + '/archive',
-                         BASE + DISTRIBUTION_TAG + '/' + pins['asset']]
+                         str(int(raw_size) + 1), '-o', directory + '/candidate',
+                         BASE + DISTRIBUTION_TAG + '/' + raw_name]
             require(result.returncode == 0 and result.stdout.splitlines() == expected,
                     'installer ' + arch + ': selector or download contract differs')
 
@@ -151,30 +154,41 @@ def check_workflow(text):
             rows.append({})
         require(rows and key not in rows[-1], 'asset matrix: duplicate or misplaced key')
         rows[-1][key] = value
-    expected = [dict(pins, arch=arch,
-                     runner='ubuntu-24.04' if arch == 'amd64' else 'ubuntu-24.04-arm',
-                     elf_arch='x86-64' if arch == 'amd64' else 'aarch64')
-                for arch, pins in PINS.items()]
+    expected = []
+    for arch, pins in PINS.items():
+        raw_name, raw_size, raw_sha = RAW_ASSETS[arch]
+        expected.append({
+            'runner': 'ubuntu-24.04' if arch == 'amd64' else 'ubuntu-24.04-arm',
+            'arch': arch, 'source_asset': pins['asset'], 'source_size': pins['size'],
+            'source_sha': pins['sha'], 'asset': raw_name, 'size': raw_size,
+            'sha': raw_sha, 'elf_arch': 'x86-64' if arch == 'amd64' else 'aarch64'})
     require(rows == expected, 'asset matrix: incomplete, duplicate or mismatched metadata')
-    for name, key in [('ASSET', 'asset'), ('SIZE', 'size'), ('SHA', 'sha'),
-                      ('BINARY_SIZE', 'binary_size'), ('BINARY_SHA', 'binary_sha'),
-                      ('ELF_ARCH', 'elf_arch')]:
+    for name, key in [('SOURCE_ASSET', 'source_asset'), ('SOURCE_SIZE', 'source_size'),
+                      ('SOURCE_SHA', 'source_sha'), ('ASSET', 'asset'), ('SIZE', 'size'),
+                      ('SHA', 'sha'), ('ELF_ARCH', 'elf_arch')]:
         value = one(r'^          XRAY_' + name + r': ([^\n]+)$', job, 'XRAY_' + name)
         require(value == '${{ matrix.' + key + ' }}', 'XRAY_' + name + ': wrong matrix binding')
-    release_url(job, '$XRAY_ASSET')
+    active = '\n'.join(line for line in job.splitlines()
+                       if not line.lstrip().startswith('#'))
+    urls = re.findall(r'https?://[^\s"\']+', active)
+    require(urls == [
+        'https://github.com/XTLS/Xray-core/releases/download/' + VERSION + '/$XRAY_SOURCE_ASSET',
+        BASE + SOURCE_DISTRIBUTION_TAG + '/$XRAY_SOURCE_ASSET',
+        BASE + DISTRIBUTION_TAG + '/$XRAY_ASSET'],
+        'asset workflow: wrong upstream, mirror or raw distribution URL')
     require(assignments(text, ['SC_URL', 'SC_SHA']) == {'SC_URL': SC_URL, 'SC_SHA': SC_SHA},
             'ShellCheck: URL or digest differs')
 
 
 def check_launcher(text):
     block = one(r'^case "\$ARCH" in\n(.*?)^esac$', text, 'launcher architecture case')
-    for arch, pins in PINS.items():
+    for arch in PINS:
+        raw_name, raw_size, raw_sha = RAW_ASSETS[arch]
         body = one(r'^' + arch + r'\)\n(.*?)^    ;;$', block, 'launcher ' + arch)
-        require(assignments(body, ['ASSET', 'SIZE', 'SHA', 'BINARY_SIZE', 'BINARY_SHA']) == {
-            'ASSET': pins['asset'], 'SIZE': pins['size'], 'SHA': pins['sha'],
-            'BINARY_SIZE': pins['binary_size'], 'BINARY_SHA': pins['binary_sha']},
+        require(assignments(body, ['ASSET', 'SIZE', 'SHA']) == {
+            'ASSET': raw_name, 'SIZE': raw_size, 'SHA': raw_sha},
             'launcher ' + arch + ': metadata differs')
-    release_url(text, '$ASSET')
+    release_url(text, DISTRIBUTION_TAG, '$ASSET')
 
 
 def check_pin_mirrors(root):
@@ -195,15 +209,14 @@ def check_asset_expectations(text):
     expected = {
         'Xray release is stable v26.3.27': [VERSION, '$S5_XRAY_VERSION'],
         'Xray release commit is pinned': [COMMIT, '$S5_XRAY_COMMIT'],
+        'raw distribution tag is revisioned': [DISTRIBUTION_TAG,
+                                                '$S5_XRAY_DISTRIBUTION_TAG'],
     }
-    fields = [('asset name', 'asset', 'S5_ASSET_NAME'),
-              ('archive size', 'size', 'S5_ASSET_SIZE'),
-              ('archive digest', 'sha', 'S5_ASSET_SHA256'),
-              ('extracted xray size', 'binary_size', 'S5_ASSET_BINARY_SIZE'),
-              ('extracted xray digest', 'binary_sha', 'S5_ASSET_BINARY_SHA256')]
-    for arch, pins in PINS.items():
-        for label, key, variable in fields:
-            expected[arch + ' ' + label] = [pins[key], '$' + variable]
+    for arch in PINS:
+        name, size, sha = RAW_ASSETS[arch]
+        expected[arch + ' raw asset name'] = [name, '$S5_ASSET_NAME']
+        expected[arch + ' raw size'] = [size, '$S5_ASSET_SIZE']
+        expected[arch + ' raw digest'] = [sha, '$S5_ASSET_SHA256']
     seen = {}
     for line in text.replace('\\\n', '').splitlines():
         if not line.startswith('assert_eq '):

@@ -12,23 +12,21 @@ t_legacy_fixture() {
     printf 'legacy binary\n' >"$S5_TEST_ROOT/usr/local/libexec/socks5-manager/3proxy"
 }
 
-# Fixture pins describe independent source bytes, never the installed executable.
+# Fixture pins describe the raw candidate bytes. Raw delivery performs no
+# transformation, so asset and installed-binary identity are equal.
 t_use_asset_fixture() {
     S5T_ASSET_BINARY=$1
-    S5T_ASSET_SOURCE=${2:-binary}
     S5T_SIZE_OVERRIDE=''
     S5T_SHA_OVERRIDE=''
     S5T_BIN_SIZE=$(wc -c <"$S5T_ASSET_BINARY" | tr -d '[:space:]')
     S5T_BIN_SHA256=$(t_sha256 "$S5T_ASSET_BINARY")
     s5_asset_select() {
         [ "$S5_ARCHNAME" = amd64 ] || return 1
-        _tsas_archive=$S5T_ASSET_BINARY
-        if [ "$S5T_ASSET_SOURCE" = archive ]; then _tsas_archive=$S5_TEST_ASSET_PATH; fi
-        S5_ASSET_NAME=Xray-linux-64.zip
-        S5_ASSET_SIZE=${S5T_SIZE_OVERRIDE:-$(wc -c <"$_tsas_archive" | tr -d '[:space:]')}
-        S5_ASSET_SHA256=${S5T_SHA_OVERRIDE:-$(t_sha256 "$_tsas_archive")}
-        S5_ASSET_BINARY_SIZE=$S5T_BIN_SIZE
-        S5_ASSET_BINARY_SHA256=$S5T_BIN_SHA256
+        S5_ASSET_NAME=xray-v26.3.27-linux-amd64
+        S5_ASSET_SIZE=${S5T_SIZE_OVERRIDE:-$S5T_BIN_SIZE}
+        S5_ASSET_SHA256=${S5T_SHA_OVERRIDE:-$S5T_BIN_SHA256}
+        S5_ASSET_BINARY_SIZE=$S5_ASSET_SIZE
+        S5_ASSET_BINARY_SHA256=$S5_ASSET_SHA256
     }
 }
 
@@ -54,7 +52,16 @@ t_xray_fixture() {
     S5_SECRET=$S5_PASSWORD
     S5_LISTEN=127.0.0.1
     mkdir -p "$S5_TEST_ROOT/bin" "$S5_UNITDIR"
-    printf '#!/bin/sh\nexit 0\n' >"$S5_TEST_ROOT/asset-xray"
+    cat >"$S5_TEST_ROOT/asset-xray" <<'XRAY_FIXTURE'
+#!/bin/sh
+# Synthetic raw candidate padding keeps short-write tests below the exact pin.
+# 0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ
+# 0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ
+case "${1:-}" in
+version) printf '%s\n' 'Xray 26.3.27 (synthetic test fixture)' ;;
+*) exit 0 ;;
+esac
+XRAY_FIXTURE
     chmod 0755 "$S5_TEST_ROOT/asset-xray"
 
     t_use_asset_fixture "$S5_TEST_ROOT/asset-xray"
@@ -160,6 +167,29 @@ ACCT
     S5_STUB_CFG=$S5_CFG
     export PATH S5_STUB_CFG
     s5_asset_select
+}
+
+# Convert the current schema-2 fixture state into the exact schema-1 shape
+# written by ZIP-era installers. The installed binary fields stay unchanged;
+# only acquisition provenance changes.
+t_xray_state_schema1() {
+    _txs_input=$S5_STATE
+    _txs_output=$S5_STATE.next
+    awk -F '\t' 'BEGIN { OFS="\t" }
+        $1 == "schema" { print "schema", "1"; next }
+        $1 == "distribution_tag" || $1 == "asset_format" { next }
+        $1 == "asset" { print "asset", "Xray-linux-64.zip"; next }
+        $1 == "asset_size" { print "archive_size", "21136402"; next }
+        $1 == "asset_sha256" {
+            print "archive_sha256", "23cd9af937744d97776ee35ecad4972cf4b2109d1e0fe6be9930467608f7c8ae"
+            next
+        }
+        { print }
+    ' "$_txs_input" >"$_txs_output" || return 1
+    if [ "$_txs_output" != "$S5_STATE" ]; then
+        mv "$_txs_output" "$S5_STATE" || return 1
+    fi
+    chmod 0600 "$S5_STATE"
 }
 
 t_xray_assert_healthy() {

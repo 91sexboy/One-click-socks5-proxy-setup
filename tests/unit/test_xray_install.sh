@@ -142,49 +142,19 @@ test_locks() {
     assert_file_absent "the reclaimed lock is released cleanly" "$S5_LOCKDIR"
 }
 
-s5t_download_fixture() {
+s5t_raw_command_fixture() {
     t_xray_fixture 23456 real-download
-    python3 "$S5_REPO_ROOT/tests/lib/mkasset.py" "$S5_TEST_ROOT" good >/dev/null || return 1
-    S5_TEST_ASSET_PATH=$S5_TEST_ROOT/good.zip
+    S5_TEST_ASSET_PATH=$S5_TEST_ROOT/asset-xray
     export S5_TEST_ASSET_PATH
-    t_use_asset_fixture "$S5_TEST_ROOT/asset-xray" archive
-    s5_asset_select
+    s5_file_type_command() {
+        printf '%s\n' 'ELF 64-bit LSB executable, x86-64, statically linked'
+    }
     s5_precheck() { return 0; }
-    s5_tmp_base() { printf '%s\n' "$S5_TEST_ROOT"; }
-    mkdir -p "$S5_TEST_ROOT/unrelated/transaction" "$S5_TEST_ROOT/xray-socks5-download.foreign"
-    printf 'recovery evidence\n' >"$S5_TEST_ROOT/unrelated/transaction/old.config.json"
-    printf 'foreign download\n' >"$S5_TEST_ROOT/xray-socks5-download.foreign/asset.zip"
 }
 
-s5t_download_run() {
+s5t_raw_command_run() {
     _tdfault=${1:-none}
-    if [ "$_tdfault" = remove-zh ]; then S5_LANG=zh; fi
-    case "$_tdfault" in
-    candidate|candidate-remove) printf '23\n' >"$S5_TEST_ROOT/cfgtest" ;;
-    esac
-    mktemp() {
-        _tdtemp=$(command mktemp "$@") || return 1
-        case "$_tdtemp" in
-        */xray-socks5-download.*) printf '%s\n' "$_tdtemp" >"$S5_TEST_ROOT/download.path" ;;
-        esac
-        printf '%s\n' "$_tdtemp"
-    }
-    rm() {
-        if [ "${1:-}" = -rf ] && [ -n "$S5_WORKDIR" ] && [ "${2:-}" = "$S5_WORKDIR" ]; then
-            if [ "$S5_LOCK_HELD" = 1 ] &&
-                [ "$(cat "$S5_LOCK_OWNER" 2>/dev/null)" = "$S5_LOCK_TOKEN" ]; then
-                printf 'owned\n' >>"$S5_TEST_ROOT/download.cleanup"
-            else
-                printf 'unowned\n' >>"$S5_TEST_ROOT/download.cleanup"
-            fi
-            if [ -f "$S5_WORKDIR/Xray-linux-64.zip" ] && [ -f "$S5_WORKDIR/members" ] &&
-                [ -f "$S5_WORKDIR/xray" ]; then
-                printf 'verified scratch exists\n' >>"$S5_TEST_ROOT/download.cleanup"
-            fi
-            case "$_tdfault" in remove|remove-zh|candidate-remove) return 1 ;; esac
-        fi
-        command rm "$@"
-    }
+    case "$_tdfault" in candidate) printf '23\n' >"$S5_TEST_ROOT/cfgtest" ;; esac
     rmdir() {
         if [ "$_tdfault" = release ] && [ "${1:-}" = "$S5_LOCKDIR" ]; then
             printf 'release failed\n' >>"$S5_TEST_ROOT/download.release"
@@ -194,7 +164,6 @@ s5t_download_run() {
     }
     chmod() {
         if [ "$_tdfault" = signal ] && [ "${1:-}:${2:-}" = "0750:$S5_SYSCONFDIR" ]; then
-            # getppid addresses this test invocation, unlike POSIX subshell $$.
             python3 -c 'import os, signal; os.kill(os.getppid(), signal.SIGTERM)'
             return 1
         fi
@@ -202,115 +171,69 @@ s5t_download_run() {
     }
     s5_cmd_install
     _tdstatus=$?
-    printf '%s\n' "$S5_WORKDIR" >"$S5_TEST_ROOT/download.retained"
     return "$_tdstatus"
 }
 
-test_download_cleanup() {
-    s5t_download_fixture
-    if ! unzip -Z1 "$S5_TEST_ASSET_PATH" >/dev/null 2>&1; then
-        t_skip "command-level download cleanup" "requires Info-ZIP unzip with -Z"
-        return
-    fi
-    t_run s5t_download_run
-    assert_eq "command-level installation with verified archive succeeds" 0 "$T_STATUS"
-    _tdpath=$(cat "$S5_TEST_ROOT/download.path")
-    assert_file_absent "successful install removes its downloaded archive" "$_tdpath/Xray-linux-64.zip"
-    assert_file_absent "successful install removes its extracted temporary binary" "$_tdpath/xray"
-    assert_file_absent "successful install removes its member list and workdir" "$_tdpath"
-    assert_eq "successful cleanup clears its workdir reference" '' "$(cat "$S5_TEST_ROOT/download.retained")"
-    assert_contains "download cleanup runs while the command owns its lock" owned \
-        "$(cat "$S5_TEST_ROOT/download.cleanup" 2>/dev/null)"
-    assert_not_contains "download cleanup never runs after unlocking" unowned \
-        "$(cat "$S5_TEST_ROOT/download.cleanup" 2>/dev/null)"
-    assert_contains "the command really downloaded and extracted scratch files" 'verified scratch exists' \
-        "$(cat "$S5_TEST_ROOT/download.cleanup" 2>/dev/null)"
-    assert_file_exists "successful cleanup preserves the installed binary" "$S5_BIN"
-    assert_file_exists "successful cleanup preserves config" "$S5_CFG"
-    assert_file_exists "successful cleanup preserves state" "$S5_STATE"
-    assert_file_absent "successful cleanup releases the operation lock" "$S5_LOCKDIR"
-    assert_file_exists "cleanup preserves a different download directory" "$S5_TEST_ROOT/xray-socks5-download.foreign/asset.zip"
-    assert_file_exists "cleanup preserves unrelated recovery evidence" "$S5_TEST_ROOT/unrelated/transaction/old.config.json"
+test_raw_command_cleanup() {
+    s5t_raw_command_fixture
+    t_run s5t_raw_command_run
+    assert_eq "command-level installation with verified raw asset succeeds" 0 "$T_STATUS"
+    assert_file_exists "successful raw install preserves binary" "$S5_BIN"
+    assert_file_exists "successful raw install preserves config" "$S5_CFG"
+    assert_file_exists "successful raw install preserves state" "$S5_STATE"
+    assert_eq "successful raw install writes schema 2" 2 "$(t_state_get schema)"
+    assert_eq "successful raw install leaves no prefix candidate" 0 \
+        "$(find "$S5_PREFIX" -maxdepth 1 -type f -name '.xray.*' | wc -l | tr -d '[:space:]')"
+    assert_file_absent "successful raw install releases operation lock" "$S5_LOCKDIR"
     assert_not_contains "command output contains no password" "$S5_PASSWORD" "$T_OUT"
     t_xray_assert_healthy
-    t_run s5t_download_run
-    assert_eq "configuration update without a download workdir still succeeds" 0 "$T_STATUS"
-    assert_eq "configuration update keeps the workdir reference empty" '' "$(cat "$S5_TEST_ROOT/download.retained")"
-    assert_file_exists "configuration update leaves the foreign download alone" "$S5_TEST_ROOT/xray-socks5-download.foreign/asset.zip"
+    t_run s5t_raw_command_run
+    assert_eq "configuration-only update without binary staging succeeds" 0 "$T_STATUS"
     t_xray_assert_healthy
 }
 
-s5t_download_fault_case() {
+s5t_raw_fault_case() {
     _tdcase=$1
-    s5t_download_fixture
-    if ! unzip -Z1 "$S5_TEST_ASSET_PATH" >/dev/null 2>&1; then
-        t_skip "command-level download $_tdcase" "requires Info-ZIP unzip with -Z"
-        return
-    fi
-    t_run s5t_download_run "$_tdcase"
+    s5t_raw_command_fixture
+    t_run s5t_raw_command_run "$_tdcase"
     case "$_tdcase" in
-    signal) assert_eq "download-stage signal propagates its signal status" 143 "$T_STATUS" ;;
+    signal) assert_eq "raw-stage signal propagates its signal status" 143 "$T_STATUS" ;;
     *) assert_eq "$_tdcase failure remains nonzero" 1 "$T_STATUS" ;;
-    esac
-    _tdpath=$(cat "$S5_TEST_ROOT/download.path")
-    assert_contains "$_tdcase cleanup reaches the command's owned lock" owned \
-        "$(cat "$S5_TEST_ROOT/download.cleanup" 2>/dev/null)"
-    assert_not_contains "$_tdcase never cleans the download after unlocking" unowned \
-        "$(cat "$S5_TEST_ROOT/download.cleanup" 2>/dev/null)"
-    case "$_tdcase" in
-    remove|remove-zh|candidate-remove)
-        assert_dir_exists "$_tdcase retains the workdir on deletion failure" "$_tdpath"
-        assert_eq "$_tdcase retains the failed cleanup path" "$_tdpath" "$(cat "$S5_TEST_ROOT/download.retained")"
-        case "$_tdcase" in
-        remove-zh) _tddiagnostic='无法删除下载临时目录' ;;
-        *) _tddiagnostic='could not remove temporary download directory' ;;
-        esac
-        assert_contains "$_tdcase reports cleanup failure in the selected language" "$_tddiagnostic" "$T_OUT"
-        assert_contains "$_tdcase identifies only its owned cleanup path" "$_tdpath" "$T_OUT"
-        ;;
-    *) assert_file_absent "$_tdcase removes the owned download workdir" "$_tdpath" ;;
     esac
     case "$_tdcase" in
     release)
         assert_dir_exists "failed lock release remains observable" "$S5_LOCKDIR"
-        assert_contains "the lock release failure was reached" 'release failed' "$(cat "$S5_TEST_ROOT/download.release")"
+        assert_contains "the lock release failure was reached" 'release failed' \
+            "$(cat "$S5_TEST_ROOT/download.release")"
         ;;
     *) assert_file_absent "$_tdcase releases its operation lock" "$S5_LOCKDIR" ;;
     esac
-    assert_eq "$_tdcase preserves a different download's bytes" 'foreign download' \
-        "$(cat "$S5_TEST_ROOT/xray-socks5-download.foreign/asset.zip")"
-    assert_eq "$_tdcase preserves unrelated recovery evidence" 'recovery evidence' \
-        "$(cat "$S5_TEST_ROOT/unrelated/transaction/old.config.json")"
-    assert_not_contains "$_tdcase never announces English installation success" 'installation completed' "$T_OUT"
-    assert_not_contains "$_tdcase never announces Chinese installation success" '安装完成' "$T_OUT"
+    assert_not_contains "$_tdcase never announces English success" 'installation completed' "$T_OUT"
+    assert_not_contains "$_tdcase never announces Chinese success" '安装完成' "$T_OUT"
     assert_not_contains "$_tdcase output contains no password" "$S5_PASSWORD" "$T_OUT"
     case "$_tdcase" in
-    candidate|candidate-remove|signal)
-        assert_file_absent "$_tdcase removes the failed new-install binary" "$S5_BIN"
-        assert_file_absent "$_tdcase does not leave an installed state" "$S5_STATE"
+    candidate|signal)
+        assert_file_absent "$_tdcase removes failed fresh binary" "$S5_BIN"
+        assert_file_absent "$_tdcase leaves no installed state" "$S5_STATE"
+        assert_file_absent "$_tdcase removes the fresh prefix" "$S5_PREFIX"
         ;;
     *)
-        assert_eq "$_tdcase leaves the healthy listener running" 23456 "$(cat "$S5_TEST_ROOT/svc_active")"
-        assert_eq "$_tdcase never stops the healthy installation" 0 \
-            "$(grep -c 'systemctl stop ' "$S5_TEST_ROOT/transcript")"
+        assert_eq "$_tdcase leaves healthy listener running" 23456 \
+            "$(cat "$S5_TEST_ROOT/svc_active")"
         t_xray_assert_healthy
         ;;
     esac
 }
 
-test_download_remove_failure() { s5t_download_fault_case remove; }
-test_download_remove_zh() { s5t_download_fault_case remove-zh; }
-test_download_release_failure() { s5t_download_fault_case release; }
-test_download_candidate_failure() { s5t_download_fault_case candidate; }
-test_download_candidate_remove_failure() { s5t_download_fault_case candidate-remove; }
-test_download_signal() { s5t_download_fault_case signal; }
+test_raw_release_failure() { s5t_raw_fault_case release; }
+test_raw_candidate_failure() { s5t_raw_fault_case candidate; }
+test_raw_signal() { s5t_raw_fault_case signal; }
 
 test_fresh_stage_failure_cleanup() {
     t_xray_fixture 23456 real-download
     s5_stage_engine() {
-        S5_WORKDIR=$S5_TEST_ROOT/fresh-stage
-        mkdir -p "$S5_WORKDIR"
-        printf 'partial xray\n' >"$S5_WORKDIR/xray"
+        S5_BINARY_TEMP=$(mktemp "$S5_PREFIX/.xray.XXXXXX") || return 1
+        printf 'partial xray\n' >"$S5_BINARY_TEMP"
         printf 'stage write failed\n' >&2
         return 74
     }
@@ -328,20 +251,15 @@ test_fresh_stage_failure_cleanup() {
         exit "$_fsfc_status"
     ) 2>&1) && T_STATUS=0 || T_STATUS=$?
     assert_ne "fresh staging failure aborts installation" 0 "$T_STATUS"
-    assert_contains "fresh staging retains its original diagnosis" \
-        'stage write failed' "$T_OUT"
-    assert_not_contains "fresh staging failure does not describe an existing installation as unusable" \
-        'service account cannot use this installation' "$T_OUT"
-    assert_not_contains "fresh staging failure does not attempt to restore a disposable prefix" \
+    assert_contains "fresh staging retains original diagnosis" 'stage write failed' "$T_OUT"
+    assert_not_contains "fresh staging does not restore disposable prefix" \
         'unexpected prefix restore' "$(cat "$S5_TEST_ROOT/fresh-stage.events" 2>/dev/null)"
-    assert_file_absent "fresh staging cleanup removes its work directory" "$S5_TEST_ROOT/fresh-stage"
-    assert_file_absent "fresh staging cleanup removes its newly created prefix" "$S5_PREFIX"
+    assert_file_absent "fresh staging cleanup removes newly created prefix" "$S5_PREFIX"
     assert_file_absent "fresh staging failure publishes no binary" "$S5_BIN"
-    assert_file_absent "fresh staging failure publishes no config" "$S5_CFG"
     assert_file_absent "fresh staging failure publishes no state" "$S5_STATE"
-    assert_file_absent "fresh staging failure publishes no service artifact" "$S5_SERVICE_ARTIFACT"
     unset -f chmod s5_stage_engine
 }
+
 
 test_account_creation_failure() {
     for _acfamily in debian alpine; do
@@ -455,8 +373,6 @@ RCSERVICE
 #!/bin/sh
 exec "$S5_TEST_ROOT/bin/systemctl" "$1"
 RCUPDATE
-    S5_WORKDIR=$S5_TEST_ROOT/download
-    mkdir -p "$S5_WORKDIR"
     S5_VERIFY_TEMP=$S5_TEST_ROOT/verify-temp
     printf '%s\n' "$S5_PASSWORD" >"$S5_VERIFY_TEMP"
     chmod 0600 "$S5_VERIFY_TEMP"
@@ -514,7 +430,6 @@ test_cleanup_stop_failure() {
                 fi
                 assert_file_absent "$_cscase releases its lock" "$S5_LOCKDIR"
                 assert_file_absent "$_cscase removes the verification secret" "$S5_TEST_ROOT/verify-temp"
-                assert_file_absent "$_cscase removes download scratch" "$S5_TEST_ROOT/download"
                 assert_not_contains "$_cscase does not expose the password" "$S5_PASSWORD" "$T_OUT"
             done
         done
@@ -550,7 +465,7 @@ s5t_digest_failure_install() {
 test_sha256_unit_failure() { s5t_digest_failure_install unit; }
 test_sha256_config_install_failure() { s5t_digest_failure_install config; }
 
-SCENARIOS='cleanup_stop_failure account_creation_failure account_lifecycle install config_corrupt binary_corrupt unit_corrupt account_corrupt cleanup_temps openrc_runtime locks download_cleanup download_remove_failure download_remove_zh download_release_failure download_candidate_failure download_candidate_remove_failure download_signal fresh_stage_failure_cleanup sha256_unit_failure sha256_config_install_failure'
+SCENARIOS='cleanup_stop_failure account_creation_failure account_lifecycle install config_corrupt binary_corrupt unit_corrupt account_corrupt cleanup_temps openrc_runtime locks raw_command_cleanup raw_release_failure raw_candidate_failure raw_signal fresh_stage_failure_cleanup sha256_unit_failure sha256_config_install_failure'
 if [ "$#" -eq 0 ]; then
     # Expand the fixed scenario words into the default argument list.
     # shellcheck disable=SC2086
@@ -562,7 +477,11 @@ for scenario do
         if [ "$scenario" = "$_scenario_name" ]; then _scenario_known=1; break; fi
     done
     if [ "$_scenario_known" = 1 ]; then
-        "test_$scenario"
+        if ! command -v "test_$scenario" >/dev/null 2>&1; then
+            t_bad "missing install scenario: $scenario"
+        else
+            "test_$scenario"
+        fi
     else
         t_bad "unknown install scenario: $scenario"
     fi

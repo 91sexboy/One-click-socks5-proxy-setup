@@ -28,10 +28,12 @@ assert_not_contains "the workflow oracle does not lose assertions under optimiza
     'assert ' "$workflow_oracle"
 assert_contains "shellcheck is pinned, not taken from the distro" \
     'shellcheck-v0.10.0' "$ci_text"
-assert_contains "the asset job compares the extracted binary size" \
-    '= "$XRAY_BINARY_SIZE"' "$ci_text"
-assert_contains "the asset job compares the extracted binary digest" \
-    '= "$XRAY_BINARY_SHA"' "$ci_text"
+assert_contains "the asset job compares the raw binary size" \
+    '= "$XRAY_SIZE"' "$ci_text"
+assert_contains "the asset job compares the raw binary digest" \
+    '= "$XRAY_SHA"' "$ci_text"
+assert_contains "the asset job compares reproduced and published raw bytes" \
+    'cmp "prepared/$XRAY_ASSET" "$XRAY_ASSET"' "$ci_text"
 assert_contains "the asset job checks the ELF architecture" \
     '"$XRAY_ELF_ARCH"' "$ci_text"
 assert_contains "the shellcheck download is checksum-verified" \
@@ -109,16 +111,16 @@ assert_not_contains "the Alpine lifecycle body is not inlined in the YAML" \
     'apk add --no-cache openrc' "$ci_text"
 assert_contains "the lifecycle script is what installs OpenRC" \
     'apk add --no-cache openrc' "$alpine_text"
-assert_contains "Alpine lifecycle injects a hostile unzip PATH control" \
-    'hostile-bin/unzip' "$alpine_text"
+assert_contains "Alpine lifecycle injects a hostile curl PATH control" \
+    'hostile-bin/curl' "$alpine_text"
 assert_contains "Alpine lifecycle pins the installed Xray byte count" \
     '= 36577406' "$alpine_text"
 assert_contains "Alpine lifecycle pins the installed Xray digest" \
     '8255dd939c34cf966cc91517b6324dd3c8d0bcf49ffac8beca049a38c46845ed' \
     "$alpine_text"
-assert_contains "Alpine lifecycle proves the hostile unzip was bypassed" \
-    'test ! -e "$ALPINE_HOSTILE_UNZIP_LOG"' "$alpine_text"
-assert_contains "Alpine 3.22 enables quota-blind extraction coverage" \
+assert_contains "Alpine lifecycle proves the hostile curl was bypassed" \
+    'test ! -e "$ALPINE_HOSTILE_CURL_LOG"' "$alpine_text"
+assert_contains "Alpine 3.22 enables quota-blind raw-write coverage" \
     'quota_blind: "1"' "$ci_text"
 assert_contains "the quota-blind matrix flag reaches the container" \
     '-e ALPINE_QUOTA_BLIND="$ALPINE_QUOTA_BLIND"' "$ci_text"
@@ -132,22 +134,24 @@ assert_contains "quota-blind regression log is checked against the install crede
     'lifecycle_generation_absent "$work/quota-blind.log" "$work/pass"' "$alpine_text"
 assert_contains "quota-blind regression log is checked against the update credential" \
     'lifecycle_generation_absent "$work/quota-blind.log" "$work/pass.update"' "$alpine_text"
-assert_contains "quota-blind lifecycle rejects leftover extraction FIFOs" \
-    "-name '.xray-stream.*'" "$alpine_text"
+assert_contains "quota-blind lifecycle rejects leftover prefix candidates" \
+    "-name '.xray.*'" "$alpine_text"
 assert_contains "quota-blind lifecycle rechecks namespace removal" \
     'test ! -e /usr/local/libexec/xray-socks5' "$alpine_text"
-# An untouched log is only evidence that the installer bypassed the wrapper if the
-# wrapper would have corrupted what it extracted and would have recorded the call.
-# The positive control extracts one local member both ways and requires the bytes
-# to differ; without these four lines it could lapse into proving neither.
-assert_contains "Alpine lifecycle extracts the control member through clean Info-ZIP" \
-    '/usr/bin/unzip -p "$work/control.zip" xray >"$work/control.clean"' "$alpine_text"
-assert_contains "Alpine lifecycle extracts the same member through the hostile wrapper" \
-    '"$work/hostile-bin/unzip" -p "$work/control.zip" xray >"$work/control.hostile"' "$alpine_text"
-assert_contains "Alpine lifecycle proves the hostile wrapper records its invocations" \
-    'test -s "$ALPINE_HOSTILE_UNZIP_LOG"' "$alpine_text"
-assert_contains "Alpine lifecycle fails when the hostile wrapper corrupts nothing" \
-    'if cmp -s "$work/control.clean" "$work/control.hostile"; then' "$alpine_text"
+# The positive control invokes the failing wrapper itself and requires the log;
+# otherwise "production did not call it" would not prove the wrapper was active.
+assert_contains "Alpine lifecycle invokes the hostile curl positive control" \
+    '"$work/hostile-bin/curl" --version' "$alpine_text"
+assert_contains "Alpine lifecycle proves the hostile curl records calls" \
+    'test -s "$ALPINE_HOSTILE_CURL_LOG"' "$alpine_text"
+assert_contains "Alpine proves installation fits a 40-MiB prefix filesystem" \
+    'size=40m,mode=755 tmpfs /usr/local/libexec' "$alpine_text"
+assert_contains "Alpine proves a 32-MiB prefix filesystem is refused" \
+    'size=32m,mode=755 tmpfs /usr/local/libexec' "$alpine_text"
+assert_contains "Alpine reports exactly one raw binary of required capacity" \
+    '35721 KiB required' "$alpine_text"
+assert_contains "Alpine rejects installing an unnecessary unzip package" \
+    'raw installation added an unnecessary unzip package' "$alpine_text"
 common_text=$(cat "$ROOT/.github/scripts/lifecycle-common.sh")
 assert_eq "the shared lifecycle fixtures are defined once" 1 \
     "$(printf '%s\n' "$common_text" | grep -c 'lifecycle_write_fixtures()')"

@@ -21,7 +21,7 @@ UNFORWARDED_RUN = ('docker run --rm --privileged -v "$PWD:/src" -w /src \\\n'
                    '  sh /src/.github/scripts/alpine-lifecycle.sh\n')
 
 UNFORWARDED_QUOTA_RUN = ('docker run --rm --privileged -v "$PWD:/src" -w /src \\\n'
-                         '  -e ALPINE_HOSTILE_UNZIP="$ALPINE_HOSTILE_UNZIP" "$ALPINE_IMAGE" \\\n'
+                         '  -e ALPINE_HOSTILE_CURL="$ALPINE_HOSTILE_CURL" "$ALPINE_IMAGE" \\\n'
                          '  sh /src/.github/scripts/alpine-lifecycle.sh\n')
 
 
@@ -56,14 +56,14 @@ class WorkflowContractTests(unittest.TestCase):
             'control-mutation': lambda jobs: jobs['openrc-assertion-controls']['strategy']['matrix']['mutation'].pop(),
             'control-image': lambda jobs: jobs['openrc-assertion-controls']['strategy']['matrix']['image'].pop(),
             'lifecycle-image': lambda jobs: jobs['openrc-integration']['strategy']['matrix']['include'].pop(),
-            'lifecycle-hostile-flag': lambda jobs: jobs['openrc-integration']['strategy']['matrix']['include'][1].update({'hostile_unzip': '0'}),
+            'lifecycle-hostile-flag': lambda jobs: jobs['openrc-integration']['strategy']['matrix']['include'][1].update({'hostile_curl': '0'}),
             'lifecycle-quota-flag': lambda jobs: jobs['openrc-integration']['strategy']['matrix']['include'][1].update({'quota_blind': '0'}),
             'control-needs': lambda jobs: jobs['systemd-assertion-controls'].pop('needs'),
             'upload-path': lambda jobs: jobs['memory-report']['steps'][-1]['with'].update({'path': '**/*'}),
             'upload-missing': lambda jobs: jobs['memory-report']['steps'][-1]['with'].update({'if-no-files-found': 'warn'}),
             'memory-env': lambda jobs: next(step for step in jobs['memory-report']['steps'] if step.get('name') == 'Measure Xray process and cgroup memory')['env'].update({'XRAY_ARCH': 'amd64'}),
             'container-env': lambda jobs: next(step for step in jobs['openrc-integration']['steps'] if 'run' in step)['env'].update({'ALPINE_IMAGE': 'alpine:3.20'}),
-            'hostile-container-env': lambda jobs: next(step for step in jobs['openrc-integration']['steps'] if 'run' in step)['env'].pop('ALPINE_HOSTILE_UNZIP'),
+            'hostile-container-env': lambda jobs: next(step for step in jobs['openrc-integration']['steps'] if 'run' in step)['env'].pop('ALPINE_HOSTILE_CURL'),
             'quota-container-env': lambda jobs: next(step for step in jobs['openrc-integration']['steps'] if 'run' in step)['env'].pop('ALPINE_QUOTA_BLIND'),
             'hostile-container-forward': lambda jobs: next(step for step in jobs['openrc-integration']['steps'] if 'run' in step).update({'run': UNFORWARDED_RUN}),
             'quota-container-forward': lambda jobs: next(step for step in jobs['openrc-integration']['steps'] if 'run' in step).update({'run': UNFORWARDED_QUOTA_RUN}),
@@ -77,7 +77,7 @@ class WorkflowContractTests(unittest.TestCase):
             'hostile-container-env': 'openrc-integration: matrix bindings changed',
             'quota-container-env': 'openrc-integration: matrix bindings changed',
             'hostile-container-forward':
-                'openrc-integration: hostile unzip flag not forwarded to the container',
+                'openrc-integration: hostile curl flag not forwarded to the container',
             'quota-container-forward':
                 'openrc-integration: quota-blind flag not forwarded to the container',
         }

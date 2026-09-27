@@ -20,21 +20,21 @@ FILES = ('socks5.sh', '.github/workflows/ci.yml',
 
 def declarations(name, text):
     if name == FILES[0]:
-        pattern = (r'^[ \t]*S5_(?:XRAY_(?:VERSION|COMMIT)|ASSET_(?:NAME|SIZE|SHA256|'
-                   r'BINARY_SIZE|BINARY_SHA256))=(?P<value>[A-Za-z0-9_.-]+)$')
-        expected = 12
+        pattern = (r'^[ \t]*S5_(?:XRAY_(?:VERSION|COMMIT|DISTRIBUTION_TAG)|'
+                   r'ASSET_(?:NAME|SIZE|SHA256))=(?P<value>[A-Za-z0-9_.-]+)$')
+        expected = 9
     elif name == FILES[1]:
-        pattern = (r'^            (?:arch|asset|size|sha|binary_size|binary_sha|elf_arch): '
+        pattern = (r'^            (?:arch|source_asset|source_size|source_sha|asset|size|sha|elf_arch): '
                    r'(?P<value>[A-Za-z0-9_.-]+)$')
-        expected = 14
+        expected = 16
     elif name == FILES[2]:
-        pattern = r'^    (?:ASSET|SIZE|SHA|BINARY_SIZE|BINARY_SHA)=(?P<value>[A-Za-z0-9_.-]+)$'
-        expected = 10
+        pattern = r'^    (?:ASSET|SIZE|SHA)=(?P<value>[A-Za-z0-9_.-]+)$'
+        expected = 6
     else:
-        pattern = (r'^assert_eq "(?:Xray release[^"\n]*|(?:amd64|arm64) '
-                   r'(?:asset name|archive (?:size|digest)|extracted xray (?:size|digest)))"'
+        pattern = (r'^assert_eq "(?:Xray release[^"\n]*|raw distribution tag is revisioned|'
+                   r'(?:amd64|arm64) raw (?:asset name|size|digest))"'
                    r'(?:[ \t]|\\\n)+(?P<value>[A-Za-z0-9_.-]+)')
-        expected = 12
+        expected = 9
     start, end = 0, len(text)
     if name == FILES[1]:
         job = re.search(r'^  xray-assets:\n(.*?)(?=^  [a-z][a-z0-9-]*:|\Z)',
@@ -104,40 +104,44 @@ def run_regressions(source):
                 "SC_SHA='6c881ab0698e4e6ea235245f22832860544f17ba386442fe7e9d629f8cbedf87'",
                 "SC_URL='https://github.com/koalaman/shellcheck/releases/download/"
                 "v0.10.0/shellcheck-v0.10.0.linux.x86_64.tar.xz'",
-                '${{ matrix.sha }}', '${{ matrix.binary_sha }}']:
+                '${{ matrix.source_sha }}', '${{ matrix.sha }}']:
             if workflow.count(literal) != 1:
                 raise AssertionError('workflow mutation anchor missing or duplicated')
             rejects(FILES[1], workflow.replace(literal, ''), 'missing ' + literal.split('=')[0])
             rejects(FILES[1], workflow.replace(literal, literal + 'invalid'), 'malformed tool/binding')
         mirror = 'https://github.com/91sexboy/One-click-socks5-proxy-setup/releases/download/'
-        upstream = 'https://github.com/XTLS/Xray-core/releases/download/v26.3.27/'
-        for name in FILES[:3]:
+        installer = originals[FILES[0]]
+        base_line = 'S5_XRAY_BASE=' + mirror + '$S5_XRAY_DISTRIBUTION_TAG'
+        if installer.count(base_line) != 1:
+            raise AssertionError('installer distribution base anchor missing')
+        rejects(FILES[0], installer.replace('xray-v26.3.27-r1', 'xray-v26.3.27-other', 1),
+                'wrong raw distribution tag')
+        rejects(FILES[0], installer.replace(base_line, base_line.replace('91sexboy', 'unexpected-owner')),
+                'wrong repository')
+        rejects(FILES[0], installer.replace(base_line, base_line.replace('https:', 'http:')),
+                'insecure distribution source')
+        rejects(FILES[0], installer.replace(base_line, base_line + '\n' + base_line),
+                'duplicate distribution base')
+        anchor = ('-o "$1" "$S5_XRAY_BASE/$S5_ASSET_NAME"\n'
+                  '        _sfb_curl=$?')
+        if installer.count(anchor) != 1:
+            raise AssertionError('installer raw transport mutation anchor missing')
+        fallback = ('-o "$1" "$S5_XRAY_BASE/$S5_ASSET_NAME" || '
+                    's5_curl_command -fsSL "https://github.com/XTLS/Xray-core/releases/download/'
+                    'v26.3.27/$S5_ASSET_NAME"\n        _sfb_curl=$?')
+        rejects(FILES[0], installer.replace(anchor, fallback),
+                'transport failure triggers upstream fallback')
+        for name, variable in ((FILES[1], '$XRAY_ASSET'), (FILES[2], '$ASSET')):
             text = originals[name]
-            tag = 'xray-$S5_XRAY_VERSION' if name == FILES[0] else 'xray-v26.3.27/'
-            url = mirror + tag
-            if text.count(url) != 1:
-                raise AssertionError('release URL mutation anchor missing or duplicated')
-            rejects(name, text.replace(url, url.replace('xray-', 'other-')), 'wrong mirror tag')
-            rejects(name, text.replace(url, url.replace('91sexboy', 'unexpected-owner')), 'wrong repository')
-            rejects(name, text.replace(url, upstream), 'upstream distribution source')
-            rejects(name, text.replace(url, url.replace('https:', 'http:')), 'insecure distribution source')
-            rejects(name, text.replace(url, ''), 'missing URL')
-            if name == FILES[0]:
-                line = 'S5_XRAY_BASE=' + url
-                rejects(name, text.replace(line, line + '\n' + line), 'duplicate distribution base')
-                anchor = ('-o "$1" "$S5_XRAY_BASE/$S5_ASSET_NAME"\n'
-                          '        _sfa_curl=$?')
-                if text.count(anchor) != 1:
-                    raise AssertionError('installer transport mutation anchor missing')
-                fallback = ('-o "$1" "$S5_XRAY_BASE/$S5_ASSET_NAME" || '
-                            's5_curl_command -fsSL "' + upstream + '$S5_ASSET_NAME"\n'
-                            '        _sfa_curl=$?')
-                rejects(name, text.replace(anchor, fallback), 'transport failure triggers upstream fallback')
-            else:
-                variable = '$XRAY_ASSET' if name == FILES[1] else '$ASSET'
-                anchor = '"' + url + variable + '"'
-                fallback = anchor + ' || curl -fsSL "' + upstream + variable + '"'
-                rejects(name, text.replace(anchor, fallback), 'additional fallback URL')
+            raw_url = mirror + 'xray-v26.3.27-r1/' + variable
+            if text.count(raw_url) != 1:
+                raise AssertionError('raw release URL mutation anchor missing')
+            rejects(name, text.replace(raw_url, raw_url.replace('xray-v26.3.27-r1', 'other-r1')),
+                    'wrong raw mirror tag')
+            rejects(name, text.replace(raw_url, raw_url.replace('91sexboy', 'unexpected-owner')),
+                    'wrong raw repository')
+            rejects(name, text.replace(raw_url, raw_url.replace('https:', 'http:')),
+                    'insecure raw distribution source')
 
         digest = contract.PINS['amd64']['binary_sha']
         size = contract.PINS['amd64']['binary_size']

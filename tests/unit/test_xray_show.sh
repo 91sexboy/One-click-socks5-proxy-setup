@@ -62,7 +62,7 @@ s5_runtime_packages install >"$S5_TEST_ROOT/packages"
 assert_eq "dependency discovery preserves the reader's candidate" 198.100.20.30 "$S5_PUBLIC_IPV4_CANDIDATE"
 s5_valid_port "$(cat "$S5_TEST_ROOT/random-port")"
 assert_eq "interleaved random generation still produces a port" 0 "$?"
-assert_contains "interleaved dependency discovery still requests unzip" \
+assert_not_contains "interleaved dependency discovery no longer requests unzip" \
     unzip "$(cat "$S5_TEST_ROOT/packages")"
 S5_INIT=systemd
 s5t_body '1.2.3.4\n\n'

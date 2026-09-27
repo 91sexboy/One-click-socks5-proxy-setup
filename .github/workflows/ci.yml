@@ -124,56 +124,58 @@ jobs:
         include:
           - runner: ubuntu-24.04
             arch: amd64
-            asset: Xray-linux-64.zip
-            size: 21136402
-            sha: 23cd9af937744d97776ee35ecad4972cf4b2109d1e0fe6be9930467608f7c8ae
-            binary_size: 36577406
-            binary_sha: 8255dd939c34cf966cc91517b6324dd3c8d0bcf49ffac8beca049a38c46845ed
+            source_asset: Xray-linux-64.zip
+            source_size: 21136402
+            source_sha: 23cd9af937744d97776ee35ecad4972cf4b2109d1e0fe6be9930467608f7c8ae
+            asset: xray-v26.3.27-linux-amd64
+            size: 36577406
+            sha: 8255dd939c34cf966cc91517b6324dd3c8d0bcf49ffac8beca049a38c46845ed
             elf_arch: x86-64
           - runner: ubuntu-24.04-arm
             arch: arm64
-            asset: Xray-linux-arm64-v8a.zip
-            size: 19716427
-            sha: 4d30283ae614e3057f730f67cd088a42be6fdf91f8639d82cb69e48cde80413c
-            binary_size: 34209918
-            binary_sha: c2d20a7045250497083afea0d79db0672f6c89a25aaaf37c92de034d6b764b04
+            source_asset: Xray-linux-arm64-v8a.zip
+            source_size: 19716427
+            source_sha: 4d30283ae614e3057f730f67cd088a42be6fdf91f8639d82cb69e48cde80413c
+            asset: xray-v26.3.27-linux-arm64
+            size: 34209918
+            sha: c2d20a7045250497083afea0d79db0672f6c89a25aaaf37c92de034d6b764b04
             elf_arch: aarch64
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-      - name: Verify pinned Xray archive
+      - name: Reproduce and verify pinned raw Xray asset
         env:
+          XRAY_ARCH: ${{ matrix.arch }}
+          XRAY_SOURCE_ASSET: ${{ matrix.source_asset }}
+          XRAY_SOURCE_SIZE: ${{ matrix.source_size }}
+          XRAY_SOURCE_SHA: ${{ matrix.source_sha }}
           XRAY_ASSET: ${{ matrix.asset }}
           XRAY_SIZE: ${{ matrix.size }}
           XRAY_SHA: ${{ matrix.sha }}
-          XRAY_BINARY_SIZE: ${{ matrix.binary_size }}
-          XRAY_BINARY_SHA: ${{ matrix.binary_sha }}
           XRAY_ELF_ARCH: ${{ matrix.elf_arch }}
         run: |
+          set -eu
+          mkdir prepared
+          curl -fsSL --proto '=https' --proto-redir '=https' --max-filesize "$((XRAY_SOURCE_SIZE + 1))" \
+            -o upstream.zip "https://github.com/XTLS/Xray-core/releases/download/v26.3.27/$XRAY_SOURCE_ASSET"
+          test "$(wc -c <upstream.zip | tr -d '[:space:]')" = "$XRAY_SOURCE_SIZE"
+          test "$(sha256sum upstream.zip | awk '{print $1}')" = "$XRAY_SOURCE_SHA"
+          curl -fsSL --proto '=https' --proto-redir '=https' --max-filesize "$((XRAY_SOURCE_SIZE + 1))" \
+            -o mirror.zip "https://github.com/91sexboy/One-click-socks5-proxy-setup/releases/download/xray-v26.3.27/$XRAY_SOURCE_ASSET"
+          cmp upstream.zip mirror.zip
+          python3 .github/scripts/prepare-xray-raw.py prepare \
+            --arch "$XRAY_ARCH" --source upstream.zip --output prepared
           curl -fsSL --proto '=https' --proto-redir '=https' --max-filesize "$((XRAY_SIZE + 1))" \
-            -o "$XRAY_ASSET" "https://github.com/91sexboy/One-click-socks5-proxy-setup/releases/download/xray-v26.3.27/$XRAY_ASSET"
+            -o "$XRAY_ASSET" "https://github.com/91sexboy/One-click-socks5-proxy-setup/releases/download/xray-v26.3.27-r1/$XRAY_ASSET"
           test "$(wc -c <"$XRAY_ASSET" | tr -d '[:space:]')" = "$XRAY_SIZE"
           test "$(sha256sum "$XRAY_ASSET" | awk '{print $1}')" = "$XRAY_SHA"
-          test "$(unzip -Z1 "$XRAY_ASSET" | grep -cxF xray)" = 1
-          test "$(unzip -Z1 "$XRAY_ASSET" | wc -l | tr -d '[:space:]')" = 5
-          # The first `xray` is the archive member to extract, not a file being
-          # read, so this is not the read-and-write-the-same-file case.
-          # shellcheck disable=SC2094
-          unzip -p "$XRAY_ASSET" xray > xray
-          chmod 0755 xray
-          # socks5.sh enforces the extracted binary's own size and digest and the
-          # ELF architecture, and this is the only job that runs on arm64. Checking
-          # the archive alone left a wrong arm64 binary pin breaking every arm64
-          # install with CI green.
-          test "$(wc -c <xray | tr -d '[:space:]')" = "$XRAY_BINARY_SIZE"
-          test "$(sha256sum xray | awk '{print $1}')" = "$XRAY_BINARY_SHA"
-          file -b xray | grep -q 'ELF 64-bit'
-          file -b xray | grep -q "$XRAY_ELF_ARCH"
-          # A ! before a pipeline is not a check under set -e, so this requirement
-          # was dead: a dynamically linked upstream build would have passed.
-          if file -b xray | grep -q 'dynamically linked'; then
+          cmp "prepared/$XRAY_ASSET" "$XRAY_ASSET"
+          file -b "$XRAY_ASSET" | grep -q 'ELF 64-bit'
+          file -b "$XRAY_ASSET" | grep -q "$XRAY_ELF_ARCH"
+          if file -b "$XRAY_ASSET" | grep -q 'dynamically linked'; then
             echo "the pinned binary is dynamically linked" >&2; exit 1
           fi
-          ./xray version
+          chmod 0755 "$XRAY_ASSET"
+          ./"$XRAY_ASSET" version
 
   xray-mixed:
     runs-on: ubuntu-24.04
@@ -181,7 +183,7 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Install protocol tools
-        run: sudo apt-get update && sudo apt-get install -y python3 curl unzip file iproute2
+        run: sudo apt-get update && sudo apt-get install -y python3 curl file iproute2
       - name: Add the test target addresses
         run: sudo sh .github/scripts/add-test-target-addresses.sh
       - name: Run mixed protocol and duplex checks
@@ -230,7 +232,7 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Install runtime dependencies
-        run: sudo apt-get update && sudo apt-get install -y python3 curl unzip file iproute2
+        run: sudo apt-get update && sudo apt-get install -y python3 curl file iproute2
       - name: Add the test target addresses
         run: sudo sh .github/scripts/add-test-target-addresses.sh
       - name: Run real systemd lifecycle
@@ -248,27 +250,27 @@ jobs:
       matrix:
         include:
           - image: "alpine:3.20"
-            hostile_unzip: "0"
+            hostile_curl: "0"
             quota_blind: "0"
           - image: "alpine:3.22"
-            hostile_unzip: "1"
+            hostile_curl: "1"
             quota_blind: "1"
           - image: "alpine:3.24"
-            hostile_unzip: "0"
+            hostile_curl: "0"
             quota_blind: "0"
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Run Alpine OpenRC lifecycle
         env:
           ALPINE_IMAGE: ${{ matrix.image }}
-          ALPINE_HOSTILE_UNZIP: ${{ matrix.hostile_unzip }}
+          ALPINE_HOSTILE_CURL: ${{ matrix.hostile_curl }}
           ALPINE_QUOTA_BLIND: ${{ matrix.quota_blind }}
         run: |
           # The lifecycle body is a file rather than a single-quoted argument:
           # one apostrophe in it used to close the argument and hand the rest to
           # the host shell, and as a file it is linted like every other script.
           docker run --rm --privileged -v "$PWD:/src" -w /src \
-            -e ALPINE_HOSTILE_UNZIP="$ALPINE_HOSTILE_UNZIP" \
+            -e ALPINE_HOSTILE_CURL="$ALPINE_HOSTILE_CURL" \
             -e ALPINE_QUOTA_BLIND="$ALPINE_QUOTA_BLIND" "$ALPINE_IMAGE" \
             sh /src/.github/scripts/alpine-lifecycle.sh
 
@@ -283,7 +285,7 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Install runtime dependencies
-        run: sudo apt-get update && sudo apt-get install -y python3 curl unzip file iproute2
+        run: sudo apt-get update && sudo apt-get install -y python3 curl file iproute2
       - name: Add the test target addresses
         run: sudo sh .github/scripts/add-test-target-addresses.sh
       - name: Exercise native assertion reachability and failure propagation
@@ -327,7 +329,7 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Install memory tools
-        run: sudo apt-get update && sudo apt-get install -y python3 curl unzip file iproute2
+        run: sudo apt-get update && sudo apt-get install -y python3 curl file iproute2
       - name: Add the test target addresses
         run: sudo sh .github/scripts/add-test-target-addresses.sh
       - name: Prove descriptor-local peaks with a released high then low workload

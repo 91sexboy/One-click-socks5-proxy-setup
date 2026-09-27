@@ -97,15 +97,8 @@ if [ -z "$FILTER" ] && [ "$files" -ne "$EXPECTED_UNIT_FILES" ]; then
     printf '     in tests/run.sh deliberately, in the same change.\n'
 fi
 
-# Skips are the other half of that falsifiability. The file count cannot notice a
-# file that ran and skipped its cases, and t_skip prints nothing any CI step reads,
-# so a guard turning itself off silently removed SPEC 7's eight archive refusals
-# while the suite still reported ok. The archive cases need `unzip -Z`, which
-# Info-ZIP provides. The CI shells -- including the apt BusyBox, whose minimal
-# build has no unzip applet, so `unzip` resolves to Info-ZIP on PATH -- all run
-# them, so every interpreter is expected to skip nothing. (A full local BusyBox
-# whose own applet shadows Info-ZIP will skip that one case; that is a coverage
-# gap in that environment, which this guard is meant to surface rather than hide.)
+# A skipped assertion is missing coverage, not success. Every supported CI
+# interpreter must execute the complete unit coverage with no skipped cases.
 EXPECTED_SKIPS=0
 if [ -z "$FILTER" ] && [ "$total_skip" -ne "$EXPECTED_SKIPS" ]; then
     bad_files=$((bad_files + 1))

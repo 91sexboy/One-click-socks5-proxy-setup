@@ -45,11 +45,10 @@ done
 S5_OS_FAMILY=$_obfamily
 S5_INIT=$_obinit
 
-# BusyBox ships a stripped unzip that has no -Z, so `command -v unzip` succeeds on a
-# bare Alpine host while the archive inspection in s5_download_engine cannot work.
-# Info-ZIP must therefore be requested unconditionally.
-assert_contains "Alpine install requests Info-ZIP unzip" unzip "$(s5_runtime_packages install)"
-assert_contains "Alpine update requests Info-ZIP unzip" unzip "$(s5_runtime_packages update)"
+# Raw target delivery needs no archive extractor. Other missing runtime tools
+# are still discovered in the same package query.
+assert_not_contains "Alpine install does not request Info-ZIP" unzip "$(s5_runtime_packages install)"
+assert_not_contains "Alpine update does not request Info-ZIP" unzip "$(s5_runtime_packages update)"
 
 # Only install and update may install packages; read-only and destructive modes
 # must never mutate the host's package set.

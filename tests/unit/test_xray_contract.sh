@@ -154,11 +154,11 @@ S5_ARCHNAME=amd64
 printf '#!/bin/sh\nexit 0\n' >"$S5_BIN"
 chmod 0755 "$S5_BIN"
 t_use_asset_fixture() { :; }
-S5_ASSET_NAME=Xray-linux-64.zip
-S5_ASSET_SIZE=17
+S5_ASSET_NAME=xray-v26.3.27-linux-amd64
+S5_ASSET_SIZE=$(wc -c <"$S5_BIN" | tr -d '[:space:]')
 S5_ASSET_SHA256=$(t_sha256 "$S5_BIN")
-S5_ASSET_BINARY_SIZE=$(wc -c <"$S5_BIN" | tr -d '[:space:]')
-S5_ASSET_BINARY_SHA256=$(t_sha256 "$S5_BIN")
+S5_ASSET_BINARY_SIZE=$S5_ASSET_SIZE
+S5_ASSET_BINARY_SHA256=$S5_ASSET_SHA256
 S5_BINARY_SHA256=$S5_ASSET_BINARY_SHA256
 S5_INIT=systemd
 S5_OS_FAMILY=debian
@@ -323,52 +323,12 @@ done
 S5_OSRELEASE="$ROOT/tests/fixtures/os-release/debian-12"
 s5_precheck status >/dev/null 2>&1
 
-# BusyBox ships an unzip that rejects -Z outright, and -Z1 is where the archive
-# inspection gets its member list, so a present unzip proves nothing. Detecting it
-# in the precheck tells the operator the tool cannot do the job; without that the
-# 21 MB archive downloads and hash-verifies and is then reported invalid. Override
-# the internal command seam so these probe return shapes are deterministic across
-# the shell matrix while production remains pinned to /usr/bin/unzip.
-s5_unzip_command() {
-    [ "$1" = -Z ] || return 0
-    if [ "${UNZIP+x}${UNZIPOPT+x}${ZIPINFO+x}${ZIPINFOOPT+x}" != '' ]; then
-        printf 'inherited Info-ZIP options were not unset\n' >&2
-        return 9
-    fi
-    case "$(cat "$S5_TEST_ROOT/unzip-mode" 2>/dev/null)" in
-    busybox) printf 'unzip: invalid option -- %s\n' "'Z'" >&2; return 1 ;;
-    banner) printf 'ZipInfo 3.00 of 20 April 2009, by the Info-ZIP group.\n'; return 2 ;;
-    *) printf 'ZipInfo 3.00 of 20 April 2009, by the Info-ZIP group.\n'; return 0 ;;
-    esac
-}
-UNZIP=-aa
-UNZIPOPT=-aa
-ZIPINFO=-h
-ZIPINFOOPT=-h
-export UNZIP UNZIPOPT ZIPINFO ZIPINFOOPT
-printf 'infozip\n' >"$S5_TEST_ROOT/unzip-mode"
-s5_unzip_lists_members
-assert_eq "an Info-ZIP unzip lists members with inherited options isolated" 0 "$?"
-assert_eq "the capability probe preserves UNZIP" -aa "$UNZIP"
-assert_eq "the capability probe preserves UNZIPOPT" -aa "$UNZIPOPT"
-assert_eq "the capability probe preserves ZIPINFO" -h "$ZIPINFO"
-assert_eq "the capability probe preserves ZIPINFOOPT" -h "$ZIPINFOOPT"
-printf 'banner\n' >"$S5_TEST_ROOT/unzip-mode"
-s5_unzip_lists_members
-assert_eq "a nonzero status with the zipinfo banner still counts" 0 "$?"
-printf 'busybox\n' >"$S5_TEST_ROOT/unzip-mode"
-s5_unzip_lists_members
-assert_ne "a BusyBox unzip cannot list members" 0 "$?"
-
+# Raw target installation has no archive tool capability gate. Install/update
+# still require the absolute transport and ELF classifier; status does not.
 _pcinstall=$(s5_precheck install 2>&1) && _pcis=0 || _pcis=$?
-assert_ne "install refuses an unzip that cannot list members" 0 "$_pcis"
-assert_contains "the refusal names the tool rather than the archive" \
-    'unzip with -Z' "$_pcinstall"
+assert_eq "install has no unzip capability probe" 0     "$(printf '%s' "$_pcinstall" | grep -c 'unzip with -Z' || true)"
 _pcstat=$(s5_precheck status 2>&1) && _pcss=0 || _pcss=$?
-assert_eq "status never needs the member listing" 0 "$_pcss"
-printf 'infozip\n' >"$S5_TEST_ROOT/unzip-mode"
-_pcinstall=$(s5_precheck install 2>&1) && _pcis=0 || _pcis=$?
-assert_eq "install accepts an unzip that lists members" 0 "$_pcis"
+assert_eq "status remains independent of raw transport tools" 0 "$_pcss"
 unset UNZIP UNZIPOPT ZIPINFO ZIPINFOOPT
 
 # SPEC 5 runs the service through the platform's native manager, so install and
@@ -478,7 +438,6 @@ uninstall.file|/owned||could not remove owned file: /owned|无法删除自有文
 uninstall.notdir|/owned||owned path is not a directory: /owned|自有路径不是目录：/owned。
 uninstall.nonempty|/owned||refusing non-empty owned directory: /owned|拒绝删除非空自有目录：/owned。
 uninstall.directory|/owned||could not remove owned directory: /owned|无法删除自有目录：/owned。
-detect.unzip|||required command(s) are missing: unzip with -Z (Info-ZIP).|缺少必要命令：支持 -Z 的 unzip（Info-ZIP）。
 usage.unknown|bogus||unknown command: bogus.|未知命令：bogus。
 CATALOG
 

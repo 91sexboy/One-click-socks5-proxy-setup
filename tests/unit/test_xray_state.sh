@@ -5,6 +5,8 @@ S5T_NAME=test_xray_state
 . "${S5_REPO_ROOT}/tests/lib/xray-fixture.sh"
 t_xray_fixture 23456
 t_xray_install
+cp "$S5_STATE" "$S5_TEST_ROOT/valid-state-v2"
+t_xray_state_schema1
 cp "$S5_STATE" "$S5_TEST_ROOT/valid-state"
 
 # Every case starts with the same valid disk state and detected host backend.
@@ -91,23 +93,11 @@ awk -F '\t' '$1 == "schema" { print; print } $1 != "schema" { print }' \
     "$S5_TEST_ROOT/valid-state" >"$S5_STATE"
 s5t_state_expect "duplicate schema discriminator is invalid" 1
 
-# Schema 2 records the raw distribution separately from the upstream version.
-# Build it from the valid schema-1 fixture so every common integrity field stays
-# real, then exercise the production parser and loader rather than a test copy.
+# Schema 2 records raw distribution provenance and remains independently
+# loadable beside historical schema 1.
 s5t_state_reset
-awk -F '\t' 'BEGIN { OFS="\t" }
-    $1 == "schema" { print "schema", "2"; next }
-    $1 == "commit" {
-        print
-        print "distribution_tag", "xray-v26.3.27-r1"
-        print "asset_format", "raw"
-        next
-    }
-    $1 == "asset" { print "asset", "xray-v26.3.27-linux-amd64"; next }
-    $1 == "archive_size" { print "asset_size", $2; next }
-    $1 == "archive_sha256" { print "asset_sha256", $2; next }
-    { print }
-' "$S5_TEST_ROOT/valid-state" >"$S5_STATE"
+cp "$S5_TEST_ROOT/valid-state-v2" "$S5_STATE"
+chmod 0600 "$S5_STATE"
 s5t_state_expect "schema-2 raw state loads" 0
 assert_eq "schema-2 format is normalized" raw "$S5_INSTALLED_ASSET_FORMAT"
 assert_eq "schema-2 distribution tag is loaded" xray-v26.3.27-r1     "$S5_INSTALLED_DISTRIBUTION_TAG"
@@ -296,7 +286,7 @@ t_run s5_cmd_status
 assert_contains "status reports the installed historical release"     'Xray version: v25.1.1' "$T_OUT"
 assert_not_contains "status does not substitute the current candidate release"     "Xray version: $S5_XRAY_VERSION" "$T_OUT"
 s5_asset_select
-assert_eq "current candidate selection remains on the script release" Xray-linux-64.zip "$S5_ASSET_NAME"
+assert_eq "current candidate selection remains on the script release" xray-v26.3.27-linux-amd64 "$S5_ASSET_NAME"
 assert_eq "selection restores the script's own candidate digest" "$S5T_BIN_SHA256" "$S5_ASSET_BINARY_SHA256"
 assert_ne "the selected candidate digest is not the historical one" \
     "$(t_state_get binary_sha256)" "$S5_ASSET_BINARY_SHA256"
