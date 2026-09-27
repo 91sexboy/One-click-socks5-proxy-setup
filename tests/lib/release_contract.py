@@ -35,6 +35,17 @@ SC_URL = ('https://github.com/koalaman/shellcheck/releases/download/'
           'v0.10.0/shellcheck-v0.10.0.linux.x86_64.tar.xz')
 SC_SHA = '6c881ab0698e4e6ea235245f22832860544f17ba386442fe7e9d629f8cbedf87'
 
+RAW_DISTRIBUTION_TAG = 'xray-v26.3.27-r1'
+RAW_ASSETS = {
+    'amd64': ('xray-v26.3.27-linux-amd64', PINS['amd64']['binary_size'], PINS['amd64']['binary_sha']),
+    'arm64': ('xray-v26.3.27-linux-arm64', PINS['arm64']['binary_size'], PINS['arm64']['binary_sha']),
+}
+RAW_PAYLOAD = {
+    'xray-v26.3.27-linux-amd64', 'xray-v26.3.27-linux-arm64',
+    'xray-v26.3.27-SHA256SUMS', 'xray-v26.3.27-PROVENANCE.json',
+    'xray-v26.3.27-LICENSE.txt',
+}
+
 # Each entry is required, including positive metadata assertions in the asset
 # test. Readers reject missing, duplicate and unrecognizable declarations.
 FILES = ('socks5.sh', '.github/workflows/ci.yml',
@@ -204,8 +215,51 @@ def check_asset_expectations(text):
     require(seen == expected, 'asset expectations: incomplete or mismatched metadata assertions')
 
 
+def check_raw_publisher(root):
+    workflow_path = root / '.github/workflows/publish-xray-raw.yml'
+    preparer_path = root / '.github/scripts/prepare-xray-raw.py'
+    notes_path = root / '.github/releases/xray-v26.3.27-r1.md'
+    require(workflow_path.is_file() and preparer_path.is_file() and notes_path.is_file(),
+            'raw publisher: required tracked files are missing')
+    workflow = workflow_path.read_text(encoding='utf-8')
+    preparer = preparer_path.read_text(encoding='utf-8')
+    notes = notes_path.read_text(encoding='utf-8')
+    require('workflow_dispatch:' in workflow and 'push:' not in workflow and 'pull_request:' not in workflow,
+            'raw publisher: must be dispatch-only')
+    require('contents: read' in workflow and 'contents: write' in workflow,
+            'raw publisher: permission boundary is missing')
+    require('--clobber' not in workflow and '--force' not in workflow,
+            'raw publisher: replacement path is forbidden')
+    require(workflow.count('test "$GITHUB_REF" = refs/heads/xray-only') == 2 and
+            workflow.count('DISTRIBUTION_TAG: ' + RAW_DISTRIBUTION_TAG) == 1,
+            'raw publisher: branch or tag pin differs')
+    for action in ('actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09',
+                   'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02',
+                   'actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093',
+                   'actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661'):
+        require(action in workflow, 'raw publisher: action pin missing ' + action)
+    require('https://github.com/XTLS/Xray-core/releases/download/' in preparer,
+            'raw publisher: pinned upstream source missing')
+    require(VERSION in preparer and COMMIT in preparer,
+            'raw publisher: upstream version or commit differs')
+    for arch, pins in PINS.items():
+        for value in (pins['asset'], pins['size'], pins['sha'], pins['binary_size'], pins['binary_sha']):
+            require(value in preparer, 'raw publisher ' + arch + ': source/raw pin missing ' + value)
+        raw_name, raw_size, raw_sha = RAW_ASSETS[arch]
+        require(raw_name in workflow and raw_name in preparer,
+                'raw publisher ' + arch + ': raw name differs')
+        require(raw_size in preparer and raw_sha in preparer,
+                'raw publisher ' + arch + ': raw identity differs')
+    for name in RAW_PAYLOAD:
+        require(name in workflow and (name in preparer or name in notes),
+                'raw publisher: payload member missing ' + name)
+    for term in ('unchanged', 'not custom builds', 'SHA256SUMS', 'PROVENANCE.json', 'LICENSE.txt'):
+        require(term in notes, 'raw release notes: missing ' + term)
+
+
 def check(root, shell='sh'):
     root = Path(root).resolve()
+    check_raw_publisher(root)
     texts = {name: (root / name).read_text(encoding='utf-8') for name in FILES}
     for pins in PINS.values():
         for key in ('sha', 'binary_sha'):
@@ -227,7 +281,7 @@ def main():
     except (ContractError, OSError, ValueError, subprocess.SubprocessError) as error:
         print('release contract: ' + str(error), file=sys.stderr)
         return 1
-    print('release contract: installer, workflow, launcher, asset expectations'
+    print('release contract: installer, workflow, launcher, publisher, asset expectations'
           ' and mirrored pins verified')
     return 0
 

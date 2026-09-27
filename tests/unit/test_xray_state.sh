@@ -80,16 +80,75 @@ done
 
 
 s5t_state_reset
-s5t_state_field schema 2
+s5t_state_field schema 3
 s5t_state_expect "unknown schema is classified unsupported" 4
 s5t_state_reset
-s5t_state_field schema 2
+s5t_state_field schema 3
 printf 'future_field\tfuture_value\n' >>"$S5_STATE"
 s5t_state_expect "unknown schema with future fields remains unsupported" 4
 s5t_state_reset
 awk -F '\t' '$1 == "schema" { print; print } $1 != "schema" { print }' \
     "$S5_TEST_ROOT/valid-state" >"$S5_STATE"
 s5t_state_expect "duplicate schema discriminator is invalid" 1
+
+# Schema 2 records the raw distribution separately from the upstream version.
+# Build it from the valid schema-1 fixture so every common integrity field stays
+# real, then exercise the production parser and loader rather than a test copy.
+s5t_state_reset
+awk -F '\t' 'BEGIN { OFS="\t" }
+    $1 == "schema" { print "schema", "2"; next }
+    $1 == "commit" {
+        print
+        print "distribution_tag", "xray-v26.3.27-r1"
+        print "asset_format", "raw"
+        next
+    }
+    $1 == "asset" { print "asset", "xray-v26.3.27-linux-amd64"; next }
+    $1 == "archive_size" { print "asset_size", $2; next }
+    $1 == "archive_sha256" { print "asset_sha256", $2; next }
+    { print }
+' "$S5_TEST_ROOT/valid-state" >"$S5_STATE"
+s5t_state_expect "schema-2 raw state loads" 0
+assert_eq "schema-2 format is normalized" raw "$S5_INSTALLED_ASSET_FORMAT"
+assert_eq "schema-2 distribution tag is loaded" xray-v26.3.27-r1     "$S5_INSTALLED_DISTRIBUTION_TAG"
+assert_eq "schema-2 raw name is loaded" xray-v26.3.27-linux-amd64     "$S5_INSTALLED_ASSET_NAME"
+cp "$S5_STATE" "$S5_TEST_ROOT/valid-state-v2"
+# A configuration-only update of schema 2 keeps the same raw provenance.
+S5_INSTALLED_SCHEMA=2
+S5_INSTALLED_RELEASE=v26.3.27
+S5_INSTALLED_COMMIT=$S5_XRAY_COMMIT
+S5_INSTALLED_DISTRIBUTION_TAG=xray-v26.3.27-r1
+S5_INSTALLED_ASSET_FORMAT=raw
+S5_INSTALLED_ASSET_NAME=xray-v26.3.27-linux-amd64
+S5_INSTALLED_ASSET_SIZE=$S5T_BIN_SIZE
+S5_INSTALLED_ASSET_SHA256=$S5T_BIN_SHA256
+S5_INSTALLED_BINARY_SIZE=$S5T_BIN_SIZE
+S5_INSTALLED_BINARY_SHA256=$S5T_BIN_SHA256
+S5_BINARY_SHA256=$S5T_BIN_SHA256
+S5_UPDATE_NEEDS_BINARY=0
+s5_state_write
+assert_eq "schema-2 writer preserves schema" 2 "$(t_state_get schema)"
+assert_eq "schema-2 writer preserves raw format" raw "$(t_state_get asset_format)"
+assert_eq "schema-2 writer preserves distribution" xray-v26.3.27-r1 \
+    "$(t_state_get distribution_tag)"
+cp "$S5_STATE" "$S5_TEST_ROOT/valid-state-v2"
+for _tsv2 in     distribution_tag:xray-v26.3.27     asset_format:zip     asset:Xray-linux-64.zip     asset_size:1     asset_sha256:1111111111111111111111111111111111111111111111111111111111111111; do
+    cp "$S5_TEST_ROOT/valid-state-v2" "$S5_STATE"
+    chmod 0600 "$S5_STATE"
+    S5_OS_FAMILY=debian
+    S5_INIT=systemd
+    awk -F '\t' -v key="${_tsv2%%:*}" -v value="${_tsv2#*:}" '
+        BEGIN { OFS="\t" } $1 == key { $2=value } { print }
+    ' "$S5_STATE" >"$S5_STATE.next"
+    mv "$S5_STATE.next" "$S5_STATE"
+    s5t_state_expect "schema-2 invalid ${_tsv2%%:*} is refused" 1
+done
+cp "$S5_TEST_ROOT/valid-state-v2" "$S5_STATE"
+chmod 0600 "$S5_STATE"
+S5_OS_FAMILY=debian
+S5_INIT=systemd
+printf 'archive_size\t1\n' >>"$S5_STATE"
+s5t_state_expect "schema 2 rejects a mixed schema-1 field" 1
 
 for _tsfield in engine:other release:other commit:other asset:other archive_size:bad \
     archive_sha256:bad binary_size:bad binary_sha256:bad protocol:socks auth:none udp:true \

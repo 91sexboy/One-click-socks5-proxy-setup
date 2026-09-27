@@ -160,6 +160,30 @@ def run_regressions(source):
             checked += 1
             (root / name).write_text(text)
 
+        publisher = (root / '.github/workflows/publish-xray-raw.yml').read_text()
+        preparer = (root / '.github/scripts/prepare-xray-raw.py').read_text()
+        publisher_cases = [
+            ('.github/workflows/publish-xray-raw.yml', publisher,
+             'DISTRIBUTION_TAG: xray-v26.3.27-r1', 'DISTRIBUTION_TAG: xray-v26.3.27-other', 'wrong raw release tag'),
+            ('.github/workflows/publish-xray-raw.yml', publisher,
+             'test "$GITHUB_REF" = refs/heads/xray-only', 'test "$GITHUB_REF" = refs/heads/other', 'wrong dispatch branch'),
+            ('.github/workflows/publish-xray-raw.yml', publisher,
+             'gh release upload "$DISTRIBUTION_TAG" --repo "$GITHUB_REPOSITORY" "$path"',
+             'gh release upload "$DISTRIBUTION_TAG" --clobber --repo "$GITHUB_REPOSITORY" "$path"',
+             'replacement upload enabled'),
+            ('.github/scripts/prepare-xray-raw.py', preparer,
+             'https://github.com/XTLS/Xray-core/releases/download/',
+             'https://unexpected.example/releases/download/', 'wrong upstream source'),
+            ('.github/scripts/prepare-xray-raw.py', preparer,
+             contract.RAW_ASSETS['amd64'][0], 'xray-wrong-amd64', 'wrong amd64 raw name'),
+            ('.github/scripts/prepare-xray-raw.py', preparer,
+             contract.RAW_ASSETS['arm64'][2], 'f' * 64, 'wrong arm64 raw digest'),
+        ]
+        for name, text, old, new, label in publisher_cases:
+            if text.count(old) < 1:
+                raise AssertionError('publisher mutation anchor missing: ' + label)
+            rejects(name, text.replace(old, new, 1), label)
+
         # Test callers through the real docs/asset paths too, not just imports.
         def run_test(name, expected):
             nonlocal checked

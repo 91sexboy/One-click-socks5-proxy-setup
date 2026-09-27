@@ -64,8 +64,14 @@ S5_ASSET_SIZE=''
 S5_ASSET_SHA256=''
 S5_ASSET_BINARY_SIZE=''
 S5_ASSET_BINARY_SHA256=''
+S5_INSTALLED_SCHEMA=''
 S5_INSTALLED_RELEASE=''
 S5_INSTALLED_COMMIT=''
+S5_INSTALLED_DISTRIBUTION_TAG=''
+S5_INSTALLED_ASSET_FORMAT=''
+S5_INSTALLED_ASSET_NAME=''
+S5_INSTALLED_ASSET_SIZE=''
+S5_INSTALLED_ASSET_SHA256=''
 S5_INSTALLED_BINARY_SIZE=''
 S5_INSTALLED_BINARY_SHA256=''
 S5_UPDATE_NEEDS_BINARY=0
@@ -1528,64 +1534,205 @@ s5_state_schema() {
     ' "$1" 2>/dev/null
 }
 
+# Parse every supported on-disk schema into one normalized 26-line record. The
+# schema-specific key sets remain strict: accepting schema-2 names in schema 1
+# would make a partially migrated state look authoritative, while rejecting old
+# archive fields would strand installations created by earlier scripts.
 s5_state_parse_file() {
-    awk -F '\t' '
-        BEGIN {
-            count=split("schema engine release commit asset archive_size archive_sha256 binary_size binary_sha256 protocol auth udp listen port username os arch family init account_uid account_gid config_sha256 unit_sha256 status", keys, " ")
-            for (i=1; i<=count; i++) allowed[keys[i]]=1
-            valid=1
-        }
-        {
-            if (NF != 2 || $1 == "" || $2 == "") valid=0
-            if (!($1 in allowed) || seen[$1]++) valid=0
-            values[$1]=$2
-        }
-        END {
-            if (NR < 22 || NR > 24) valid=0
-            if (!("schema" in seen)) values["schema"]="legacy"
-            if (!("family" in seen)) values["family"]=""
-            if (("schema" in seen) && !("family" in seen)) valid=0
-            for (i=1; i<=count; i++) {
-                if (keys[i] == "family") continue
-                if (keys[i] == "schema" && values["schema"] == "legacy") continue
-                if (!(keys[i] in seen)) valid=0
+    _sspf_schema=$(s5_state_schema "$1") || return 1
+    case "$_sspf_schema" in
+    legacy | 1)
+        awk -F '\t' -v expected="$_sspf_schema" '
+            BEGIN {
+                count=split("schema engine release commit asset archive_size archive_sha256 binary_size binary_sha256 protocol auth udp listen port username os arch family init account_uid account_gid config_sha256 unit_sha256 status", keys, " ")
+                for (i=1; i<=count; i++) allowed[keys[i]]=1
+                valid=1
+                if (expected == "legacy") values["schema"]="legacy"
             }
-            if (!valid) exit 1
-            for (i=1; i<=count; i++) print values[keys[i]]
-        }
-    ' "$1" 2>/dev/null
+            {
+                if (NF != 2 || $1 == "" || $2 == "") valid=0
+                if (!($1 in allowed) || seen[$1]++) valid=0
+                values[$1]=$2
+            }
+            END {
+                if (expected == "legacy") {
+                    if ((NR != 22 && NR != 23) || ("schema" in seen)) valid=0
+                    if (!("family" in seen)) values["family"]=""
+                    values["schema"]="legacy"
+                } else {
+                    if (NR != 24 || values["schema"] != "1" || !("family" in seen)) valid=0
+                }
+                for (i=2; i<=count; i++) {
+                    if (keys[i] == "family" && expected == "legacy" && !("family" in seen)) continue
+                    if (!(keys[i] in seen)) valid=0
+                }
+                if (!valid) exit 1
+                print values["schema"]
+                print values["engine"]
+                print values["release"]
+                print values["commit"]
+                print "xray-" values["release"]
+                print "zip"
+                print values["asset"]
+                print values["archive_size"]
+                print values["archive_sha256"]
+                print values["binary_size"]
+                print values["binary_sha256"]
+                for (i=10; i<=count; i++) print values[keys[i]]
+            }
+        ' "$1" 2>/dev/null
+        ;;
+    2)
+        awk -F '\t' '
+            BEGIN {
+                count=split("schema engine release commit distribution_tag asset_format asset asset_size asset_sha256 binary_size binary_sha256 protocol auth udp listen port username os arch family init account_uid account_gid config_sha256 unit_sha256 status", keys, " ")
+                for (i=1; i<=count; i++) allowed[keys[i]]=1
+                valid=1
+            }
+            {
+                if (NF != 2 || $1 == "" || $2 == "") valid=0
+                if (!($1 in allowed) || seen[$1]++) valid=0
+                values[$1]=$2
+            }
+            END {
+                if (NR != count || values["schema"] != "2") valid=0
+                for (i=1; i<=count; i++) if (!(keys[i] in seen)) valid=0
+                if (!valid) exit 1
+                for (i=1; i<=count; i++) print values[keys[i]]
+            }
+        ' "$1" 2>/dev/null
+        ;;
+    *) return 4 ;;
+    esac
 }
 
 s5_state_parse() { s5_state_parse_file "$S5_STATE"; }
+
+s5_valid_distribution_tag() {
+    _svdt_release=$1
+    _svdt_tag=$2
+    case "$_svdt_tag" in
+    "xray-$_svdt_release-r"*) _svdt_revision=${_svdt_tag#"xray-$_svdt_release-r"} ;;
+    *) return 1 ;;
+    esac
+    s5_valid_decimal "$_svdt_revision"
+}
+
+s5_state_asset_valid() {
+    # schema, release, distribution tag, format, asset, asset size/SHA,
+    # binary size/SHA, architecture.
+    case "$1:$4" in
+    legacy:zip | 1:zip)
+        [ "$3" = "xray-$2" ] || return 1
+        case "${10}:$5" in
+        amd64:Xray-linux-64.zip | arm64:Xray-linux-arm64-v8a.zip) ;;
+        *) return 1 ;;
+        esac
+        ;;
+    2:raw)
+        s5_valid_distribution_tag "$2" "$3" || return 1
+        case "${10}:$5" in
+        amd64:"xray-$2-linux-amd64" | arm64:"xray-$2-linux-arm64") ;;
+        *) return 1 ;;
+        esac
+        [ "$6" = "$8" ] && [ "$7" = "$9" ] || return 1
+        ;;
+    *) return 1 ;;
+    esac
+    s5_valid_decimal "$6" && s5_valid_sha256 "$7" &&
+        s5_valid_decimal "$8" && s5_valid_sha256 "$9"
+}
 
 s5_state_write() {
     s5_valid_release "$S5_XRAY_VERSION" || return 1
     [ "${#S5_XRAY_COMMIT}" -eq 40 ] || return 1
     case "$S5_XRAY_COMMIT" in *[!0-9a-fA-F]*) return 1 ;; esac
-    case "$S5_ARCHNAME:$S5_ASSET_NAME" in
-    amd64:Xray-linux-64.zip | arm64:Xray-linux-arm64-v8a.zip) ;;
-    *) return 1 ;;
-    esac
-    s5_valid_decimal "$S5_ASSET_SIZE" && s5_valid_sha256 "$S5_ASSET_SHA256" &&
-        s5_valid_decimal "$S5_ASSET_BINARY_SIZE" && s5_valid_sha256 "$S5_ASSET_BINARY_SHA256" || return 1
     s5_valid_port "$S5_PORT" && s5_valid_username "$S5_USERNAME" &&
         s5_ipv4_is_canonical "$S5_LISTEN" || return 1
     s5_backend_supported || return 1
     s5_valid_decimal "$S5_ACCOUNT_UID" && s5_valid_decimal "$S5_ACCOUNT_GID" &&
         s5_valid_sha256 "$S5_CONFIG_SHA256" && s5_valid_sha256 "$S5_UNIT_SHA256" || return 1
-    [ "$S5_BINARY_SHA256" = "$S5_ASSET_BINARY_SHA256" ] || return 1
-    s5_valid_sha256 "$S5_BINARY_SHA256" || return 1
-    [ "$(s5_bytecount "$S5_BIN" 2>/dev/null)" = "$S5_ASSET_BINARY_SIZE" ] || return 1
+
+    # A configuration-only update records how the installed bytes were actually
+    # acquired. In particular, a ZIP-era installation is not relabelled as raw
+    # merely because a later script distributes identical executable bytes.
+    case "$S5_UPDATE_NEEDS_BINARY:$S5_INSTALLED_SCHEMA" in
+    0:legacy | 0:1 | 0:2)
+        _ssw_schema=$S5_INSTALLED_SCHEMA
+        [ "$_ssw_schema" != legacy ] || _ssw_schema=1
+        _ssw_release=$S5_INSTALLED_RELEASE
+        _ssw_commit=$S5_INSTALLED_COMMIT
+        _ssw_distribution=$S5_INSTALLED_DISTRIBUTION_TAG
+        _ssw_format=$S5_INSTALLED_ASSET_FORMAT
+        _ssw_asset=$S5_INSTALLED_ASSET_NAME
+        _ssw_size=$S5_INSTALLED_ASSET_SIZE
+        _ssw_sha=$S5_INSTALLED_ASSET_SHA256
+        _ssw_binsize=$S5_INSTALLED_BINARY_SIZE
+        _ssw_binsha=$S5_INSTALLED_BINARY_SHA256
+        ;;
+    *)
+        _ssw_schema=1
+        _ssw_release=$S5_XRAY_VERSION
+        _ssw_commit=$S5_XRAY_COMMIT
+        _ssw_distribution=xray-$S5_XRAY_VERSION
+        _ssw_format=zip
+        _ssw_asset=$S5_ASSET_NAME
+        _ssw_size=$S5_ASSET_SIZE
+        _ssw_sha=$S5_ASSET_SHA256
+        _ssw_binsize=$S5_ASSET_BINARY_SIZE
+        _ssw_binsha=$S5_ASSET_BINARY_SHA256
+        ;;
+    esac
+    s5_valid_release "$_ssw_release" || return 1
+    [ "${#_ssw_commit}" -eq 40 ] || return 1
+    case "$_ssw_commit" in *[!0-9a-fA-F]*) return 1 ;; esac
+    s5_state_asset_valid "$_ssw_schema" "$_ssw_release" "$_ssw_distribution" \
+        "$_ssw_format" "$_ssw_asset" "$_ssw_size" "$_ssw_sha" \
+        "$_ssw_binsize" "$_ssw_binsha" "$S5_ARCHNAME" || return 1
+    [ "$S5_BINARY_SHA256" = "$_ssw_binsha" ] || return 1
+    [ "$(s5_bytecount "$S5_BIN" 2>/dev/null)" = "$_ssw_binsize" ] || return 1
     [ "$(s5_sha256 "$S5_BIN" 2>/dev/null)" = "$S5_BINARY_SHA256" ] || return 1
+
+    if [ "$_ssw_schema" = 2 ]; then
+        s5_atomic_write "$S5_STATE" root:root 0600 <<STATE
+schema	2
+engine	xray
+release	$_ssw_release
+commit	$_ssw_commit
+distribution_tag	$_ssw_distribution
+asset_format	raw
+asset	$_ssw_asset
+asset_size	$_ssw_size
+asset_sha256	$_ssw_sha
+binary_size	$_ssw_binsize
+binary_sha256	$S5_BINARY_SHA256
+protocol	mixed
+auth	password
+udp	false
+listen	$S5_LISTEN
+port	$S5_PORT
+username	$S5_USERNAME
+os	$S5_OS_ID-$S5_OS_VERSION_ID
+arch	$S5_ARCHNAME
+family	$S5_OS_FAMILY
+init	$S5_INIT
+account_uid	$S5_ACCOUNT_UID
+account_gid	$S5_ACCOUNT_GID
+config_sha256	$S5_CONFIG_SHA256
+unit_sha256	$S5_UNIT_SHA256
+status	complete
+STATE
+        return $?
+    fi
     s5_atomic_write "$S5_STATE" root:root 0600 <<STATE
 schema	1
 engine	xray
-release	$S5_XRAY_VERSION
-commit	$S5_XRAY_COMMIT
-asset	$S5_ASSET_NAME
-archive_size	$S5_ASSET_SIZE
-archive_sha256	$S5_ASSET_SHA256
-binary_size	$S5_ASSET_BINARY_SIZE
+release	$_ssw_release
+commit	$_ssw_commit
+asset	$_ssw_asset
+archive_size	$_ssw_size
+archive_sha256	$_ssw_sha
+binary_size	$_ssw_binsize
 binary_sha256	$S5_BINARY_SHA256
 protocol	mixed
 auth	password
@@ -1682,13 +1829,17 @@ s5_state_load() {
     fi
     s5_path_contract "$S5_STATE" file root:root 600 || return 1
     _sload_schema_hint=$(s5_state_schema "$S5_STATE") || return 1
-    case "$_sload_schema_hint" in 1 | legacy) ;; *) return 4 ;; esac
-    _sload_fields=$(s5_state_parse) || return 1
+    case "$_sload_schema_hint" in legacy | 1 | 2) ;; *) return 4 ;; esac
+    _sload_fields=$(s5_state_parse)
+    _sload_parse=$?
+    [ "$_sload_parse" -eq 0 ] || { [ "$_sload_parse" -eq 4 ] && return 4; return 1; }
     {
         IFS= read -r _sload_schema
         IFS= read -r _sload_engine
         IFS= read -r _sload_release
         IFS= read -r _sload_commit
+        IFS= read -r _sload_distribution
+        IFS= read -r _sload_format
         IFS= read -r _sload_asset
         IFS= read -r _sload_size
         IFS= read -r _sload_sha
@@ -1713,19 +1864,24 @@ s5_state_load() {
 $_sload_fields
 STATE_FIELDS
     _sload_fields=''
-    case "$_sload_schema" in 1 | legacy) ;; *) return 4 ;; esac
     [ "$_sload_engine" = xray ] || return 1
     s5_valid_release "$_sload_release" || return 1
     [ "${#_sload_commit}" -eq 40 ] || return 1
     case "$_sload_commit" in *[!0-9a-fA-F]*) return 1 ;; esac
-    case "$_sload_asset" in Xray-linux-64.zip | Xray-linux-arm64-v8a.zip) ;; *) return 1 ;; esac
-    s5_valid_decimal "$_sload_size" && s5_valid_sha256 "$_sload_sha" &&
-        s5_valid_decimal "$_sload_binsize" && s5_valid_sha256 "$_sload_binsha" || return 1
+    s5_state_asset_valid "$_sload_schema" "$_sload_release" "$_sload_distribution" \
+        "$_sload_format" "$_sload_asset" "$_sload_size" "$_sload_sha" \
+        "$_sload_binsize" "$_sload_binsha" "$S5_ARCHNAME" || return 1
     [ "$_sload_protocol" = mixed ] && [ "$_sload_auth" = password ] &&
         [ "$_sload_udp" = false ] || return 1
     [ "$_sload_status" = complete ] || return 4
+    S5_INSTALLED_SCHEMA=$_sload_schema
     S5_INSTALLED_RELEASE=$_sload_release
     S5_INSTALLED_COMMIT=$_sload_commit
+    S5_INSTALLED_DISTRIBUTION_TAG=$_sload_distribution
+    S5_INSTALLED_ASSET_FORMAT=$_sload_format
+    S5_INSTALLED_ASSET_NAME=$_sload_asset
+    S5_INSTALLED_ASSET_SIZE=$_sload_size
+    S5_INSTALLED_ASSET_SHA256=$_sload_sha
     S5_INSTALLED_BINARY_SIZE=$_sload_binsize
     S5_INSTALLED_BINARY_SHA256=$_sload_binsha
     S5_BINARY_SHA256=$_sload_binsha
@@ -1737,10 +1893,6 @@ STATE_FIELDS
     fi
     [ -n "$_sload_current_init" ] && [ "$_sload_current_init" = "$S5_INIT" ] || return 1
     s5_backend_supported || return 1
-    case "$S5_ARCHNAME:$_sload_asset" in
-    amd64:Xray-linux-64.zip | arm64:Xray-linux-arm64-v8a.zip) ;;
-    *) return 1 ;;
-    esac
     s5_select_service_artifact || return 1
     s5_valid_port "$S5_PORT" && s5_valid_username "$S5_USERNAME" &&
         s5_ipv4_is_canonical "$S5_LISTEN" || return 1
@@ -1771,10 +1923,12 @@ s5_open_managed_state() {
     if [ "$1" = update ]; then
         _som_installed_release=$S5_INSTALLED_RELEASE
         _som_installed_commit=$S5_INSTALLED_COMMIT
+        _som_installed_binsize=$S5_INSTALLED_BINARY_SIZE
         _som_installed_binsha=$S5_INSTALLED_BINARY_SHA256
         s5_asset_select || return 1
         if [ "$_som_installed_release" != "$S5_XRAY_VERSION" ] ||
             [ "$_som_installed_commit" != "$S5_XRAY_COMMIT" ] ||
+            [ "$_som_installed_binsize" != "$S5_ASSET_BINARY_SIZE" ] ||
             [ "$_som_installed_binsha" != "$S5_ASSET_BINARY_SHA256" ]; then
             S5_UPDATE_NEEDS_BINARY=1
         fi
@@ -2495,15 +2649,19 @@ s5_confirm_update() { s5_confirm update; }
 
 s5_transaction_verify_rollback() {
     s5_transaction_contract || return 1
-    _stvr_fields=$(s5_state_parse_file "$S5_TXNDIR/old.state") || return 1
+    _stvr_fields=$(s5_state_parse_file "$S5_TXNDIR/old.state")
+    _stvr_parse=$?
+    [ "$_stvr_parse" -eq 0 ] || return 1
     {
         IFS= read -r _stvr_schema
         IFS= read -r _stvr_engine
         IFS= read -r _stvr_release
         IFS= read -r _stvr_commit
+        IFS= read -r _stvr_distribution
+        IFS= read -r _stvr_format
         IFS= read -r _stvr_asset
-        IFS= read -r _stvr_archive_size
-        IFS= read -r _stvr_archive_sha
+        IFS= read -r _stvr_asset_size
+        IFS= read -r _stvr_asset_sha
         IFS= read -r _stvr_binary_size
         IFS= read -r _stvr_binary_sha
         IFS= read -r _stvr_protocol
@@ -2525,18 +2683,15 @@ s5_transaction_verify_rollback() {
 $_stvr_fields
 ROLLBACK_FIELDS
     _stvr_fields=''
-    case "$_stvr_schema" in 1 | legacy) ;; *) return 1 ;; esac
-    [ "$_stvr_engine:$_stvr_protocol:$_stvr_auth:$_stvr_udp:$_stvr_status" =         xray:mixed:password:false:complete ] || return 1
+    [ "$_stvr_engine:$_stvr_protocol:$_stvr_auth:$_stvr_udp:$_stvr_status" = \
+        xray:mixed:password:false:complete ] || return 1
     s5_valid_release "$_stvr_release" || return 1
     [ "${#_stvr_commit}" -eq 40 ] || return 1
     case "$_stvr_commit" in *[!0-9a-fA-F]*) return 1 ;; esac
-    case "$_stvr_arch:$_stvr_asset" in
-    amd64:Xray-linux-64.zip | arm64:Xray-linux-arm64-v8a.zip) ;;
-    *) return 1 ;;
-    esac
-    s5_valid_decimal "$_stvr_archive_size" && s5_valid_sha256 "$_stvr_archive_sha" &&
-        s5_valid_decimal "$_stvr_binary_size" && s5_valid_sha256 "$_stvr_binary_sha" &&
-        s5_valid_sha256 "$_stvr_config_sha" && s5_valid_sha256 "$_stvr_unit_sha" || return 1
+    s5_state_asset_valid "$_stvr_schema" "$_stvr_release" "$_stvr_distribution" \
+        "$_stvr_format" "$_stvr_asset" "$_stvr_asset_size" "$_stvr_asset_sha" \
+        "$_stvr_binary_size" "$_stvr_binary_sha" "$_stvr_arch" || return 1
+    s5_valid_sha256 "$_stvr_config_sha" && s5_valid_sha256 "$_stvr_unit_sha" || return 1
     s5_valid_port "$_stvr_port" && s5_valid_username "$_stvr_username" &&
         s5_ipv4_is_canonical "$_stvr_listen" || return 1
     [ "${_stvr_family:-debian}:$_stvr_init" = "$S5_OS_FAMILY:$S5_INIT" ] || return 1
