@@ -48,9 +48,9 @@ assert_contains "install credential checks use the fail-closed shared helper" \
     'lifecycle_no_credential_in "$root/install.log" "$install_secret" sudo' "$memory_text"
 assert_contains "holder credential checks use the fail-closed shared helper" \
     'lifecycle_no_credential_in "$root/held.log" "$install_secret"' "$memory_text"
-assert_not_contains "memory does not duplicate the fixture password" 'CISecret_123~x' "$memory_text"
+assert_not_contains "memory does not duplicate the fixture password" 'CISecret123x' "$memory_text"
 assert_not_contains "workflow does not duplicate the fixture password" \
-    'CISecret_123~x' "$(cat "$ROOT/.github/workflows/ci.yml")"
+    'CISecret123x' "$(cat "$ROOT/.github/workflows/ci.yml")"
 t_run env GITHUB_ACTIONS= sh "$ROOT/.github/scripts/memory-report.sh"
 assert_eq "memory orchestration refuses outside GitHub Actions" 1 "$T_STATUS"
 assert_contains "memory refusal explains the execution restriction" \

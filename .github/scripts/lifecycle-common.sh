@@ -3,12 +3,12 @@
 #
 # lifecycle_write_fixtures <workdir>: write the install and in-place-update answer
 # and password files into <workdir> and lock them to 0600. The in-place update
-# rotates to ciuser2/CISecret_456~y on the same port, which each gate then asserts
+# rotates to ciuser2/CISecret456y on the same port, which each gate then asserts
 # landed in the config and the state.
 lifecycle_write_fixtures() {
     _lcw=$1
-    printf 'ciuser\nCISecret_123~x\n' >"$_lcw/pass"
-    printf 'ciuser2\nCISecret_456~y\n' >"$_lcw/pass.update"
+    printf 'ciuser\nCISecret123x\n' >"$_lcw/pass"
+    printf 'ciuser2\nCISecret456y\n' >"$_lcw/pass.update"
     { printf '2\ny\n23456\n'; cat "$_lcw/pass"; } >"$_lcw/answers"
     { printf 'y\n23456\n'; cat "$_lcw/pass"; } >"$_lcw/answers.reinstall"
     { printf 'y\n23456\n'; cat "$_lcw/pass.update"; } >"$_lcw/answers.update"

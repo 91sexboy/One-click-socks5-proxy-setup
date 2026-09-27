@@ -10,7 +10,7 @@ t_source_production "$ROOT/tests/fixtures/os-release/debian-12"
 S5_LANG=en
 S5_PORT=23456
 S5_USERNAME=alice
-S5_PASSWORD='Secret_123~x'
+S5_PASSWORD='Secret123xyz'
 
 # A private, CGNAT, loopback, documentation or multicast address must never be
 # advertised as an Internet-reachable host, and the range edges are where an
@@ -102,9 +102,9 @@ printf '10.0.0.7\n' >"$S5_TEST_ADDR_PATH"
 s5t_card
 assert_eq "a card renders" 0 "$S5T_CARD_STATUS"
 assert_contains "an unusable lookup falls back to the placeholder" \
-    'socks5://alice:Secret_123~x@SERVER_IPV4:23456' "$S5T_CARD_OUT"
+    'socks5://alice:Secret123xyz@SERVER_IPV4:23456' "$S5T_CARD_OUT"
 assert_contains "the HTTP URI uses the same host" \
-    'http://alice:Secret_123~x@SERVER_IPV4:23456' "$S5T_CARD_OUT"
+    'http://alice:Secret123xyz@SERVER_IPV4:23456' "$S5T_CARD_OUT"
 assert_contains "the placeholder is called out" \
     'replace SERVER_IPV4 below' "$S5T_CARD_OUT"
 assert_eq "the placeholder kind is recorded" placeholder "$S5_CARD_KIND"
@@ -115,9 +115,9 @@ printf '198.100.20.30\n' >"$S5_TEST_ADDR_PATH"
 s5t_card
 assert_eq "a card renders with a resolved address" 0 "$S5T_CARD_STATUS"
 assert_contains "the resolved address reaches the SOCKS5 URI" \
-    'socks5://alice:Secret_123~x@198.100.20.30:23456' "$S5T_CARD_OUT"
+    'socks5://alice:Secret123xyz@198.100.20.30:23456' "$S5T_CARD_OUT"
 assert_contains "the resolved address reaches the HTTP URI" \
-    'http://alice:Secret_123~x@198.100.20.30:23456' "$S5T_CARD_OUT"
+    'http://alice:Secret123xyz@198.100.20.30:23456' "$S5T_CARD_OUT"
 assert_not_contains "no placeholder survives a resolved address" \
     SERVER_IPV4 "$S5T_CARD_OUT"
 assert_eq "the resolved kind is recorded" external "$S5_CARD_KIND"
@@ -128,7 +128,7 @@ assert_eq "the resolved kind is recorded" external "$S5_CARD_KIND"
 S5_SERVER_IPV4=192.168.5.9
 s5t_card
 assert_contains "a configured address is used as given" \
-    'socks5://alice:Secret_123~x@192.168.5.9:23456' "$S5T_CARD_OUT"
+    'socks5://alice:Secret123xyz@192.168.5.9:23456' "$S5T_CARD_OUT"
 assert_not_contains "a configured address is not called a placeholder" \
     'replace SERVER_IPV4' "$S5T_CARD_OUT"
 assert_eq "the configured kind is recorded" configured "$S5_CARD_KIND"
