@@ -1203,7 +1203,42 @@ test_update_commit_cleanup_failure() {
     done
 }
 
-SCENARIOS='uninstall_confirmation uninstall_messages family update owned_port rejected_candidate listener_failure rejected_command publish_signal config_symlink uninstall_leftovers uninstall_residue verifier_cleanup txn_mkdir_failure txn_copy_failure txn_chmod_failure stop_failure wait_stopped_failure publication_failure new_start_failure dataplane_failure state_write_failure rollback_restart_failure restore_failure uninstall_unknown rollback_exit uninstall_group_residue uninstall_resume uninstall_signal_resume uninstall_resume_drift uninstall_phase_gap_resume uninstall_final_window older_release_operations older_release_update binary_ready_gate older_release_download_failure transaction_contract_drift rollback_backup_drift uninstall_directory_drift transaction_all_commands transaction_unknown_residue sha256_binary_update_failure sha256_config_update_failure update_commit_cleanup_failure existing_stage_failure existing_stage_cleanup_failure existing_stage_cleanup_restore_failure'
+test_openrc_logging_warning() {
+    t_xray_fixture 23456
+    S5_INIT=openrc
+    S5_OS_FAMILY=alpine
+    s5_select_service_artifact
+    t_stub rc-service <<'RCSERVICE'
+#!/bin/sh
+case "$2" in
+start|restart)
+    port=$(sed -n 's/^[[:space:]]*"port":[[:space:]]*\([0-9][0-9]*\),*/\1/p' \
+        "$S5_STUB_CFG" | head -n 1)
+    printf '%s\n' "$port" >"$S5_TEST_ROOT/svc_active"
+    ;;
+stop) rm -f "$S5_TEST_ROOT/svc_active" ;;
+status) [ -f "$S5_TEST_ROOT/svc_active" ] && exit 0 || exit 3 ;;
+esac
+exit 0
+RCSERVICE
+    t_stub rc-update <<'RCUPDATE'
+#!/bin/sh
+exit 0
+RCUPDATE
+    t_xray_install
+    s5_precheck() { return 0; }
+    t_run s5_cmd_install
+    assert_eq "OpenRC update succeeds without a syslog endpoint" 0 "$T_STATUS"
+    assert_contains "OpenRC update warns when /dev/log is absent" '/dev/log' "$T_OUT"
+    assert_eq "OpenRC update emits the missing-syslog warning once" 1 \
+        "$(printf '%s\n' "$T_OUT" | grep -c '/dev/log')"
+    assert_file_absent "OpenRC logging warning leaves no transaction" "$S5_TXNDIR"
+    assert_file_absent "OpenRC logging warning is issued after releasing the lock" \
+        "$S5_LOCKDIR"
+    t_xray_assert_healthy
+}
+
+SCENARIOS='openrc_logging_warning uninstall_confirmation uninstall_messages family update owned_port rejected_candidate listener_failure rejected_command publish_signal config_symlink uninstall_leftovers uninstall_residue verifier_cleanup txn_mkdir_failure txn_copy_failure txn_chmod_failure stop_failure wait_stopped_failure publication_failure new_start_failure dataplane_failure state_write_failure rollback_restart_failure restore_failure uninstall_unknown rollback_exit uninstall_group_residue uninstall_resume uninstall_signal_resume uninstall_resume_drift uninstall_phase_gap_resume uninstall_final_window older_release_operations older_release_update binary_ready_gate older_release_download_failure transaction_contract_drift rollback_backup_drift uninstall_directory_drift transaction_all_commands transaction_unknown_residue sha256_binary_update_failure sha256_config_update_failure update_commit_cleanup_failure existing_stage_failure existing_stage_cleanup_failure existing_stage_cleanup_restore_failure'
 if [ "$#" -eq 0 ]; then
     # Expand the fixed scenario words into the default argument list.
     # shellcheck disable=SC2086

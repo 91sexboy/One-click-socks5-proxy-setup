@@ -93,6 +93,58 @@ test_cleanup_temps() {
     assert_file_absent "cleanup ignores a matching name in the caller's cwd" "$S5_SYSCONFDIR/.s5tmp.cwdcase"
 }
 
+test_openrc_logging_warning() {
+    t_xray_fixture 23456
+    S5_INIT=openrc
+    S5_OS_FAMILY=alpine
+    s5_select_service_artifact
+    s5_precheck() { return 0; }
+    t_stub rc-service <<'RCSERVICE'
+#!/bin/sh
+exec "$S5_TEST_ROOT/bin/systemctl" "$2"
+RCSERVICE
+    t_stub rc-update <<'RCUPDATE'
+#!/bin/sh
+exec "$S5_TEST_ROOT/bin/systemctl" "$1"
+RCUPDATE
+
+    t_run s5_cmd_install
+    assert_eq "OpenRC install succeeds without a syslog endpoint" 0 "$T_STATUS"
+    assert_contains "OpenRC install warns when /dev/log is absent" \
+        '/dev/log' "$T_OUT"
+    assert_eq "OpenRC install emits the missing-syslog warning once" 1 \
+        "$(printf '%s\n' "$T_OUT" | grep -c '/dev/log')"
+    assert_file_absent "the logging warning is issued after releasing the lock" \
+        "$S5_LOCKDIR"
+
+    t_xray_fixture 23456
+    S5_INIT=openrc
+    S5_OS_FAMILY=alpine
+    s5_select_service_artifact
+    s5_precheck() { return 0; }
+    mkdir -p "$S5_ROOTDIR/dev"
+    : >"$S5_ROOTDIR/dev/log"
+    t_stub rc-service <<'RCSERVICE'
+#!/bin/sh
+exec "$S5_TEST_ROOT/bin/systemctl" "$2"
+RCSERVICE
+    t_stub rc-update <<'RCUPDATE'
+#!/bin/sh
+exec "$S5_TEST_ROOT/bin/systemctl" "$1"
+RCUPDATE
+    t_run s5_cmd_install
+    assert_eq "OpenRC install succeeds with /dev/log present" 0 "$T_STATUS"
+    assert_not_contains "OpenRC install does not warn when /dev/log exists" \
+        '/dev/log' "$T_OUT"
+
+    t_xray_fixture 23456
+    s5_precheck() { return 0; }
+    t_run s5_cmd_install
+    assert_eq "systemd install succeeds without /dev/log" 0 "$T_STATUS"
+    assert_not_contains "systemd install never emits the OpenRC logging warning" \
+        '/dev/log' "$T_OUT"
+}
+
 test_openrc_runtime() {
     t_xray_fixture 23456
     # supervise-daemon runtime files belong to the running service until this
@@ -465,7 +517,7 @@ s5t_digest_failure_install() {
 test_sha256_unit_failure() { s5t_digest_failure_install unit; }
 test_sha256_config_install_failure() { s5t_digest_failure_install config; }
 
-SCENARIOS='cleanup_stop_failure account_creation_failure account_lifecycle install config_corrupt binary_corrupt unit_corrupt account_corrupt cleanup_temps openrc_runtime locks raw_command_cleanup raw_release_failure raw_candidate_failure raw_signal fresh_stage_failure_cleanup sha256_unit_failure sha256_config_install_failure'
+SCENARIOS='cleanup_stop_failure account_creation_failure account_lifecycle install openrc_logging_warning config_corrupt binary_corrupt unit_corrupt account_corrupt cleanup_temps openrc_runtime locks raw_command_cleanup raw_release_failure raw_candidate_failure raw_signal fresh_stage_failure_cleanup sha256_unit_failure sha256_config_install_failure'
 if [ "$#" -eq 0 ]; then
     # Expand the fixed scenario words into the default argument list.
     # shellcheck disable=SC2086

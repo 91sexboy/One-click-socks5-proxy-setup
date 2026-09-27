@@ -199,6 +199,7 @@ s5_msg() {
     install.done) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf 'Xray mixed 代理安装完成。' ;; en) printf 'Xray mixed proxy installation completed.' ;; esac ;;
     install.updated) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '配置已更新，Xray 已重新启动并验证。' ;; en) printf 'configuration updated; Xray restarted and verified.' ;; esac ;;
     install.card.hidden) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '连接信息未显示；请在终端运行 sh socks5.sh show 查看。' ;; en) printf 'connection details were not displayed; run sh socks5.sh show in a terminal to view them.' ;; esac ;;
+    openrc.logging.unavailable) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '未发现 /dev/log，Xray 的标准输出和错误日志可能不可用；请在 Alpine 上运行 rc-service syslog start 和 rc-update add syslog default，然后运行 sh socks5.sh restart。' ;; en) printf 'Xray stdout and stderr logging may be unavailable because /dev/log was not found; on Alpine, run rc-service syslog start and rc-update add syslog default, then run sh socks5.sh restart.' ;; esac ;;
     install.cancelled) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '操作已取消。' ;; en) printf 'operation cancelled.' ;; esac ;;
     asset.download) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '正在下载并校验 Xray 资产：%s。' "$1" ;; en) printf 'downloading and verifying Xray asset: %s.' "$1" ;; esac ;;
     asset.invalid) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf 'Xray 资产校验失败：%s。' "$1" ;; en) printf 'Xray asset verification failed: %s.' "$1" ;; esac ;;
@@ -230,6 +231,7 @@ s5_msg() {
     state.unsupported) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf 'state 架构不受支持：%s。已保留资源。' "$1" ;; en) printf 'unsupported state schema: %s. Resources were preserved.' "$1" ;; esac ;;
     status.state.running) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '运行中' ;; en) printf 'running' ;; esac ;;
     status.state.stopped) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '已停止' ;; en) printf 'stopped' ;; esac ;;
+    status.state.crashed) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '已崩溃' ;; en) printf 'crashed' ;; esac ;;
     status.state.unverified) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '未验证' ;; en) printf 'unverified' ;; esac ;;
     status.heading) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf 'Xray mixed 代理状态：' ;; en) printf 'Xray mixed proxy status:' ;; esac ;;
     status.line) [ "$#" -eq 3 ] || return 1; case "$S5_LANG" in zh) printf '服务：%s；端口：%s；账户：%s；协议：mixed（SOCKS5 + HTTP）；认证：password；UDP：关闭' "$1" "$2" "$3" ;; en) printf 'service: %s; port: %s; username: %s; protocol: mixed (SOCKS5 + HTTP); auth: password; UDP: disabled' "$1" "$2" "$3" ;; esac ;;
@@ -2058,8 +2060,10 @@ s5_service_state() {
         # which supervise-daemon leaves behind while the supervised process is
         # still alive and still holding the port, and 1 is a plain rc-service
         # error; treating either as stopped let uninstall delete everything from
-        # under a live proxy. Unknown means unverified, as on systemd.
-        case $? in 0 | 8) return 0 ;; 3) return 1 ;; *) return 2 ;; esac
+        # under a live proxy. 32 positively reports a crashed child but the
+        # supervisor is still managed, so it is distinct for status while every
+        # destructive stop boundary continues to fail closed on it.
+        case $? in 0 | 8) return 0 ;; 3) return 1 ;; 32) return 3 ;; *) return 2 ;; esac
         ;;
     *)
         systemctl is-active "$S5_PROJECT.service" >/dev/null 2>&1
@@ -2824,6 +2828,12 @@ COMMITTED
     return 0
 }
 
+s5_warn_openrc_logging() {
+    [ "$S5_INIT" = openrc ] || return 0
+    [ -e "$S5_ROOTDIR/dev/log" ] || [ -L "$S5_ROOTDIR/dev/log" ] ||
+        s5_msg_warn openrc.logging.unavailable || true
+}
+
 s5_cmd_install() {
     s5_precheck install || return 1
     s5_lock_acquire || return 1
@@ -2855,6 +2865,7 @@ s5_cmd_install() {
     fi
     s5_lock_release || return 1
     trap - EXIT HUP INT TERM
+    s5_warn_openrc_logging
     if [ "$_siupdate" = 1 ]; then s5_msg_print install.updated; else s5_msg_print install.done; fi
     if [ -t 1 ]; then
         s5_render_card || s5_msg_warn install.card.hidden
@@ -2882,7 +2893,12 @@ s5_cmd_status() {
     s5_open_locked status || return 1
     s5_service_state
     _ssa=$?
-    case "$_ssa" in 0) _ssv=status.state.running ;; 1) _ssv=status.state.stopped ;; *) _ssv=status.state.unverified ;; esac
+    case "$_ssa" in
+    0) _ssv=status.state.running; _ssr=0 ;;
+    1) _ssv=status.state.stopped; _ssr=0 ;;
+    3) _ssv=status.state.crashed; _ssr=1 ;;
+    *) _ssv=status.state.unverified; _ssr=0 ;;
+    esac
     s5_msg_print status.heading
     s5_msg_print status.line "$(s5_msg "$_ssv")" "$S5_PORT" "$S5_USERNAME"
     s5_msg_print status.version "$S5_INSTALLED_RELEASE"
@@ -2894,7 +2910,7 @@ s5_cmd_status() {
     *) s5_msg_print service.unverified "$S5_PORT" ;;
     esac
     s5_lock_release || return 1
-    return 0
+    return "$_ssr"
 }
 
 # Returns a candidate line in S5_PUBLIC_IPV4_CANDIDATE, empty on failure; the

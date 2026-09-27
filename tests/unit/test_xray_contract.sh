@@ -424,7 +424,9 @@ while IFS='|' read -r _catalog_key _catalog_arg1 _catalog_arg2 _catalog_en _cata
 done <<'CATALOG'
 status.state.running|||running|运行中
 status.state.stopped|||stopped|已停止
+status.state.crashed|||crashed|已崩溃
 status.state.unverified|||unverified|未验证
+openrc.logging.unavailable|||Xray stdout and stderr logging may be unavailable because /dev/log was not found; on Alpine, run rc-service syslog start and rc-update add syslog default, then run sh socks5.sh restart.|未发现 /dev/log，Xray 的标准输出和错误日志可能不可用；请在 Alpine 上运行 rc-service syslog start 和 rc-update add syslog default，然后运行 sh socks5.sh restart。
 account.remove.identity|900|901|account identity mismatch: recorded 900/901|账户身份不匹配：记录值为 900/901。
 account.remove.user|xray-socks5||could not remove service account: xray-socks5|无法删除服务账户：xray-socks5。
 account.remove.user.exists|xray-socks5||service account still exists after removal: xray-socks5|删除后服务账户仍然存在：xray-socks5。

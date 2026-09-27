@@ -120,12 +120,35 @@ if [ "$2" = status ]; then exit "$(cat "$S5_TEST_ROOT/statuscode")"; fi
 exit "$(cat "$S5_TEST_ROOT/actioncode")"
 RC
 printf '0\n' >"$S5_TEST_ROOT/actioncode"
-for _sacase in 0:0 8:0 3:1 16:2 1:2 32:2 4:2; do
+for _sacase in 0:0 8:0 3:1 16:2 1:2 32:3 4:2; do
     printf '%s\n' "${_sacase%%:*}" >"$S5_TEST_ROOT/statuscode"
     s5_service_state
     assert_eq "rc-service status ${_sacase%%:*} means ${_sacase#*:}" \
         "${_sacase#*:}" "$?"
 done
+
+# `status` is the public boundary: an OpenRC crash must be named rather than
+# collapsed into the same diagnosis as an rc-service error. The listener is a
+# separate observation and remains visible even when the manager reports a crash.
+s5t_openrc_crashed_status() (
+    S5_LANG=en
+    S5_PORT=23456
+    S5_USERNAME=alice
+    S5_INSTALLED_RELEASE=v26.3.27
+    printf '32\n' >"$S5_TEST_ROOT/statuscode"
+    : >"$S5_TEST_ROOT/status-lock"
+    s5_open_locked() { return 0; }
+    s5_listener_state() { return 1; }
+    s5_lock_release() { rm -f "$S5_TEST_ROOT/status-lock"; }
+    s5_cmd_status
+)
+t_run s5t_openrc_crashed_status
+assert_ne "status fails when OpenRC reports a crash" 0 "$T_STATUS"
+assert_contains "status names the OpenRC crash" 'service: crashed;' "$T_OUT"
+assert_contains "crashed status still reports the listener observation" \
+    'Xray is not listening on port 23456.' "$T_OUT"
+assert_file_absent "crashed status releases the operation lock" \
+    "$S5_TEST_ROOT/status-lock"
 
 # s5_wait_stopped may only report success on a state that proves the process is
 # gone. sleep is stubbed because the real wait is fifteen one-second polls.
@@ -136,6 +159,9 @@ assert_eq "a stopped service satisfies the stop wait" 0 "$T_STATUS"
 printf '16\n' >"$S5_TEST_ROOT/statuscode"
 t_run s5_wait_stopped
 assert_ne "an inactive service does not satisfy the stop wait" 0 "$T_STATUS"
+printf '32\n' >"$S5_TEST_ROOT/statuscode"
+t_run s5_wait_stopped
+assert_ne "a crashed child does not prove its supervisor stopped" 0 "$T_STATUS"
 unset -f sleep
 
 # The "nonzero but already active" fallback is sound for start and wrong for

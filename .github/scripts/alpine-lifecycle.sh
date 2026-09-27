@@ -45,8 +45,12 @@ if apk info -e unzip >/dev/null 2>&1; then
   exit 1
 fi
 pkgs_before_install=$(apk info | sort | sha256sum)
+# A bare Alpine container has no syslog endpoint. The installer must expose that
+# fact rather than letting logger discard Xray diagnostics silently.
+test ! -e /dev/log
 sh .github/scripts/run-socks5.sh install \
   "$work/answers" "$work/install.log" "$work/pass"
+test "$(grep -cF '/dev/log' "$work/install.log")" = 1
 if apk info -e unzip >/dev/null 2>&1; then
   printf 'raw installation added an unnecessary unzip package\n' >&2
   exit 1
@@ -75,6 +79,8 @@ fi
 # the new identity in both the config and the state.
 sh .github/scripts/run-socks5.sh install \
   "$work/answers.update" "$work/update.log" "$work/pass.update" "$work/pass"
+test "$(grep -cF '/dev/log' "$work/update.log")" = 1
+test ! -e /dev/log
 sh .github/scripts/lifecycle-update-assert.sh
 rc-service xray-socks5 status
 pkgs_after_install=$(apk info | sort | sha256sum)
@@ -92,8 +98,11 @@ rc-service xray-socks5 status
 # the word in the heading.
 grep -qxF 'Xray is listening on port 23456.' "$work/status.log"
 grep -qF 'protocol: mixed (SOCKS5 + HTTP); auth: password; UDP: disabled' "$work/status.log"
-# SPEC 5: OpenRC recovers a crash with the listener returning, and a
-# configuration error does not enter an automatic restart loop.
+# SPEC 5: OpenRC recovers two rapid ordinary crashes with the listener
+# returning, while a configuration error remains bounded below. Record the
+# window so a slow runner cannot accidentally issue the second kill after the
+# configured 60-second retry period and make a broken counter look healthy.
+crash_window_started=$(date +%s)
 crash_pid=$(cat /run/openrc/options/xray-socks5/child_pid)
 test "$crash_pid" -gt 0
 kill -9 "$crash_pid"
@@ -103,13 +112,26 @@ crash_recovered() {
   test "$new_pid" != "$crash_pid" && test "$new_pid" -gt 0
 }
 # The assertions below remain authoritative after the final sleep.
-lifecycle_wait_until 60 1 crash_recovered || true
+lifecycle_wait_until 45 1 crash_recovered || true
 test "$new_pid" != "$crash_pid"
 test "$new_pid" -gt 0
 listener_recovered() {
   ss -H -ltnp 2>/dev/null | grep -q "pid=$new_pid,"
 }
-lifecycle_wait_until 60 1 listener_recovered || true
+lifecycle_wait_until 45 1 listener_recovered || true
+ss -H -ltnp | grep -q "pid=$new_pid,"
+
+# The second death is deliberately inside the same retry period. With the old
+# respawn_max=1 policy this is the red regression: no second replacement child
+# appears. The fixed policy grants exactly this second recoverable respawn.
+test "$(( $(date +%s) - crash_window_started ))" -lt 60
+crash_pid=$new_pid
+new_pid=0
+kill -9 "$crash_pid"
+lifecycle_wait_until 45 1 crash_recovered || true
+test "$new_pid" != "$crash_pid"
+test "$new_pid" -gt 0
+lifecycle_wait_until 45 1 listener_recovered || true
 ss -H -ltnp | grep -q "pid=$new_pid,"
 cp /etc/xray-socks5/config.json "$work/good.json"
 printf "{broken\n" >/etc/xray-socks5/config.json
