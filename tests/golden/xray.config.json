@@ -6,7 +6,7 @@
     "protocol": "mixed",
     "settings": {
       "auth": "password",
-      "accounts": [{"user": "testuser", "pass": "TestPassword_123~x"}],
+      "accounts": [{"user": "testuser", "pass": "TestPassword123xyz"}],
       "udp": false
     },
     "tag": "xray-mixed-in"

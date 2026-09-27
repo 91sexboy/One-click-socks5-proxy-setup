@@ -168,11 +168,11 @@ rc-service xray-socks5 status
 sh tests/protocol/post_install_audit.sh / "$work/pass.update" openrc
 # SPEC 7: credentials reach neither argv nor the service environment.
 live_pid=$(cat /run/openrc/options/xray-socks5/child_pid)
-if tr "\0" "\n" <"/proc/$live_pid/cmdline" | grep -qE "CISecret_123~x|CISecret_456~y"; then
+if tr "\0" "\n" <"/proc/$live_pid/cmdline" | grep -qE "CISecret123x|CISecret456y"; then
   printf "credential appeared in argv\n" >&2
   exit 1
 fi
-if tr "\0" "\n" <"/proc/$live_pid/environ" | grep -qE "CISecret_123~x|CISecret_456~y"; then
+if tr "\0" "\n" <"/proc/$live_pid/environ" | grep -qE "CISecret123x|CISecret456y"; then
   printf "credential appeared in the service environment\n" >&2
   exit 1
 fi

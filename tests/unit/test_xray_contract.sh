@@ -143,7 +143,7 @@ assert_eq "the explicit answer after the refusal is taken" 24500 "$S5_PORT"
 
 S5_PORT=23456
 S5_USERNAME=alice
-S5_PASSWORD='Secret_123~x'
+S5_PASSWORD='Secret123xyz'
 S5_SECRET=$S5_PASSWORD
 S5_LISTEN=127.0.0.1
 mkdir -p "$S5_SYSCONFDIR" "$S5_STATEDIR" "$S5_PREFIX"
@@ -250,7 +250,7 @@ break' '"quoted"'; do
     t_run s5_config_render
     assert_ne "invalid password is refused" 0 "$T_STATUS"
 done
-S5_PASSWORD='Secret_123~x'
+S5_PASSWORD='Secret123xyz'
 S5_LISTEN='127.0.0.1
 include evil'
 t_run s5_config_render

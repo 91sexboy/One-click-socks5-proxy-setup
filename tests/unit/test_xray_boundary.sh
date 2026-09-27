@@ -9,7 +9,7 @@ t_source_production ''
 
 S5_PORT=23456
 S5_USERNAME=testuser
-S5_PASSWORD='TestPassword_123~x'
+S5_PASSWORD='TestPassword123xyz'
 s5t_boundary_ranges() {
     sed -n '/"ip": \[/,/\]/p' | sed -n 's/.*"\([0-9a-f:.]*\/[0-9]*\)".*/\1/p' | sort
 }

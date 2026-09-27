@@ -48,7 +48,7 @@ t_xray_fixture() {
     s5_select_service_artifact || return 1
     S5_PORT=${1:-23456}
     S5_USERNAME=alice
-    S5_PASSWORD='Secret_123~x'
+    S5_PASSWORD='Secret123xyz'
     S5_SECRET=$S5_PASSWORD
     S5_LISTEN=127.0.0.1
     mkdir -p "$S5_TEST_ROOT/bin" "$S5_UNITDIR"

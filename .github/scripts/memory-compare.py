@@ -473,8 +473,8 @@ def main():
     original = args.config.read_bytes()
     config = json.loads(original)
     accounts = config["inbounds"][0]["settings"]["accounts"]
-    if len(accounts) != 1 or not re.fullmatch(r"[A-Za-z0-9_-]{3,32}", accounts[0]["user"]) \
-            or not re.fullmatch(r"[A-Za-z0-9._~-]{12,128}", accounts[0]["pass"]):
+    if len(accounts) != 1 or not re.fullmatch(r"[A-Za-z0-9]{3,32}", accounts[0]["user"]) \
+            or not re.fullmatch(r"[A-Za-z0-9]{12,128}", accounts[0]["pass"]):
         raise ValueError("comparison requires the installed single-account configuration")
     binary_hash = sha256(args.binary)
     version_output = subprocess.run([str(args.binary), "version"], capture_output=True,

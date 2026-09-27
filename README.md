@@ -58,8 +58,8 @@ On the first invocation without a saved language, choose `1` or Enter for Chines
 | Input | Press Enter | Manual value |
 | --- | --- | --- |
 | Port | Random `20000–60000` | Decimal `1024–65535`, without leading zeros |
-| Username | 12 random characters | 3–32 ASCII letters, digits, `_`, `-` |
-| Password | 32 random characters | 12–128 ASCII letters, digits, `.`, `_`, `~`, `-` |
+| Username | 12 random characters | 3–32 ASCII letters and digits |
+| Password | 32 random characters | 12–128 ASCII letters and digits |
 
 **The password is visible while you type it.** The table describes a fresh install. During an update, a blank port keeps the current port only after its listener is verified as belonging to this installation; an explicit port uses the normal free-or-owned checks. Blank username and password answers generate new values.
 

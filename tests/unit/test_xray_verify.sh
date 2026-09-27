@@ -19,7 +19,7 @@ WORK=$(mktemp -d "${TMPDIR:-/tmp}/s5verify.XXXXXX") || { printf 'cannot create w
 # shellcheck disable=SC2064
 trap "rm -rf \"$WORK\"" EXIT HUP INT TERM
 
-printf 'alice\nSecret_123~x\n' >"$WORK/pass"
+printf 'alice\nSecret123xyz\n' >"$WORK/pass"
 chmod 0600 "$WORK/pass"
 
 # Pull the verifier heredoc body out of socks5.sh: the start line carries both "<<"
@@ -184,7 +184,7 @@ S5_TEST_MODE=0
 S5_LANG=en
 S5_PORT=23456
 S5_USERNAME=alice
-S5_PASSWORD='Secret_123~x'
+S5_PASSWORD='Secret123xyz'
 s5_verify_protocols() {
     assert_eq "wrapper passes the listener port" 23456 "$1"
     assert_eq "credential file is registered before probing" "$2" "$S5_VERIFY_TEMP"

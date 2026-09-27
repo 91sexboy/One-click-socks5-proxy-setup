@@ -145,7 +145,7 @@ S5_LANG=en
 env | grep -cE '^(S5_PASSWORD|S5_SECRET|S5_USERNAME)=' || true
 EOF
 _answers=$S5_TEST_ROOT/answers.credentials
-printf 'chosenuser\nExported_secret~1\n' >"$_answers"
+printf 'chosenuser\nExportedsecret17\n' >"$_answers"
 
 # Split configured multiword interpreters such as busybox sh.
 # shellcheck disable=SC2086

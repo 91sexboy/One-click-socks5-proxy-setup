@@ -99,7 +99,7 @@ class PromptInputTests(unittest.TestCase):
         (self.work / ".s5-test-root").touch()
         self.environment = dict(os.environ, S5_TEST_MODE="1", S5_LIB_ONLY="1",
                                 S5_TEST_ROOT=str(self.work))
-        self.answers = ["y", "23456", "prompt_user", secrets.token_hex(16)]
+        self.answers = ["y", "23456", "promptuser", secrets.token_hex(16)]
         self.prompts = {
             "zh": ["确认安装 Xray mixed 代理？[Y/n] ",
                    "端口 [回车 = 随机 20000-60000]：",
@@ -206,12 +206,13 @@ printf 'answers-accepted\\n'
                     process.communicate()
 
     def test_invalid_answers_retry_without_exposing_input(self):
-        answers = ["y", "bad-port", "23456", "!", "prompt_user", "short", self.answers[-1]]
+        answers = ["y", "bad-port", "23456", "prompt_user", "promptuser",
+                   "short", "Secret123xy~z", self.answers[-1]]
         result = subprocess.run(self.command("en"), env=self.environment,
                                 input="\n".join(answers) + "\n", capture_output=True,
                                 text=True, timeout=5)
         self.assertEqual(result.returncode, 0)
-        for prompt, count in zip(self.prompts["en"], (1, 2, 2, 2)):
+        for prompt, count in zip(self.prompts["en"], (1, 2, 2, 3)):
             self.assertEqual(result.stderr.splitlines().count(prompt), count)
         self.assertTrue(self.answers[-1] not in result.stdout + result.stderr,
                         "a password reached redirected output")

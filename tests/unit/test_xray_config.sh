@@ -10,7 +10,7 @@ t_source_production ''
 S5_LANG=en
 S5_PORT=23456
 S5_USERNAME=alice
-S5_PASSWORD='Secret_123~x'
+S5_PASSWORD='Secret123xyz'
 S5_SECRET=$S5_PASSWORD
 S5_LISTEN=127.0.0.1
 mkdir -p "$S5_SYSCONFDIR"
@@ -64,7 +64,7 @@ assert_not_contains "config output is not printed by an error path" "$S5_PASSWOR
 # canonical JSON shows the production 0.0.0.0 for the same shape.
 S5_PORT=23456
 S5_USERNAME=testuser
-S5_PASSWORD='TestPassword_123~x'
+S5_PASSWORD='TestPassword123xyz'
 S5_SECRET=$S5_PASSWORD
 golden_config=$(cat "${S5_REPO_ROOT}/tests/golden/xray.config.json")
 assert_eq "rendered config matches the golden config" \
@@ -87,10 +87,10 @@ else
     t_bad "the published config can be read back"
 fi
 assert_eq "extract recovers the username" testuser "$S5_USERNAME"
-assert_eq "extract recovers the password" 'TestPassword_123~x' "$S5_PASSWORD"
+assert_eq "extract recovers the password" 'TestPassword123xyz' "$S5_PASSWORD"
 
 S5_USERNAME=alice
-S5_PASSWORD='Secret_123~x'
+S5_PASSWORD='Secret123xyz'
 S5_SECRET=$S5_PASSWORD
 
 S5_ARCHNAME=amd64
@@ -119,15 +119,15 @@ rm -f "$candidate"
 # only thing that says why, and it must arrive with the password removed.
 cat >"$S5_BIN" <<'XRAY'
 #!/bin/sh
-printf 'xray: refusing config carrying pass Secret_123~x\n' >&2
+printf 'xray: refusing config carrying pass Secret123xyz\n' >&2
 exit 23
 XRAY
 chmod 0755 "$S5_BIN"
-S5_SECRET='Secret_123~x'
+S5_SECRET='Secret123xyz'
 t_run s5_config_test "$S5_CFG"
 assert_ne "a rejected candidate fails" 0 "$T_STATUS"
 assert_contains "the engine reason reaches the operator" 'refusing config' "$T_OUT"
-assert_not_contains "the engine reason is redacted" 'Secret_123~x' "$T_OUT"
+assert_not_contains "the engine reason is redacted" 'Secret123xyz' "$T_OUT"
 assert_contains "the engine reason uses the standard redaction marker" '<REDACTED>' "$T_OUT"
 cat >"$S5_BIN" <<'XRAY'
 #!/bin/sh
@@ -153,11 +153,80 @@ assert_file_absent "config-test failure leaves no candidate file" "$1"
 # enable UDP by changing the renderer inputs.
 S5_PASSWORD='Bad:password'
 t_run s5_config_render
-assert_ne "password characters outside the URI-safe set are rejected" 0 "$T_STATUS"
-S5_PASSWORD='Secret_123~x'
+assert_ne "password characters outside the accepted set are rejected" 0 "$T_STATUS"
+S5_PASSWORD='Secret123xyz'
 S5_LISTEN='127.0.0.1
 include /tmp/extra'
 t_run s5_config_render
 assert_ne "multiline listen values are rejected" 0 "$T_STATUS"
+S5_LISTEN=127.0.0.1
+
+# A credential that is generated or entered from now on is letters and digits
+# only, so nothing in a printed URI can be mis-parsed by a client. Each refused
+# character is tested at a length the bounds accept, so a charset regression
+# cannot hide behind a length refusal.
+for _bad_user in 'alice_bob' 'alice-bob' 'alice.bob' 'alice~bob'; do
+    if s5_valid_username "$_bad_user"; then
+        t_bad "username $_bad_user is refused"
+    else
+        t_ok
+    fi
+done
+for _bad_pass in 'Secret123xy_z' 'Secret123xy-z' 'Secret123xy.z' 'Secret123xy~z'; do
+    if s5_valid_password "$_bad_pass"; then
+        t_bad "password $_bad_pass is refused"
+    else
+        t_ok
+    fi
+done
+if s5_valid_username alicebob && s5_valid_password Secret123xyz; then
+    t_ok
+else
+    t_bad "letters and digits are still accepted"
+fi
+
+# The generator must not be able to emit a value its own validator refuses.
+_gen_alphabet=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789
+_gen_bad=0
+for _gen_round in 1 2 3 4 5 6 7 8 9 10; do
+    _gen_user=$(s5_random_string 12 "$_gen_alphabet") || _gen_bad=1
+    _gen_pass=$(s5_random_string 32 "$_gen_alphabet") || _gen_bad=1
+    s5_valid_username "$_gen_user" || _gen_bad=1
+    s5_valid_password "$_gen_pass" || _gen_bad=1
+done
+assert_eq "every generated credential satisfies its validator" 0 "$_gen_bad"
+
+# Read-back is deliberately wider than the write path. An installation created
+# before the narrowing still has to be readable by status and show, restartable,
+# and above all uninstallable, and all of those reach the credential through
+# s5_config_extract. Refusing a historical value there would strand the
+# installation with no supported way to remove it.
+S5_CFG="$S5_TEST_ROOT/legacy.json"
+cat >"$S5_CFG" <<'LEGACY'
+{
+  "inbounds": [{
+    "protocol": "mixed",
+    "settings": {
+      "auth": "password",
+      "accounts": [{"user": "legacy_user-1", "pass": "Legacy_pass~123.x"}],
+      "udp": false
+    }
+  }]
+}
+LEGACY
+S5_USERNAME=''
+S5_PASSWORD=''
+if s5_config_extract; then
+    t_ok
+else
+    t_bad "a pre-narrowing installation is still readable"
+fi
+assert_eq "extract recovers the historical username" legacy_user-1 "$S5_USERNAME"
+assert_eq "extract recovers the historical password" 'Legacy_pass~123.x' "$S5_PASSWORD"
+if s5_valid_username "$S5_USERNAME" || s5_valid_password "$S5_PASSWORD"; then
+    t_bad "the historical pair is still refused as new input"
+else
+    t_ok
+fi
 
 t_summary

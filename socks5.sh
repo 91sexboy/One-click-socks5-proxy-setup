@@ -192,9 +192,9 @@ s5_msg() {
     input.port.used) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '端口 %s 已被占用。' "$1" ;; en) printf 'port %s is already in use.' "$1" ;; esac ;;
     input.port.unverified) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法确认端口 %s 属于本安装；请明确输入端口。' "$1" ;; en) printf 'could not verify that port %s belongs to this installation; enter a port explicitly.' "$1" ;; esac ;;
     input.username) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '账户名 [回车 = 随机]：' ;; en) printf 'Username [Enter = random]: ' ;; esac ;;
-    input.username.invalid) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '账户名必须是 3-32 个字母、数字、下划线或短横线。' ;; en) printf 'username must be 3-32 letters, digits, underscores or hyphens.' ;; esac ;;
+    input.username.invalid) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '账户名必须是 3-32 个字母或数字。' ;; en) printf 'username must be 3-32 letters or digits.' ;; esac ;;
     input.password) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '密码（输入时可见）[回车 = 随机]：' ;; en) printf 'Password (visible while typed) [Enter = random]: ' ;; esac ;;
-    input.password.invalid) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '密码必须是 12-128 个安全字符。' ;; en) printf 'password must be 12-128 safe characters.' ;; esac ;;
+    input.password.invalid) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '密码必须是 12-128 个字母或数字。' ;; en) printf 'password must be 12-128 letters or digits.' ;; esac ;;
     install.start) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '正在安装并验证 Xray mixed 代理……' ;; en) printf 'installing and verifying the Xray mixed proxy...' ;; esac ;;
     install.done) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf 'Xray mixed 代理安装完成。' ;; en) printf 'Xray mixed proxy installation completed.' ;; esac ;;
     install.updated) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '配置已更新，Xray 已重新启动并验证。' ;; en) printf 'configuration updated; Xray restarted and verified.' ;; esac ;;
@@ -528,12 +528,34 @@ s5_ipv4_is_public() {
     return 0
 }
 
+# A credential that is generated or entered from now on is letters and digits
+# only, so nothing in the printed socks5:// and http:// URIs can be mis-parsed by
+# a client that treats the userinfo component loosely. These two gate every write
+# path: the prompts, the rendered config, and the state record.
 s5_valid_username() {
-    case "${1:-}" in '' | *[!A-Za-z0-9_-]*) return 1 ;; esac
+    case "${1:-}" in '' | *[!A-Za-z0-9]*) return 1 ;; esac
     [ "${#1}" -ge 3 ] && [ "${#1}" -le 32 ]
 }
 
 s5_valid_password() {
+    case "${1:-}" in '' | *[!A-Za-z0-9]*) return 1 ;; esac
+    [ "${#1}" -ge 12 ] && [ "${#1}" -le 128 ]
+}
+
+# The read-back pair, deliberately wider than the write pair above: it still
+# accepts the historical sets (`_-` in a username, `._~-` in a password). An
+# installation made before the narrowing must stay readable, restartable and
+# above all uninstallable, and every one of those commands reaches its credential
+# through s5_config_extract or a state load. Refusing a legacy value there would
+# strand the installation with no supported way to remove it. An update rotates
+# the credential through the strict pair, which is the only way a legacy value
+# leaves an installation.
+s5_valid_stored_username() {
+    case "${1:-}" in '' | *[!A-Za-z0-9_-]*) return 1 ;; esac
+    [ "${#1}" -ge 3 ] && [ "${#1}" -le 32 ]
+}
+
+s5_valid_stored_password() {
     case "${1:-}" in '' | *[!A-Za-z0-9._~-]*) return 1 ;; esac
     [ "${#1}" -ge 12 ] && [ "${#1}" -le 128 ]
 }
@@ -651,7 +673,7 @@ s5_prompt_username() {
         s5_msg_ask input.username || return 1
         _spu=''
         IFS= read -r _spu || return 1
-        [ -n "$_spu" ] || _spu=$(s5_random_string 12 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-') || return 1
+        [ -n "$_spu" ] || _spu=$(s5_random_string 12 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789') || return 1
         if s5_valid_username "$_spu"; then
             S5_USERNAME=$_spu
             return 0
@@ -665,7 +687,7 @@ s5_prompt_password() {
         s5_msg_ask input.password || return 1
         _sppw=''
         IFS= read -r _sppw || return 1
-        [ -n "$_sppw" ] || _sppw=$(s5_random_string 32 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._~-') || return 1
+        [ -n "$_sppw" ] || _sppw=$(s5_random_string 32 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789') || return 1
         if s5_valid_password "$_sppw"; then
             S5_PASSWORD=$_sppw
             S5_SECRET=$_sppw
@@ -926,7 +948,7 @@ s5_config_extract() {
     [ "$(grep -cF '"udp": false' "$S5_CFG")" = 1 ] || return 1
     [ "$(grep -cF '"user":' "$S5_CFG")" = 1 ] || return 1
     [ "$(grep -cF '"pass":' "$S5_CFG")" = 1 ] || return 1
-    s5_valid_username "$_sceuser" && s5_valid_password "$_scepass" || return 1
+    s5_valid_stored_username "$_sceuser" && s5_valid_stored_password "$_scepass" || return 1
     S5_USERNAME=$_sceuser
     S5_PASSWORD=$_scepass
     S5_SECRET=$_scepass
@@ -1813,7 +1835,7 @@ STATE_FIELDS
     [ -n "$_sload_current_init" ] && [ "$_sload_current_init" = "$S5_INIT" ] || return 1
     s5_backend_supported || return 1
     s5_select_service_artifact || return 1
-    s5_valid_port "$S5_PORT" && s5_valid_username "$S5_USERNAME" &&
+    s5_valid_port "$S5_PORT" && s5_valid_stored_username "$S5_USERNAME" &&
         s5_ipv4_is_canonical "$S5_LISTEN" || return 1
     s5_verify_installed_artifacts
     _sload_result=$?
@@ -2561,7 +2583,7 @@ ROLLBACK_FIELDS
         "$_stvr_format" "$_stvr_asset" "$_stvr_asset_size" "$_stvr_asset_sha" \
         "$_stvr_binary_size" "$_stvr_binary_sha" "$_stvr_arch" || return 1
     s5_valid_sha256 "$_stvr_config_sha" && s5_valid_sha256 "$_stvr_unit_sha" || return 1
-    s5_valid_port "$_stvr_port" && s5_valid_username "$_stvr_username" &&
+    s5_valid_port "$_stvr_port" && s5_valid_stored_username "$_stvr_username" &&
         s5_ipv4_is_canonical "$_stvr_listen" || return 1
     [ "${_stvr_family:-debian}:$_stvr_init" = "$S5_OS_FAMILY:$S5_INIT" ] || return 1
     s5_valid_decimal "$_stvr_uid" && s5_valid_decimal "$_stvr_gid" || return 1
