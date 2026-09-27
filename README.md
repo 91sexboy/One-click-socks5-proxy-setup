@@ -141,18 +141,18 @@ Replace the example address with your own. This changes **only the displayed lin
 
 Historical evidence: Xray `v26.3.27`, Ubuntu 24.04, kernel `6.17.0-1022-azure`, and the installer's default authenticated TCP-only `mixed` configuration at [commit `9271644`](https://github.com/91sexboy/One-click-socks5-proxy-setup/commit/9271644340d2332725d0c83e818711481486668f). [CI run `34800667931`](https://github.com/91sexboy/One-click-socks5-proxy-setup/actions/runs/34800667931) produced the [amd64 measurements](https://github.com/91sexboy/One-click-socks5-proxy-setup/actions/runs/34800667931/job/103842545297) and [arm64 measurements](https://github.com/91sexboy/One-click-socks5-proxy-setup/actions/runs/34800667931/job/103842545245).
 
-These are **instantaneous RSS snapshots** after establishing authenticated tunnels to a local test target; 0 means idle. The phase cgroup peak covers reset-to-sample, including connection establishment. This is **not a 60-second load test**: 60 seconds is the connection holder's timeout, not a measurement window.
+These are **instantaneous RSS snapshots** after establishing authenticated tunnels to a local test target; 0 means idle. The phase cgroup peak covers reset-to-sample, including connection establishment. This is **not a 60-second load test**: 60 seconds is the connection holder's timeout, not a measurement window. Each cell leads with MiB and keeps the exact figure the jobs recorded in parentheses.
 
-| Architecture | Held connections | RSS (KiB) | Phase cgroup peak (bytes) |
+| Architecture | Held connections | RSS (MiB) | Phase cgroup peak (MiB) |
 | --- | ---: | ---: | ---: |
-| amd64 | 0 | 35896 | 11710464 |
-| amd64 | 1 | 35912 | 11972608 |
-| amd64 | 32 | 36424 | 13283328 |
-| amd64 | 128 | 40876 | 19304448 |
-| arm64 | 0 | 29460 | 6348800 |
-| arm64 | 1 | 29520 | 6348800 |
-| arm64 | 32 | 30928 | 8183808 |
-| arm64 | 128 | 35324 | 14200832 |
+| amd64 | 0 | 35.1 (35896 KiB) | 11.2 (11710464 bytes) |
+| amd64 | 1 | 35.1 (35912 KiB) | 11.4 (11972608 bytes) |
+| amd64 | 32 | 35.6 (36424 KiB) | 12.7 (13283328 bytes) |
+| amd64 | 128 | 39.9 (40876 KiB) | 18.4 (19304448 bytes) |
+| arm64 | 0 | 28.8 (29460 KiB) | 6.1 (6348800 bytes) |
+| arm64 | 1 | 28.8 (29520 KiB) | 6.1 (6348800 bytes) |
+| arm64 | 32 | 30.2 (30928 KiB) | 7.8 (8183808 bytes) |
+| arm64 | 128 | 34.5 (35324 KiB) | 13.5 (14200832 bytes) |
 
 The sampler starts **after installation**; these are **not isolated startup RSS peaks**. `xray_startup_usec=0` in these logs is a systemd state-transition timestamp delta, not zero startup time or listener-readiness time. The later systemd `MemoryPeak` is a lifetime cgroup peak, not an isolated startup measurement. RSS and cgroup accounting differ: shared/file-backed pages can make cgroup usage smaller than RSS; do not add the two metrics. The target and load driver stay **outside the Xray cgroup**. Both jobs recorded zero service restarts and zero cgroup OOM events during this measurement.
 

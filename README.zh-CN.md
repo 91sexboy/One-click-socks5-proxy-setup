@@ -141,18 +141,18 @@ S5_SERVER_IPV4=203.0.113.10 sh socks5.sh show
 
 历史证据：Xray `v26.3.27`、Ubuntu 24.04、内核 `6.17.0-1022-azure`，使用[提交 `9271644`](https://github.com/91sexboy/One-click-socks5-proxy-setup/commit/9271644340d2332725d0c83e818711481486668f)中的安装器默认配置：需要认证、仅 TCP 的 `mixed` 代理。[CI run `34800667931`](https://github.com/91sexboy/One-click-socks5-proxy-setup/actions/runs/34800667931)提供了 [amd64 测量](https://github.com/91sexboy/One-click-socks5-proxy-setup/actions/runs/34800667931/job/103842545297)和 [arm64 测量](https://github.com/91sexboy/One-click-socks5-proxy-setup/actions/runs/34800667931/job/103842545245)。
 
-以下是向本地测试目标建立已认证隧道后的**瞬时 RSS 快照**，0 表示空闲。阶段 cgroup 峰值覆盖从重置到采样的区间，包含连接建立过程。这**不是持续 60 秒的负载测试**：60 秒只是保持连接程序的超时上限，不是测量窗口。
+以下是向本地测试目标建立已认证隧道后的**瞬时 RSS 快照**，0 表示空闲。阶段 cgroup 峰值覆盖从重置到采样的区间，包含连接建立过程。这**不是持续 60 秒的负载测试**：60 秒只是保持连接程序的超时上限，不是测量窗口。每个单元格先给出 MiB 数值，括号内保留 CI 记录的精确原值。
 
-| 架构 | 保持连接数 | RSS (KiB) | 阶段 cgroup 峰值 (bytes) |
+| 架构 | 保持连接数 | RSS (MiB) | 阶段 cgroup 峰值 (MiB) |
 | --- | ---: | ---: | ---: |
-| amd64 | 0 | 35896 | 11710464 |
-| amd64 | 1 | 35912 | 11972608 |
-| amd64 | 32 | 36424 | 13283328 |
-| amd64 | 128 | 40876 | 19304448 |
-| arm64 | 0 | 29460 | 6348800 |
-| arm64 | 1 | 29520 | 6348800 |
-| arm64 | 32 | 30928 | 8183808 |
-| arm64 | 128 | 35324 | 14200832 |
+| amd64 | 0 | 35.1 (35896 KiB) | 11.2 (11710464 bytes) |
+| amd64 | 1 | 35.1 (35912 KiB) | 11.4 (11972608 bytes) |
+| amd64 | 32 | 35.6 (36424 KiB) | 12.7 (13283328 bytes) |
+| amd64 | 128 | 39.9 (40876 KiB) | 18.4 (19304448 bytes) |
+| arm64 | 0 | 28.8 (29460 KiB) | 6.1 (6348800 bytes) |
+| arm64 | 1 | 28.8 (29520 KiB) | 6.1 (6348800 bytes) |
+| arm64 | 32 | 30.2 (30928 KiB) | 7.8 (8183808 bytes) |
+| arm64 | 128 | 34.5 (35324 KiB) | 13.5 (14200832 bytes) |
 
 采样器在**安装完成后**启动，因此这些值**不是独立启动 RSS 峰值**。日志中的 `xray_startup_usec=0` 是 systemd 状态转换时间戳之差，不代表零启动耗时或监听就绪耗时。随后记录的 systemd `MemoryPeak` 是生命周期 cgroup 峰值，不是独立启动测量。RSS 与 cgroup 的计费口径不同，共享页／文件映射页可能使 cgroup 用量小于 RSS；不能将两者相加。目标程序和负载驱动**位于 Xray cgroup 之外**。两种架构在这段测量中的服务重启次数和 cgroup OOM 事件均为零。
 
