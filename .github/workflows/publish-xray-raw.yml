@@ -85,7 +85,7 @@ jobs:
           set -eu
           test "$GITHUB_REF" = refs/heads/xray-only
           actual=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$DISTRIBUTION_TAG" 2>/dev/null | \
-            jq -r .object.sha || true)
+            jq -r '.object.sha // empty' || true)
           if [ -n "$actual" ]; then
             test "$actual" = "$GITHUB_SHA" || {
               echo "refusing tag owned by another commit: $actual" >&2; exit 1;
