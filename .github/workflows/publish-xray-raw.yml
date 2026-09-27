@@ -1,0 +1,168 @@
+name: publish-xray-raw
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-xray-v26.3.27-r1
+  cancel-in-progress: false
+
+env:
+  DISTRIBUTION_TAG: xray-v26.3.27-r1
+
+jobs:
+  prepare:
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - name: Refuse non-primary dispatches
+        run: |
+          set -eu
+          test "$GITHUB_REF" = refs/heads/xray-only
+      - name: Prepare verified raw Xray member
+        env:
+          XRAY_ARCH: ${{ matrix.arch }}
+        run: |
+          set -eu
+          python3 .github/scripts/prepare-xray-raw.py prepare \
+            --arch "$XRAY_ARCH" --output "dist-$XRAY_ARCH"
+      - name: Upload prepared architecture
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: xray-raw-${{ matrix.arch }}
+          path: dist-${{ matrix.arch }}/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  publish:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: xray-raw-*
+          path: prepared
+          merge-multiple: true
+      - name: Assemble release payload
+        run: |
+          set -eu
+          python3 .github/scripts/prepare-xray-raw.py assemble \
+            --input prepared --output dist \
+            --repository-commit "$GITHUB_SHA" \
+            --workflow-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          test "$(find dist -maxdepth 1 -type f | wc -l)" -eq 5
+          cd dist
+          sha256sum -c xray-v26.3.27-SHA256SUMS
+      - name: Attest raw executables
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
+        with:
+          subject-path: |
+            dist/xray-v26.3.27-linux-amd64
+            dist/xray-v26.3.27-linux-arm64
+      - name: Claim tag and prepare exact draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          test "$GITHUB_REF" = refs/heads/xray-only
+          actual=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$DISTRIBUTION_TAG" \
+            --jq .object.sha 2>/dev/null || true)
+          if [ -n "$actual" ]; then
+            test "$actual" = "$GITHUB_SHA" || {
+              echo "refusing tag owned by another commit: $actual" >&2; exit 1;
+            }
+            release=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$DISTRIBUTION_TAG" 2>/dev/null || true)
+            if [ -n "$release" ]; then
+              test "$(printf '%s' "$release" | jq -r .draft)" = true || {
+                echo "refusing to alter a published release" >&2; exit 1;
+              }
+              test "$(printf '%s' "$release" | jq -r .target_commitish)" = "$GITHUB_SHA" || {
+                echo "draft target differs" >&2; exit 1;
+              }
+            else
+              gh release create "$DISTRIBUTION_TAG" --repo "$GITHUB_REPOSITORY" --draft \
+                --target "$GITHUB_SHA" --title "Xray v26.3.27 raw executables r1" \
+                --notes-file .github/releases/xray-v26.3.27-r1.md
+            fi
+          else
+            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+              -f ref="refs/tags/$DISTRIBUTION_TAG" -f sha="$GITHUB_SHA" >/dev/null
+            gh release create "$DISTRIBUTION_TAG" --repo "$GITHUB_REPOSITORY" --draft \
+              --target "$GITHUB_SHA" --title "Xray v26.3.27 raw executables r1" \
+              --notes-file .github/releases/xray-v26.3.27-r1.md
+          fi
+      - name: Upload only absent exact assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          release=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$DISTRIBUTION_TAG")
+          expected_file=$(mktemp)
+          present_file=$(mktemp)
+          cat >"$expected_file" <<'EXPECTED'
+          xray-v26.3.27-LICENSE.txt
+          xray-v26.3.27-PROVENANCE.json
+          xray-v26.3.27-SHA256SUMS
+          xray-v26.3.27-linux-amd64
+          xray-v26.3.27-linux-arm64
+          EXPECTED
+          LC_ALL=C sort -o "$expected_file" "$expected_file"
+          printf '%s' "$release" | jq -r '.assets[].name' | LC_ALL=C sort >"$present_file"
+          unknown=$(comm -23 "$present_file" "$expected_file")
+          rm -f "$expected_file" "$present_file"
+          test -z "$unknown" || { echo "unexpected release assets: $unknown" >&2; exit 1; }
+          for path in dist/*; do
+            name=${path##*/}
+            asset=$(printf '%s' "$release" | jq -c --arg name "$name" '.assets[] | select(.name==$name)')
+            if [ -n "$asset" ]; then
+              id=$(printf '%s' "$asset" | jq -r .id)
+              tmp=$(mktemp)
+              gh api -H 'Accept: application/octet-stream' \
+                "repos/$GITHUB_REPOSITORY/releases/assets/$id" >"$tmp"
+              cmp -s "$path" "$tmp" || { echo "refusing mismatched existing asset: $name" >&2; exit 1; }
+              rm -f "$tmp"
+            else
+              gh release upload "$DISTRIBUTION_TAG" --repo "$GITHUB_REPOSITORY" "$path"
+            fi
+          done
+      - name: Verify and publish exact release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          actual=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$DISTRIBUTION_TAG" --jq .object.sha)
+          test "$actual" = "$GITHUB_SHA"
+          release=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$DISTRIBUTION_TAG")
+          test "$(printf '%s' "$release" | jq '.assets | length')" -eq 5
+          for path in dist/*; do
+            name=${path##*/}
+            id=$(printf '%s' "$release" | jq -r --arg name "$name" '.assets[] | select(.name==$name) | .id')
+            test -n "$id"
+            tmp=$(mktemp)
+            gh api -H 'Accept: application/octet-stream' \
+              "repos/$GITHUB_REPOSITORY/releases/assets/$id" >"$tmp"
+            cmp -s "$path" "$tmp"
+            rm -f "$tmp"
+          done
+          id=$(printf '%s' "$release" | jq -r .id)
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$id" \
+            -F draft=false -F prerelease=false >/dev/null

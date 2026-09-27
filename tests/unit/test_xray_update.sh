@@ -1222,4 +1222,48 @@ for scenario do
         t_bad "unknown update scenario: $scenario"
     fi
 done
+
+# A configuration-only update must retain the acquisition provenance loaded from
+# state. It may refresh service/config/account fields, but identical executable
+# bytes do not turn a historical ZIP download into a raw Release download.
+test_schema1_provenance_preserved() {
+    t_xray_fixture 23999
+    t_xray_install
+    _spp_before_asset=$(t_state_get asset)
+    _spp_before_size=$(t_state_get archive_size)
+    _spp_before_sha=$(t_state_get archive_sha256)
+    _spp_downloaded=0
+    s5_download_engine() { _spp_downloaded=1; return 1; }
+    s5_prompt_port() { S5_PORT=24001; return 0; }
+    s5_install_update
+    assert_eq "schema-1 config-only update completes" 0 "$?"
+    assert_eq "schema-1 config-only update downloads no binary" 0 "$_spp_downloaded"
+    assert_eq "schema-1 provenance remains schema 1" 1 "$(t_state_get schema)"
+    assert_eq "schema-1 ZIP asset name is preserved" "$_spp_before_asset" "$(t_state_get asset)"
+    assert_eq "schema-1 ZIP size is preserved" "$_spp_before_size" "$(t_state_get archive_size)"
+    assert_eq "schema-1 ZIP digest is preserved" "$_spp_before_sha" "$(t_state_get archive_sha256)"
+    assert_eq "schema-1 update records its new config" 24001 "$(t_state_get port)"
+}
+
+test_legacy_normalizes_without_relabelling() {
+    t_xray_fixture 23999
+    t_xray_install
+    awk -F '\t' '$1 != "schema" && $1 != "family"' "$S5_STATE" >"$S5_STATE.next"
+    mv "$S5_STATE.next" "$S5_STATE"
+    chmod 0600 "$S5_STATE"
+    _lnr_asset=$(t_state_get asset)
+    _lnr_size=$(t_state_get archive_size)
+    _lnr_sha=$(t_state_get archive_sha256)
+    s5_prompt_port() { S5_PORT=24002; return 0; }
+    s5_install_update
+    assert_eq "legacy config-only update completes" 0 "$?"
+    assert_eq "legacy state normalizes to schema 1" 1 "$(t_state_get schema)"
+    assert_eq "legacy ZIP asset name is preserved" "$_lnr_asset" "$(t_state_get asset)"
+    assert_eq "legacy ZIP size is preserved" "$_lnr_size" "$(t_state_get archive_size)"
+    assert_eq "legacy ZIP digest is preserved" "$_lnr_sha" "$(t_state_get archive_sha256)"
+}
+
+test_schema1_provenance_preserved
+test_legacy_normalizes_without_relabelling
+
 t_summary
