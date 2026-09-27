@@ -234,6 +234,10 @@ def check_raw_publisher(root):
             'jq -r .object.sha || true' not in workflow and
             '--jq .object.sha 2>/dev/null || true' not in workflow,
             'raw publisher: missing-tag lookup must not capture the gh error body')
+    require('releases/tags/$DISTRIBUTION_TAG' not in workflow and
+            workflow.count('releases?per_page=100') == 3 and
+            workflow.count('select(.tag_name==$tag)') == 3,
+            'raw publisher: draft releases must be found through the release listing')
     require(workflow.count('test "$GITHUB_REF" = refs/heads/xray-only') == 2 and
             workflow.count('DISTRIBUTION_TAG: ' + RAW_DISTRIBUTION_TAG) == 1,
             'raw publisher: branch or tag pin differs')
