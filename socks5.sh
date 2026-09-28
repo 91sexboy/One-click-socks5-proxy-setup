@@ -139,6 +139,7 @@ S5_LOCKDIR=$S5_ROOTDIR/run/$S5_PROJECT.lock
 S5_LOCK_OWNER=$S5_LOCKDIR/owner
 S5_TXNDIR=$S5_STATEDIR/transaction
 S5_TXN_COMMITTED=$S5_TXNDIR/committed
+S5_TXN_ROLLED_BACK=$S5_TXNDIR/rolled-back
 S5_TXN_STOPPING=$S5_TXNDIR/stopping
 S5_TXN_UNIT_REPLACING=$S5_TXNDIR/unit-replacing
 S5_UNINSTALL_STATE=$S5_STATEDIR/uninstall
@@ -2208,14 +2209,17 @@ s5_transaction_contract() {
     s5_path_contract "$S5_TXNDIR" dir root:root 700 || return 1
     for _stc_path in "$S5_TXNDIR/old.config.json" "$S5_TXNDIR/old.state" \
         "$S5_TXNDIR/old.xray" "$S5_TXNDIR/old.unit" \
-        "$S5_TXN_COMMITTED" "$S5_TXN_STOPPING" "$S5_TXN_UNIT_REPLACING"; do
+        "$S5_TXN_COMMITTED" "$S5_TXN_ROLLED_BACK" "$S5_TXN_STOPPING" \
+        "$S5_TXN_UNIT_REPLACING"; do
         s5_transaction_file_contract "$_stc_path" || return 1
     done
     if { [ -e "$S5_TXNDIR/old.unit" ] || [ -L "$S5_TXNDIR/old.unit" ]; } &&
         [ "$S5_INIT" != openrc ]; then return 1; fi
     if [ -f "$S5_TXN_UNIT_REPLACING" ] && [ ! -L "$S5_TXN_UNIT_REPLACING" ] &&
-        { [ ! -f "$S5_TXN_COMMITTED" ] || [ -L "$S5_TXN_COMMITTED" ]; }; then
-        [ "$S5_INIT" = openrc ] && [ -f "$S5_TXNDIR/old.unit" ] &&
+        { { [ ! -f "$S5_TXN_COMMITTED" ] || [ -L "$S5_TXN_COMMITTED" ]; } &&
+          { [ ! -f "$S5_TXN_ROLLED_BACK" ] || [ -L "$S5_TXN_ROLLED_BACK" ]; }; }; then
+        [ "$S5_INIT" = openrc ] && [ -f "$S5_TXN_STOPPING" ] &&
+            [ ! -L "$S5_TXN_STOPPING" ] && [ -f "$S5_TXNDIR/old.unit" ] &&
             [ ! -L "$S5_TXNDIR/old.unit" ] || return 1
     fi
     for _stc_path in "$S5_TXNDIR"/.s5new.* "$S5_TXNDIR"/.s5tmp.*; do
@@ -2226,8 +2230,8 @@ s5_transaction_contract() {
         [ -e "$_stc_path" ] || [ -L "$_stc_path" ] || continue
         case "$_stc_path" in
         "$S5_TXNDIR/old.config.json"|"$S5_TXNDIR/old.state"|"$S5_TXNDIR/old.xray"| \
-        "$S5_TXNDIR/old.unit"|"$S5_TXN_COMMITTED"|"$S5_TXN_STOPPING"| \
-        "$S5_TXN_UNIT_REPLACING"|"$S5_TXNDIR"/.s5new.*|"$S5_TXNDIR"/.s5tmp.*) ;;
+        "$S5_TXNDIR/old.unit"|"$S5_TXN_COMMITTED"|"$S5_TXN_ROLLED_BACK"| \
+        "$S5_TXN_STOPPING"|"$S5_TXN_UNIT_REPLACING"|"$S5_TXNDIR"/.s5new.*|"$S5_TXNDIR"/.s5tmp.*) ;;
         *) return 1 ;;
         esac
     done
@@ -2237,6 +2241,9 @@ s5_transaction_contract() {
 s5_cleanup_transaction() {
     [ -e "$S5_TXNDIR" ] || [ -L "$S5_TXNDIR" ] || return 0
     s5_transaction_contract || return 1
+    _sct_authority=''
+    [ ! -f "$S5_TXN_COMMITTED" ] || _sct_authority=committed
+    [ ! -f "$S5_TXN_ROLLED_BACK" ] || _sct_authority=rolled-back
     # Remove the intent marker before old.unit. A hard kill between those two
     # deletions then leaves a replayable extra backup, never a marker whose
     # required rollback copy has already disappeared.
@@ -2249,11 +2256,20 @@ s5_cleanup_transaction() {
     done
     # Keep the commit marker through a failed rmdir so the next process cannot
     # mistake a partial delete-only cleanup for a rollback pair.
-    rm -f "$S5_TXN_COMMITTED" || return 1
+    rm -f "$S5_TXN_COMMITTED" "$S5_TXN_ROLLED_BACK" || return 1
     rmdir "$S5_TXNDIR" || {
-        s5_atomic_write "$S5_TXN_COMMITTED" root:root 0600 <<COMMITTED || return 1
+        case "$_sct_authority" in
+        rolled-back)
+            s5_atomic_write "$S5_TXN_ROLLED_BACK" root:root 0600 <<ROLLED_BACK || return 1
+rolled-back
+ROLLED_BACK
+            ;;
+        *)
+            s5_atomic_write "$S5_TXN_COMMITTED" root:root 0600 <<COMMITTED || return 1
 committed
 COMMITTED
+            ;;
+        esac
         return 1
     }
     S5_CREATED_TRANSACTION=0
@@ -2263,10 +2279,11 @@ COMMITTED
 s5_transaction_recover() {
     [ -e "$S5_TXNDIR" ] || [ -L "$S5_TXNDIR" ] || return 0
     s5_transaction_contract || return 1
-    if [ -f "$S5_TXN_COMMITTED" ] && [ ! -L "$S5_TXN_COMMITTED" ]; then
-        # Delete-only cleanup is allowed only while the newly authoritative state
-        # still validates. Drift preserves the old backups for diagnosis; they
-        # are never restored after the commit marker exists.
+    if { [ -f "$S5_TXN_COMMITTED" ] && [ ! -L "$S5_TXN_COMMITTED" ]; } ||
+        { [ -f "$S5_TXN_ROLLED_BACK" ] && [ ! -L "$S5_TXN_ROLLED_BACK" ]; }; then
+        # Delete-only cleanup is allowed only while the authoritative state still
+        # validates. Drift preserves remaining backups for diagnosis; a committed
+        # update and a completed rollback are never reversed during cleanup.
         s5_state_load || return 1
         s5_cleanup_transaction
         return $?
@@ -2670,6 +2687,12 @@ s5_update_rollback() {
     if [ "$S5_SERVICE_TOUCHED" = 1 ]; then
         s5_svc restart || { s5_msg_err service.start; return 1; }
     fi
+    s5_atomic_write "$S5_TXN_ROLLED_BACK" root:root 0600 <<ROLLED_BACK || {
+rolled-back
+ROLLED_BACK
+        s5_msg_err transaction.restore "$S5_TXNDIR"
+        return 1
+    }
     S5_CONFIG_REPLACED=0
     S5_BINARY_REPLACED=0
     S5_SERVICE_TOUCHED=0

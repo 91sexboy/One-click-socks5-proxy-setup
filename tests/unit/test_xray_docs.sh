@@ -183,12 +183,12 @@ assert_contains "the lifecycle job kills the service to prove recovery" \
 assert_contains "the lifecycle job proves the exit-23 restart guard" 'ExecMainStatus' "$systemd_text"
 assert_contains "the Alpine gate requires the configuration error to exit 23" \
     'if test "$broken_status" != 23' "$alpine_text"
-assert_contains "the Alpine gate requires no respawn after a configuration error" \
-    'if test "$respawn_after" != "$respawn_before"' "$alpine_text"
-assert_contains "the Alpine gate requires the service to stay down" \
-    'a broken config brought the service back up' "$alpine_text"
-assert_contains "the Alpine gate records the observed child_pid values" \
-    'openrc: child_pid %s then %s' "$alpine_text"
+assert_contains "the Alpine gate requires exactly three bounded bad-config attempts" \
+    'three_attempts_and_stopped' "$alpine_text"
+assert_contains "the Alpine gate proves the attempt count stays stable" \
+    'bad-config attempts=%s and stable' "$alpine_text"
+assert_contains "the Alpine gate counts the real supervised exit-23 process" \
+    '.xray-exit23-real' "$alpine_text"
 assert_contains "OpenRC adds target addresses inside its native container" \
     'sh .github/scripts/add-test-target-addresses.sh' "$alpine_text"
 assert_eq "both native gates run the mixed gate" 2 \

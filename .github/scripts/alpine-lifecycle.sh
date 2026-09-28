@@ -142,7 +142,6 @@ ss -H -ltnp | grep -q "pid=$new_pid,"
 # The second death is deliberately inside the same retry period. With the old
 # historical respawn_max=1 policy no second replacement child appeared. The
 # migrated policy grants exactly this second recoverable respawn.
-test "$(( $(date +%s) - crash_window_started ))" -lt 60
 crash_pid=$new_pid
 new_pid=0
 kill -9 "$crash_pid"
@@ -151,22 +150,13 @@ test "$new_pid" != "$crash_pid"
 test "$new_pid" -gt 0
 lifecycle_wait_until 45 1 listener_recovered || true
 ss -H -ltnp | grep -q "pid=$new_pid,"
+test "$(( $(date +%s) - crash_window_started ))" -lt 60
 cp /etc/xray-socks5/config.json "$work/good.json"
 printf "{broken\n" >/etc/xray-socks5/config.json
-rc-service xray-socks5 restart || true
-service_stopped() {
-  if rc-service xray-socks5 status >/dev/null 2>&1; then return 1; fi
-}
-lifecycle_wait_until 30 1 service_stopped || true
-if rc-service xray-socks5 status >/dev/null 2>&1; then
-  printf "a broken config left the service running\n" >&2
-  exit 1
-fi
-# SPEC 8: a configuration error exits 23. OpenRC bounds respawns by
-# count rather than by exit status, so the status has to come from the
-# supervised binary, and the respawn guard is proven by child_pid
-# holding still across the settle window below.
-respawn_before=$(cat /run/openrc/options/xray-socks5/child_pid 2>/dev/null || printf none)
+# First prove the real pinned Xray classifies this exact configuration as exit
+# 23. The supervisor is count-bounded rather than exit-code-aware, so a temporary
+# transparent counter wrapper then execs the real binary and records every native
+# supervise-daemon attempt.
 broken_status=0
 /usr/local/libexec/xray-socks5/xray run -c /etc/xray-socks5/config.json \
   >"$work/broken.log" 2>&1 || broken_status=$?
@@ -175,29 +165,46 @@ if test "$broken_status" != 23; then
   cat "$work/broken.log" >&2
   exit 1
 fi
-for n in $(seq 1 12); do
+rc-service xray-socks5 stop
+mv /usr/local/libexec/xray-socks5/xray \
+  /usr/local/libexec/xray-socks5/.xray-exit23-real
+attempts=/run/xray-socks5-exit23-attempts
+: >"$attempts"
+chown xray-socks5:xray-socks5 "$attempts"
+chmod 0600 "$attempts"
+cat >/usr/local/libexec/xray-socks5/xray <<'EXIT23_WRAPPER'
+#!/bin/sh
+attempts=/run/xray-socks5-exit23-attempts
+count=$(cat "$attempts" 2>/dev/null || printf 0)
+printf '%s\n' "$((count + 1))" >"$attempts"
+exec /usr/local/libexec/xray-socks5/.xray-exit23-real "$@"
+EXIT23_WRAPPER
+chmod 0755 /usr/local/libexec/xray-socks5/xray
+rc-service xray-socks5 start || true
+
+three_attempts_and_stopped() {
+  test "$(cat "$attempts" 2>/dev/null || printf 0)" = 3 &&
+    ! rc-service xray-socks5 status >/dev/null 2>&1
+}
+lifecycle_wait_until 20 1 three_attempts_and_stopped || true
+if ! three_attempts_and_stopped; then
+  printf "bad-config attempts=%s; expected exactly 3 and stopped\n" \
+    "$(cat "$attempts" 2>/dev/null || printf 0)" >&2
+  exit 1
+fi
+for n in $(seq 1 5); do
   if ss -H -ltn 2>/dev/null | grep -q ":23456 "; then
     printf "a broken config produced a listener\n" >&2
     exit 1
   fi
+  test "$(cat "$attempts")" = 3
   sleep 1
 done
-respawn_after=$(cat /run/openrc/options/xray-socks5/child_pid 2>/dev/null || printf none)
-printf "openrc: child_pid %s then %s\n" "$respawn_before" "$respawn_after"
-if test "$respawn_after" != "$respawn_before"; then
-  printf "a broken config respawned: child_pid %s then %s\n" \
-    "$respawn_before" "$respawn_after" >&2
-  exit 1
-fi
-# A stopped supervise-daemon removes its options directory, so the
-# comparison above is between two absent values and cannot fail on its
-# own. This is the independent half: a respawn that is still alive puts
-# the service back up, and one that came and went inside the window is
-# caught by the listener loop above.
-if rc-service xray-socks5 status >/dev/null 2>&1; then
-  printf "a broken config brought the service back up\n" >&2
-  exit 1
-fi
+printf 'openrc: bad-config attempts=%s and stable\n' "$(cat "$attempts")"
+rm -f /usr/local/libexec/xray-socks5/xray
+mv /usr/local/libexec/xray-socks5/.xray-exit23-real \
+  /usr/local/libexec/xray-socks5/xray
+rm -f "$attempts"
 # Redirection truncates in place, so the config keeps the owner and
 # mode the installer gave it. BusyBox cp replaces the destination and
 # would hand it the private attributes of the backup copy.

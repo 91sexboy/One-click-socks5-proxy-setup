@@ -873,7 +873,7 @@ test_older_release_download_failure() {
 }
 
 test_transaction_contract_drift() {
-    for _tcd_path in old.config.json old.state old.xray old.unit committed stopping unit-replacing; do
+    for _tcd_path in old.config.json old.state old.xray old.unit committed rolled-back stopping unit-replacing; do
         t_xray_fixture 23999
         t_xray_install
         mkdir -m 0700 "$S5_TXNDIR"
@@ -883,6 +883,7 @@ test_transaction_contract_drift() {
         old.xray) cp "$S5_BIN" "$S5_TXNDIR/old.xray" ;;
         old.unit) cp "$S5_SERVICE_ARTIFACT" "$S5_TXNDIR/old.unit" ;;
         committed) printf 'committed\n' >"$S5_TXN_COMMITTED" ;;
+        rolled-back) printf 'rolled-back\n' >"$S5_TXN_ROLLED_BACK" ;;
         stopping) printf 'stopping\n' >"$S5_TXN_STOPPING" ;;
         unit-replacing) printf 'unit-replacing\n' >"$S5_TXN_UNIT_REPLACING" ;;
         esac
@@ -900,6 +901,29 @@ test_transaction_contract_drift() {
     assert_mode "binary recovery backup is data-only" 600 "$S5_TXNDIR/old.xray"
     s5_cleanup_transaction
     assert_eq "valid binary backup cleanup succeeds" 0 "$?"
+}
+
+test_unit_replacing_requires_stopping_marker() {
+    t_xray_fixture 23456
+    S5_INIT=openrc
+    S5_OS_FAMILY=alpine
+    s5_select_service_artifact
+    mkdir -p "$S5_STATEDIR"
+    chmod 0700 "$S5_STATEDIR"
+    mkdir -m 0700 "$S5_TXNDIR"
+    printf 'verified old unit\n' >"$S5_TXNDIR/old.unit"
+    chmod 0600 "$S5_TXNDIR/old.unit"
+    printf 'unit-replacing\n' >"$S5_TXN_UNIT_REPLACING"
+    chmod 0600 "$S5_TXN_UNIT_REPLACING"
+    _urws_backup=$(t_sha256 "$S5_TXNDIR/old.unit")
+
+    t_run s5_transaction_recover
+    assert_ne "unit replacement without a stopping checkpoint fails closed" \
+        0 "$T_STATUS"
+    assert_eq "malformed unit transaction preserves its only rollback copy" \
+        "$_urws_backup" "$(t_sha256 "$S5_TXNDIR/old.unit")"
+    assert_file_exists "malformed unit transaction preserves its phase marker" \
+        "$S5_TXN_UNIT_REPLACING"
 }
 
 test_rollback_backup_drift() {
@@ -1209,6 +1233,65 @@ test_update_commit_cleanup_failure() {
     done
 }
 
+test_rollback_cleanup_interruption_recovery() {
+    t_xray_fixture 23456
+    S5_INIT=openrc
+    S5_OS_FAMILY=alpine
+    s5_select_service_artifact
+    t_stub rc-service <<'RCSERVICE'
+#!/bin/sh
+case "$2" in
+start|restart)
+    port=$(sed -n 's/^[[:space:]]*"port":[[:space:]]*\([0-9][0-9]*\),*/\1/p' \
+        "$S5_STUB_CFG" | head -n 1)
+    printf '%s\n' "$port" >"$S5_TEST_ROOT/svc_active"
+    ;;
+stop) rm -f "$S5_TEST_ROOT/svc_active" ;;
+status) [ -f "$S5_TEST_ROOT/svc_active" ] && exit 0 || exit 3 ;;
+esac
+exit 0
+RCSERVICE
+    t_stub rc-update <<'RCUPDATE'
+#!/bin/sh
+exit 0
+RCUPDATE
+    t_xray_install
+    mkdir -m 0700 "$S5_TXNDIR"
+    cp "$S5_CFG" "$S5_TXNDIR/old.config.json"
+    cp "$S5_STATE" "$S5_TXNDIR/old.state"
+    cp "$S5_SERVICE_ARTIFACT" "$S5_TXNDIR/old.unit"
+    chmod 0600 "$S5_TXNDIR/old.config.json" "$S5_TXNDIR/old.state" \
+        "$S5_TXNDIR/old.unit"
+    printf 'stopping\n' >"$S5_TXN_STOPPING"
+    printf 'unit-replacing\n' >"$S5_TXN_UNIT_REPLACING"
+    chmod 0600 "$S5_TXN_STOPPING" "$S5_TXN_UNIT_REPLACING"
+    S5_SERVICE_TOUCHED=1
+
+    _rci_real_rm=/usr/bin/rm
+    [ -x "$_rci_real_rm" ] || _rci_real_rm=/bin/rm
+    _rci_fired=0
+    rm() {
+        if [ "${2:-}" = "$S5_TXNDIR/old.state" ] && [ "$_rci_fired" = 0 ]; then
+            _rci_fired=1
+            return 79
+        fi
+        "$_rci_real_rm" "$@"
+    }
+    t_run s5_update_rollback "$S5_TXNDIR/old.config.json" "$S5_TXNDIR/old.state"
+    assert_ne "interrupted rollback cleanup reports incomplete cleanup" 0 "$T_STATUS"
+    assert_file_absent "interrupted cleanup already removed old.config" \
+        "$S5_TXNDIR/old.config.json"
+    assert_file_exists "interrupted cleanup still has old.state" \
+        "$S5_TXNDIR/old.state"
+    unset -f rm
+
+    t_run s5_transaction_recover
+    assert_eq "the next command finishes cleanup after a successful rollback" \
+        0 "$T_STATUS"
+    assert_file_absent "resumed rollback cleanup removes the transaction" "$S5_TXNDIR"
+    t_xray_assert_healthy
+}
+
 test_openrc_committed_unit_cleanup_recovery() {
     t_xray_fixture 23456
     S5_INIT=openrc
@@ -1459,7 +1542,7 @@ RCUPDATE
     t_xray_assert_healthy
 }
 
-SCENARIOS='openrc_committed_unit_cleanup_recovery openrc_unit_migration openrc_unit_migration_rollback openrc_unit_transaction_recovery openrc_logging_warning uninstall_confirmation uninstall_messages family update owned_port rejected_candidate listener_failure rejected_command publish_signal config_symlink uninstall_leftovers uninstall_residue verifier_cleanup txn_mkdir_failure txn_copy_failure txn_chmod_failure stop_failure wait_stopped_failure publication_failure new_start_failure dataplane_failure state_write_failure rollback_restart_failure restore_failure uninstall_unknown rollback_exit uninstall_group_residue uninstall_resume uninstall_signal_resume uninstall_resume_drift uninstall_phase_gap_resume uninstall_final_window older_release_operations older_release_update binary_ready_gate older_release_download_failure transaction_contract_drift rollback_backup_drift uninstall_directory_drift transaction_all_commands transaction_unknown_residue sha256_binary_update_failure sha256_config_update_failure update_commit_cleanup_failure existing_stage_failure existing_stage_cleanup_failure existing_stage_cleanup_restore_failure'
+SCENARIOS='rollback_cleanup_interruption_recovery openrc_committed_unit_cleanup_recovery openrc_unit_migration openrc_unit_migration_rollback openrc_unit_transaction_recovery openrc_logging_warning uninstall_confirmation uninstall_messages family update owned_port rejected_candidate listener_failure rejected_command publish_signal config_symlink uninstall_leftovers uninstall_residue verifier_cleanup txn_mkdir_failure txn_copy_failure txn_chmod_failure stop_failure wait_stopped_failure publication_failure new_start_failure dataplane_failure state_write_failure rollback_restart_failure restore_failure uninstall_unknown rollback_exit uninstall_group_residue uninstall_resume uninstall_signal_resume uninstall_resume_drift uninstall_phase_gap_resume uninstall_final_window older_release_operations older_release_update binary_ready_gate older_release_download_failure transaction_contract_drift unit_replacing_requires_stopping_marker rollback_backup_drift uninstall_directory_drift transaction_all_commands transaction_unknown_residue sha256_binary_update_failure sha256_config_update_failure update_commit_cleanup_failure existing_stage_failure existing_stage_cleanup_failure existing_stage_cleanup_restore_failure'
 if [ "$#" -eq 0 ]; then
     # Expand the fixed scenario words into the default argument list.
     # shellcheck disable=SC2086
