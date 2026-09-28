@@ -95,11 +95,11 @@ Run these from the directory containing the downloaded script. Installation and 
 
 An installation made by an older supported script release remains available to `status`, `show`, `restart`, update, and uninstall after this script's release pins change. `status` reports the installed release, not the current download candidate. Recorded metadata verifies the installed binary; an update independently verifies the current pinned download.
 
-Re-running `install` updates the managed configuration and, when the installed artifact is older, replaces it with this script's independently verified pinned Xray release. It never follows an unpinned “latest” channel. On update, pressing Enter for the port keeps the verified currently owned port; pressing Enter for the username or password generates a new value. New-install confirmation defaults to yes; update and uninstall default to no.
+Re-running `install` updates the managed configuration and, when the installed artifact is older, replaces it with this script's independently verified pinned Xray release. It never follows an unpinned “latest” channel. On Alpine, update also migrates the managed OpenRC service policy: two rapid ordinary crashes may be restarted inside the 60-second budget, while repeated failures remain bounded and a bad configuration must settle stopped rather than loop. On update, pressing Enter for the port keeps the verified currently owned port; pressing Enter for the username or password generates a new value. New-install confirmation defaults to yes; update and uninstall default to no.
 
 The language preference is saved in `/etc/xray-socks5.lang` and survives uninstall. If it cannot be saved, the script warns that the choice applies only to the current invocation. The `language` command reports failure if saving fails.
 
-`status` can report a stopped or unverified listener without failing as a command. Read its output; a zero exit status alone does not prove proxy availability.
+`status` can report a stopped or unverified listener without failing as a command. If OpenRC explicitly reports a crashed child, `status` names that state and returns nonzero while still printing the independently observed listener state. Read the output; a zero exit status alone does not prove proxy availability.
 
 ## What `mixed` means
 
@@ -198,6 +198,7 @@ Run `sh socks5.sh uninstall` as root and confirm. It removes the managed install
 | `SERVER_IPV4` appears in the card | Use a reachable IPv4 explicitly or replace the placeholder in the client configuration. |
 | `show` refuses to print | Run as root with stdout attached to a real terminal, not a pipe or redirected file. |
 | State/config integrity or pending recovery is reported | Review the reported files and preserve recovery copies; do not delete state or backups merely to bypass validation. |
+| Alpine install/update warns that `/dev/log` is absent | Xray stdout/stderr logging may be unavailable. Start and enable the host's syslog service, then run `sh socks5.sh restart`; the installer does not provision or change system logging. |
 
 For service diagnostics, use `systemctl status xray-socks5.service` on systemd, or `rc-service xray-socks5 status` on OpenRC. Redact sensitive data before sharing diagnostic output.
 

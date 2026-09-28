@@ -74,13 +74,31 @@ if [ "${ALPINE_HOSTILE_CURL:-0}" = 1 ]; then
   export PATH
 fi
 
+# Exercise upgrade, not only fresh generation: make the installed OpenRC
+# artifact and its recorded digest a self-consistent pre-fix installation with
+# one respawn. Updating must transactionally migrate both back to the new policy.
+sed 's/^respawn_max=2$/respawn_max=1/' /etc/init.d/xray-socks5 >"$work/legacy.unit"
+cat "$work/legacy.unit" >/etc/init.d/xray-socks5
+chmod 0755 /etc/init.d/xray-socks5
+legacy_unit_sha=$(sha256sum /etc/init.d/xray-socks5 | awk '{print $1}')
+awk -F '\t' -v h="$legacy_unit_sha" 'BEGIN {OFS="\t"} $1=="unit_sha256" {$2=h} {print}' \
+  /var/lib/xray-socks5/state >"$work/legacy.state"
+cat "$work/legacy.state" >/var/lib/xray-socks5/state
+chmod 0600 /var/lib/xray-socks5/state
+grep -qxF 'respawn_max=1' /etc/init.d/xray-socks5
+grep -qxF "unit_sha256	$legacy_unit_sha" /var/lib/xray-socks5/state
+
 # SPEC 5: re-running install over an existing installation is an
-# in-place update. Rotate the credentials, keep the port, and require
-# the new identity in both the config and the state.
+# in-place update. Rotate the credentials, keep the port, migrate the service
+# policy, and require the new identity/digest in config and state.
 sh .github/scripts/run-socks5.sh install \
   "$work/answers.update" "$work/update.log" "$work/pass.update" "$work/pass"
 test "$(grep -cF '/dev/log' "$work/update.log")" = 1
 test ! -e /dev/log
+grep -qxF 'respawn_max=2' /etc/init.d/xray-socks5
+updated_unit_sha=$(sha256sum /etc/init.d/xray-socks5 | awk '{print $1}')
+test "$updated_unit_sha" != "$legacy_unit_sha"
+grep -qxF "unit_sha256	$updated_unit_sha" /var/lib/xray-socks5/state
 sh .github/scripts/lifecycle-update-assert.sh
 rc-service xray-socks5 status
 pkgs_after_install=$(apk info | sort | sha256sum)
@@ -91,8 +109,8 @@ sh .github/scripts/run-socks5.sh status \
 sh .github/scripts/run-socks5.sh restart \
   "$work/answers.empty" "$work/restart.log" "$work/pass.update" "$work/pass"
 rc-service xray-socks5 status
-# status always exits 0 by design (README.md), so the log content is the only
-# signal. The heading carries "mixed" on its own, which left a listener degraded
+# Healthy/stopped/unverified status is informational; only an explicit OpenRC
+# crash is nonzero. This healthy case still requires output evidence. The heading carries "mixed" on its own, which left a listener degraded
 # to service.listen or service.unverified passing: match the service.ready line
 # for the installed port, and the protocol summary in the status line rather than
 # the word in the heading.
@@ -122,8 +140,8 @@ lifecycle_wait_until 45 1 listener_recovered || true
 ss -H -ltnp | grep -q "pid=$new_pid,"
 
 # The second death is deliberately inside the same retry period. With the old
-# respawn_max=1 policy this is the red regression: no second replacement child
-# appears. The fixed policy grants exactly this second recoverable respawn.
+# historical respawn_max=1 policy no second replacement child appeared. The
+# migrated policy grants exactly this second recoverable respawn.
 test "$(( $(date +%s) - crash_window_started ))" -lt 60
 crash_pid=$new_pid
 new_pid=0

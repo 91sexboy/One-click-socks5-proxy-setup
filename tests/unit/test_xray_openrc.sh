@@ -72,7 +72,9 @@ assert_contains "OpenRC shebang" '#!/sbin/openrc-run' "$_openrc"
 assert_contains "OpenRC runs Xray foreground" 'command_args="run -c' "$_openrc"
 assert_contains "OpenRC drops privileges" 'command_user="xray-socks5:xray-socks5"' "$_openrc"
 assert_contains "OpenRC uses supervisor" 'supervisor="supervise-daemon"' "$_openrc"
-assert_contains "OpenRC limits respawns" 'respawn_max=1' "$_openrc"
+assert_contains "OpenRC permits two rapid crash recoveries" 'respawn_max=2' "$_openrc"
+assert_contains "OpenRC bounds the recovery window" 'respawn_period=60' "$_openrc"
+assert_contains "OpenRC delays each recovery" 'respawn_delay=1' "$_openrc"
 assert_contains "OpenRC owns pidfile" 'pidfile="' "$_openrc"
 
 # Standalone writers must select their own destination, even after a different
@@ -131,7 +133,7 @@ done
 # collapsed into the same diagnosis as an rc-service error. The listener is a
 # separate observation and remains visible even when the manager reports a crash.
 s5t_openrc_crashed_status() (
-    S5_LANG=en
+    S5_LANG=$1
     S5_PORT=23456
     S5_USERNAME=alice
     S5_INSTALLED_RELEASE=v26.3.27
@@ -142,13 +144,26 @@ s5t_openrc_crashed_status() (
     s5_lock_release() { rm -f "$S5_TEST_ROOT/status-lock"; }
     s5_cmd_status
 )
-t_run s5t_openrc_crashed_status
-assert_ne "status fails when OpenRC reports a crash" 0 "$T_STATUS"
-assert_contains "status names the OpenRC crash" 'service: crashed;' "$T_OUT"
-assert_contains "crashed status still reports the listener observation" \
-    'Xray is not listening on port 23456.' "$T_OUT"
-assert_file_absent "crashed status releases the operation lock" \
-    "$S5_TEST_ROOT/status-lock"
+for _sc_lang in en zh; do
+    t_run s5t_openrc_crashed_status "$_sc_lang"
+    assert_ne "status fails when OpenRC reports a crash in $_sc_lang" 0 "$T_STATUS"
+    case "$_sc_lang" in
+    en)
+        assert_contains "English status names the OpenRC crash" \
+            'service: crashed;' "$T_OUT"
+        assert_contains "English crash still reports the listener observation" \
+            'Xray is not listening on port 23456.' "$T_OUT"
+        ;;
+    zh)
+        assert_contains "Chinese status names the OpenRC crash" \
+            '服务：已崩溃；' "$T_OUT"
+        assert_contains "Chinese crash still reports the listener observation" \
+            'Xray 未在端口 23456 上监听。' "$T_OUT"
+        ;;
+    esac
+    assert_file_absent "crashed status releases the operation lock in $_sc_lang" \
+        "$S5_TEST_ROOT/status-lock"
+done
 
 # s5_wait_stopped may only report success on a state that proves the process is
 # gone. sleep is stubbed because the real wait is fifteen one-second polls.

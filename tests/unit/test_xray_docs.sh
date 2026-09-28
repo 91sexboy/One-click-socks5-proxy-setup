@@ -81,9 +81,12 @@ assert_contains "Alpine gate installs only OpenRC up front" \
     'apk add --no-cache openrc >/dev/null' "$alpine_text"
 assert_not_contains "Alpine gate does not pre-install archive tools" \
     'apk add --no-cache openrc python3' "$alpine_text"
-assert_contains "Alpine gate recovers a killed Xray" 'kill -9 "$crash_pid"' "$alpine_text"
-assert_contains "Alpine gate proves the listener returns after a crash" \
+assert_eq "Alpine gate exercises exactly two rapid recoverable deaths" 2 \
+    "$(printf '%s\n' "$alpine_text" | grep -c 'kill -9 "$crash_pid"')"
+assert_contains "Alpine gate proves the listener returns after each crash" \
     'grep -q "pid=$new_pid,"' "$alpine_text"
+assert_contains "Alpine gate keeps both deaths inside the retry period" \
+    'crash_window_started' "$alpine_text"
 assert_contains "Alpine gate rejects a broken configuration" \
     'printf "{broken\n" >/etc/xray-socks5/config.json' "$alpine_text"
 assert_contains "Alpine gate audits the installed namespace" \
