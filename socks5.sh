@@ -35,6 +35,10 @@ S5_VERIFY_TEMP=''
 S5_PUBLIC_IPV4_CANDIDATE=''
 S5_CARD_ADDR=''
 S5_CARD_KIND=''
+S5_CARD_LOCAL=''
+S5_LIVENESS_STATE=''
+S5_LIVENESS_LISTEN=2
+S5_LIVENESS_RC=0
 S5_CONFIG_REPLACED=0
 S5_BINARY_REPLACED=0
 S5_SERVICE_TOUCHED=0
@@ -193,10 +197,17 @@ s5_msg() {
     input.port.invalid) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '端口必须是 1024-65535 的十进制数字。' ;; en) printf 'port must be a decimal number from 1024 to 65535.' ;; esac ;;
     input.port.used) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '端口 %s 已被占用。' "$1" ;; en) printf 'port %s is already in use.' "$1" ;; esac ;;
     input.port.unverified) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法确认端口 %s 属于本安装；请明确输入端口。' "$1" ;; en) printf 'could not verify that port %s belongs to this installation; enter a port explicitly.' "$1" ;; esac ;;
+    input.port.keep) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '端口 [回车 = 保留当前的 %s]：' "$1" ;; en) printf 'Port [Enter = keep current %s]: ' "$1" ;; esac ;;
+    input.port.override) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '端口 [回车 = 使用 S5_LISTEN_PORT]：' ;; en) printf 'Port [Enter = use S5_LISTEN_PORT]: ' ;; esac ;;
+    input.port.explicit) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '端口 [请明确输入]：' ;; en) printf 'Port [enter explicitly]: ' ;; esac ;;
     input.username) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '账户名 [回车 = 随机]：' ;; en) printf 'Username [Enter = random]: ' ;; esac ;;
     input.username.invalid) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '账户名必须是 3-32 个字母或数字。' ;; en) printf 'username must be 3-32 letters or digits.' ;; esac ;;
+    input.username.keep) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '账户名 [回车 = 保留当前的 %s]：' "$1" ;; en) printf 'Username [Enter = keep current %s]: ' "$1" ;; esac ;;
+    input.username.legacy) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '当前账户名含有本版本不再写入的字符，无法保留；请输入新账户名，或回车生成随机值。' ;; en) printf 'the current username contains characters this version no longer writes and cannot be kept; enter a new username, or press Enter to generate one.' ;; esac ;;
     input.password) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '密码（输入时可见）[回车 = 随机]：' ;; en) printf 'Password (visible while typed) [Enter = random]: ' ;; esac ;;
     input.password.invalid) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '密码必须是 12-128 个字母或数字。' ;; en) printf 'password must be 12-128 letters or digits.' ;; esac ;;
+    input.password.keep) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '密码（输入时可见）[回车 = 保留当前密码]：' ;; en) printf 'Password (visible while typed) [Enter = keep current]: ' ;; esac ;;
+    input.password.legacy) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '当前密码含有本版本不再写入的字符，无法保留；请输入新密码，或回车生成随机值。' ;; en) printf 'the current password contains characters this version no longer writes and cannot be kept; enter a new password, or press Enter to generate one.' ;; esac ;;
     install.start) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '正在安装并验证 Xray mixed 代理……' ;; en) printf 'installing and verifying the Xray mixed proxy...' ;; esac ;;
     install.done) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf 'Xray mixed 代理安装完成。' ;; en) printf 'Xray mixed proxy installation completed.' ;; esac ;;
     install.updated) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '配置已更新，Xray 已重新启动并验证。' ;; en) printf 'configuration updated; Xray restarted and verified.' ;; esac ;;
@@ -239,8 +250,12 @@ s5_msg() {
     status.line) [ "$#" -eq 3 ] || return 1; case "$S5_LANG" in zh) printf '服务：%s；端口：%s；账户：%s；协议：mixed（SOCKS5 + HTTP）；认证：password；UDP：关闭' "$1" "$2" "$3" ;; en) printf 'service: %s; port: %s; username: %s; protocol: mixed (SOCKS5 + HTTP); auth: password; UDP: disabled' "$1" "$2" "$3" ;; esac ;;
     status.version) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf 'Xray 版本：%s' "$1" ;; en) printf 'Xray version: %s' "$1" ;; esac ;;
     show.terminal) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf 'show 仅在真实 TTY 中显示凭据。' ;; en) printf 'show displays credentials only on a real TTY.' ;; esac ;;
+    show.service) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '服务：%s' "$1" ;; en) printf 'service: %s' "$1" ;; esac ;;
     show.heading) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '凭据卡（mixed：SOCKS5 + HTTP）：' ;; en) printf 'credential card (mixed: SOCKS5 + HTTP):' ;; esac ;;
     show.placeholder) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '警告：无法确定服务器的公网地址，请把下面的 %s 替换为该服务器的公网 IPv4。' "$1" ;; en) printf "WARNING: the server's public address could not be determined; replace %s below with the server's public IPv4." "$1" ;; esac ;;
+    show.nat) [ "$#" -eq 3 ] || return 1; case "$S5_LANG" in zh) printf '警告：%s 是本服务器出站流量的来源地址，本机并未持有它（本机地址：%s）。代理监听在端口 %s。只有当上级把发往该地址的入站连接转发到本机时，下面的链接才可用；否则请用 S5_SERVER_IPV4 和 S5_SERVER_PORT 指定客户端真正使用的地址和端口。' "$1" "$2" "$3" ;; en) printf 'WARNING: %s is the address this server egresses from, and this machine does not hold it (local address: %s). The proxy listens on port %s. The links below work only if something upstream forwards inbound connections for that address to this machine; otherwise set S5_SERVER_IPV4 and S5_SERVER_PORT to the address and port your clients actually use.' "$1" "$2" "$3" ;; esac ;;
+    show.nat.unnamed) [ "$#" -eq 2 ] || return 1; case "$S5_LANG" in zh) printf '警告：%s 是本服务器出站流量的来源地址，本机并未持有它。代理监听在端口 %s。只有当上级把发往该地址的入站连接转发到本机时，下面的链接才可用；否则请用 S5_SERVER_IPV4 和 S5_SERVER_PORT 指定客户端真正使用的地址和端口。' "$1" "$2" ;; en) printf 'WARNING: %s is the address this server egresses from, and this machine does not hold it. The proxy listens on port %s. The links below work only if something upstream forwards inbound connections for that address to this machine; otherwise set S5_SERVER_IPV4 and S5_SERVER_PORT to the address and port your clients actually use.' "$1" "$2" ;; esac ;;
+    show.port.mapped) [ "$#" -eq 2 ] || return 1; case "$S5_LANG" in zh) printf '下面的链接使用端口 %s，而代理监听在端口 %s。该映射来自 S5_SERVER_PORT，脚本不会创建它。' "$1" "$2" ;; en) printf 'the links below use port %s while the proxy listens on port %s. That mapping comes from S5_SERVER_PORT; the script does not create it.' "$1" "$2" ;; esac ;;
     show.socks) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf 'SOCKS5：%s' "$1" ;; en) printf 'SOCKS5: %s' "$1" ;; esac ;;
     show.http) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf 'HTTP：%s' "$1" ;; en) printf 'HTTP: %s' "$1" ;; esac ;;
     show.warning) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '认证信息会在网络上传输，密码以明文保存在受保护的配置文件中。' ;; en) printf 'credentials are sent on the wire, and the password is stored in cleartext in the protected config file.' ;; esac ;;
@@ -474,6 +489,17 @@ s5_valid_port() {
     [ "$1" -ge 1024 ] 2>/dev/null && [ "$1" -le 65535 ] 2>/dev/null
 }
 
+# The advertised port is what a client dials, so it has no privilege
+# constraint: a provider mapping external 443 to an internal high port is a
+# common shape, chosen precisely to survive restrictive client networks.
+# s5_valid_port's 1024 floor exists because the listener runs unprivileged,
+# which says nothing about what the other end of a forward looks like.
+s5_valid_advertised_port() {
+    case "${1:-}" in '' | 0* | *[!0-9]*) return 1 ;; esac
+    [ "${#1}" -le 5 ] || return 1
+    [ "$1" -ge 1 ] 2>/dev/null && [ "$1" -le 65535 ] 2>/dev/null
+}
+
 s5_ipv4_is_canonical() {
     case "${1:-}" in '' | *[!0-9.]*) return 1 ;; esac
     case "$1" in .* | *. | *..*) return 1 ;; esac
@@ -530,6 +556,101 @@ s5_ipv4_is_public() {
     198.51.100 | 203.0.113) return 1 ;;
     esac
     return 0
+}
+
+# Split out as a command seam so a test can present a fixed set of addresses
+# without depending on the host's real interfaces.
+s5_local_ipv4_command() { ip -o addr show; }
+
+# Every IPv4 address this host holds, one per line. Two sources because neither
+# is universal: iproute2 is absent from a minimal image, and /proc/net/fib_trie
+# is Linux-only and unreadable in some sandboxes. Failure means "cannot say",
+# never "not local", and every caller has to preserve that distinction.
+s5_local_ipv4() {
+    # _slip rather than _sli: s5_select_language already owns _sli as its retry
+    # counter, and a shared prefix between two functions is how one of them
+    # eventually corrupts the other.
+    _slip_out=''
+    # No `command -v ip` guard: the seam has to be authoritative, or a test that
+    # substitutes it would be skipped on a host that happens to lack iproute2.
+    # A missing command simply fails the substitution and falls through below.
+    _slip=$(s5_local_ipv4_command 2>/dev/null) || _slip=''
+    if [ -n "$_slip" ]; then
+        _slip_out=$(printf '%s\n' "$_slip" |
+            awk '$3 == "inet" { sub("/.*", "", $4); print $4 }')
+    fi
+    _slip=''
+    if [ -z "$_slip_out" ]; then
+        # fib_trie marks a genuinely local leaf with "host LOCAL" on the line
+        # after it. A network base carries "link UNICAST" and a broadcast
+        # "link BROADCAST", so neither is mistaken for an interface address.
+        # The file holds both a Main and a Local table, which list the same
+        # addresses, so the walk deduplicates rather than relying on table
+        # order -- the hint below takes the first address it is given.
+        [ -r "$S5_ROOTDIR/proc/net/fib_trie" ] || return 1
+        _slip_out=$(awk '
+            $1 == "|--" { leaf = $2; next }
+            /host LOCAL/ && leaf != "" {
+                if (!(leaf in seen)) { seen[leaf] = 1; print leaf }
+                leaf = ""
+            }
+        ' "$S5_ROOTDIR/proc/net/fib_trie" 2>/dev/null)
+    fi
+    [ -n "$_slip_out" ] || return 1
+    printf '%s\n' "$_slip_out"
+    _slip_out=''
+    return 0
+}
+
+# 0 the host holds this address, 1 it does not, 2 neither source could answer.
+# The third state is what keeps the card advisory: a host that cannot enumerate
+# its own addresses must not have its card annotated with a guess.
+s5_ipv4_is_local() {
+    # Stashed before the `set --` below, which destroys the positional parameters.
+    _siil_want=${1:-}
+    s5_ipv4_is_canonical "$_siil_want" || return 2
+    if [ "$#" -ge 2 ]; then
+        _siil=$2
+        [ -n "$_siil" ] || return 2
+    else
+        _siil=$(s5_local_ipv4) || return 2
+    fi
+    _siil_found=1
+    set -f
+    # Split the newline-separated list with pathname expansion disabled.
+    # shellcheck disable=SC2086
+    set -- $_siil
+    set +f
+    _siil=''
+    for _siil_addr in "$@"; do
+        [ "$_siil_addr" = "$_siil_want" ] || continue
+        _siil_found=0
+        break
+    done
+    _siil_want=''
+    return "$_siil_found"
+}
+
+# The first non-loopback address, named in the NAT advisory so the operator can
+# see what this host actually holds. Fails when there is nothing to name.
+s5_local_ipv4_hint() {
+    if [ "$#" -ge 1 ]; then
+        _slih=$1
+        [ -n "$_slih" ] || return 1
+    else
+        _slih=$(s5_local_ipv4) || return 1
+    fi
+    set -f
+    # shellcheck disable=SC2086
+    set -- $_slih
+    set +f
+    _slih=''
+    for _slih_addr in "$@"; do
+        case "$_slih_addr" in 127.*) continue ;; esac
+        printf '%s' "$_slih_addr"
+        return 0
+    done
+    return 1
 }
 
 # A credential that is generated or entered from now on is letters and digits
@@ -634,11 +755,38 @@ s5_prompt_port() {
     # keeps it only once the listener verifies that ownership, and otherwise
     # re-asks rather than rotating the operator's port behind their back. On a
     # fresh install S5_PORT is empty, so a blank answer generates one as before.
+    # Which of the two a blank answer means is now in the question itself: the
+    # port, username and password prompts share one screen, and an operator who
+    # read "random" on one and carried the assumption to the others lost values
+    # they meant to keep.
     _spp_current=${S5_PORT:-}
+    # A provider that DNATs one fixed external port needs that exact port bound,
+    # and until now the only way to say so was to type it at this prompt. The
+    # override supplies the blank answer, which still passes the same validator
+    # and free-or-owned checks as a typed port. It is consumed on first use so a
+    # rejected value cannot feed itself into the re-ask forever. Distinct from
+    # S5_SERVER_PORT, which changes only what the card advertises.
+    _spp_override=${S5_LISTEN_PORT:-}
+    _spp_explicit=0
     while :; do
-        s5_msg_ask input.port || return 1
+        if [ -n "$_spp_override" ]; then
+            # The environment value is not rendered before validation: an
+            # invalid override may contain control characters, while a valid
+            # port is named after Enter by the normal accepted/error path.
+            s5_msg_ask input.port.override || return 1
+        elif [ "$_spp_explicit" -eq 1 ]; then
+            s5_msg_ask input.port.explicit || return 1
+        elif [ -n "$_spp_current" ]; then
+            s5_msg_ask input.port.keep "$_spp_current" || return 1
+        else
+            s5_msg_ask input.port || return 1
+        fi
         _spp=''
         IFS= read -r _spp || return 1
+        if [ -z "$_spp" ] && [ -n "$_spp_override" ]; then
+            _spp=$_spp_override
+            _spp_override=''
+        fi
         if [ -z "$_spp" ]; then
             if [ -n "$_spp_current" ]; then
                 if s5_port_owned_by_service "$_spp_current"; then
@@ -648,6 +796,15 @@ s5_prompt_port() {
                 # Falling through to a random port moved the operator's listener
                 # without a word; an unverified port is reported and re-asked.
                 s5_msg_err input.port.unverified "$_spp_current"
+                # The diagnosis requires an explicit answer. Stop offering the
+                # rejected keep action, and do not let another blank turn into a
+                # random port behind the operator's back.
+                _spp_current=''
+                _spp_explicit=1
+                continue
+            fi
+            if [ "$_spp_explicit" -eq 1 ]; then
+                s5_msg_err input.port.invalid
                 continue
             fi
             _spp=$(s5_random_port) || return 1
@@ -673,13 +830,42 @@ s5_prompt_port() {
 }
 
 s5_prompt_username() {
+    # On update s5_state_load and s5_config_extract leave S5_USERNAME holding the
+    # account the installation runs, so a blank answer keeps it: an operator
+    # re-running install to change the port alone must not have their account
+    # rotated without a word. On a fresh install S5_USERNAME is empty -- the
+    # globals are unset and re-blanked at the top of this script, so a caller's
+    # environment cannot forge a current value -- and a blank answer generates.
+    #
+    # A value from before the narrowing cannot be kept: s5_config_extract reads
+    # it back through the wide validator, while s5_config_render and
+    # s5_state_write both gate on the narrow one, so keeping it would abort the
+    # update inside the config candidate with nothing naming the credential. It
+    # is reported and offered for replacement instead.
+    _spu_current=${S5_USERNAME:-}
+    if [ -n "$_spu_current" ] && ! s5_valid_username "$_spu_current"; then
+        s5_msg_warn input.username.legacy
+        _spu_current=''
+    fi
     while :; do
-        s5_msg_ask input.username || return 1
+        if [ -n "$_spu_current" ]; then
+            s5_msg_ask input.username.keep "$_spu_current" || return 1
+        else
+            s5_msg_ask input.username || return 1
+        fi
         _spu=''
         IFS= read -r _spu || return 1
-        [ -n "$_spu" ] || _spu=$(s5_random_string 12 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789') || return 1
+        if [ -z "$_spu" ]; then
+            if [ -n "$_spu_current" ]; then
+                S5_USERNAME=$_spu_current
+                _spu_current=''
+                return 0
+            fi
+            _spu=$(s5_random_string 12 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789') || return 1
+        fi
         if s5_valid_username "$_spu"; then
             S5_USERNAME=$_spu
+            _spu_current=''
             return 0
         fi
         s5_msg_err input.username.invalid
@@ -687,14 +873,39 @@ s5_prompt_username() {
 }
 
 s5_prompt_password() {
+    # The username's rule, with one difference: the question never echoes the
+    # value it would keep. s5_msg_ask writes its rendered text straight to
+    # stderr without passing it through s5_redact, so input.password.keep takes
+    # no argument; the card and show stay the only places a password is printed,
+    # and both gate on root and a real TTY.
+    _sppw_current=${S5_PASSWORD:-}
+    if [ -n "$_sppw_current" ] && ! s5_valid_password "$_sppw_current"; then
+        s5_msg_warn input.password.legacy
+        _sppw_current=''
+    fi
     while :; do
-        s5_msg_ask input.password || return 1
+        if [ -n "$_sppw_current" ]; then
+            s5_msg_ask input.password.keep || return 1
+        else
+            s5_msg_ask input.password || return 1
+        fi
         _sppw=''
         IFS= read -r _sppw || return 1
-        [ -n "$_sppw" ] || _sppw=$(s5_random_string 32 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789') || return 1
+        if [ -z "$_sppw" ]; then
+            if [ -n "$_sppw_current" ]; then
+                S5_PASSWORD=$_sppw_current
+                S5_SECRET=$_sppw_current
+                _sppw=''
+                _sppw_current=''
+                return 0
+            fi
+            _sppw=$(s5_random_string 32 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789') || return 1
+        fi
         if s5_valid_password "$_sppw"; then
             S5_PASSWORD=$_sppw
             S5_SECRET=$_sppw
+            _sppw=''
+            _sppw_current=''
             return 0
         fi
         s5_msg_err input.password.invalid
@@ -2960,28 +3171,40 @@ s5_open_locked() {
     s5_config_extract || { s5_fail_locked config.unreadable "$S5_CFG"; return 1; }
 }
 
-s5_cmd_status() {
-    s5_open_locked status || return 1
+# The one place that maps the two state probes onto reported values, so status
+# and show cannot drift apart. Only OpenRC's positively reported crashed child
+# makes a read-only command fail; an unobservable listener never raises a false
+# alarm.
+s5_liveness_probe() {
     s5_service_state
-    _ssa=$?
-    case "$_ssa" in
-    0) _ssv=status.state.running; _ssr=0 ;;
-    1) _ssv=status.state.stopped; _ssr=0 ;;
-    3) _ssv=status.state.crashed; _ssr=1 ;;
-    *) _ssv=status.state.unverified; _ssr=0 ;;
+    case $? in
+    0) S5_LIVENESS_STATE=status.state.running; S5_LIVENESS_RC=0 ;;
+    1) S5_LIVENESS_STATE=status.state.stopped; S5_LIVENESS_RC=0 ;;
+    3) S5_LIVENESS_STATE=status.state.crashed; S5_LIVENESS_RC=1 ;;
+    *) S5_LIVENESS_STATE=status.state.unverified; S5_LIVENESS_RC=0 ;;
     esac
-    s5_msg_print status.heading
-    s5_msg_print status.line "$(s5_msg "$_ssv")" "$S5_PORT" "$S5_USERNAME"
-    s5_msg_print status.version "$S5_INSTALLED_RELEASE"
     s5_listener_state
-    _ssls=$?
-    case "$_ssls" in
+    S5_LIVENESS_LISTEN=$?
+    return 0
+}
+
+s5_report_listener() {
+    case "$S5_LIVENESS_LISTEN" in
     0) s5_msg_print service.ready "$S5_PORT" ;;
     1) s5_msg_print service.listen "$S5_PORT" ;;
     *) s5_msg_print service.unverified "$S5_PORT" ;;
     esac
+}
+
+s5_cmd_status() {
+    s5_open_locked status || return 1
+    s5_liveness_probe
+    s5_msg_print status.heading
+    s5_msg_print status.line "$(s5_msg "$S5_LIVENESS_STATE")" "$S5_PORT" "$S5_USERNAME"
+    s5_msg_print status.version "$S5_INSTALLED_RELEASE"
+    s5_report_listener
     s5_lock_release || return 1
-    return "$_ssr"
+    return "$S5_LIVENESS_RC"
 }
 
 # Returns a candidate line in S5_PUBLIC_IPV4_CANDIDATE, empty on failure; the
@@ -3058,15 +3281,40 @@ s5_read_public_ipv4() {
 s5_resolve_card_address() {
     S5_CARD_ADDR=''
     S5_CARD_KIND=''
+    S5_CARD_LOCAL=''
     if [ -n "${S5_SERVER_IPV4:-}" ] && s5_ipv4_is_canonical "$S5_SERVER_IPV4"; then
+        # Deliberately not locality-checked. An explicit answer is the operator
+        # describing a topology this host cannot see, which is the whole reason
+        # the override exists.
         S5_CARD_ADDR=$S5_SERVER_IPV4
         S5_CARD_KIND=configured
         return 0
     fi
     if s5_read_public_ipv4 && s5_ipv4_is_public "$S5_PUBLIC_IPV4_CANDIDATE"; then
         S5_CARD_ADDR=$S5_PUBLIC_IPV4_CANDIDATE
-        S5_CARD_KIND=external
         S5_PUBLIC_IPV4_CANDIDATE=''
+        # The endpoint reports the address the request left from, which is this
+        # server's own only when nothing translates it. Behind NAT the card
+        # advertised an address the host does not hold and no client could
+        # reach, and every verification still passed because they dial loopback.
+        # Only a definite "not mine" annotates the card: an unanswerable probe
+        # leaves it exactly as it was. Classification and the displayed local
+        # hint consume the same immutable snapshot; enumerating twice let an
+        # interface change make one card contradict itself.
+        _srca_local=$(s5_local_ipv4) || _srca_local=''
+        if [ -n "$_srca_local" ]; then
+            s5_ipv4_is_local "$S5_CARD_ADDR" "$_srca_local"
+            case $? in
+            1)
+                S5_CARD_KIND=nat
+                S5_CARD_LOCAL=$(s5_local_ipv4_hint "$_srca_local") || S5_CARD_LOCAL=''
+                ;;
+            *) S5_CARD_KIND=external ;;
+            esac
+        else
+            S5_CARD_KIND=external
+        fi
+        _srca_local=''
         return 0
     fi
     S5_PUBLIC_IPV4_CANDIDATE=''
@@ -3075,15 +3323,38 @@ s5_resolve_card_address() {
     return 0
 }
 
+# Separate from S5_PORT: the port a client dials is not always the port the
+# daemon binds, and the card is about the former. An invalid override falls back
+# to the listening port, matching how an invalid S5_SERVER_IPV4 falls back to
+# the lookup.
+s5_resolve_card_port() {
+    S5_CARD_PORT=$S5_PORT
+    [ -n "${S5_SERVER_PORT:-}" ] || return 0
+    s5_valid_advertised_port "$S5_SERVER_PORT" || return 0
+    S5_CARD_PORT=$S5_SERVER_PORT
+    return 0
+}
+
 # Callers must verify root privileges and a terminal stdout before showing credentials.
 s5_render_card() {
     s5_resolve_card_address
-    _src_socks="socks5://$S5_USERNAME:$S5_PASSWORD@$S5_CARD_ADDR:$S5_PORT"
-    _src_http="http://$S5_USERNAME:$S5_PASSWORD@$S5_CARD_ADDR:$S5_PORT"
+    s5_resolve_card_port
+    _src_socks="socks5://$S5_USERNAME:$S5_PASSWORD@$S5_CARD_ADDR:$S5_CARD_PORT"
+    _src_http="http://$S5_USERNAME:$S5_PASSWORD@$S5_CARD_ADDR:$S5_CARD_PORT"
     s5_msg_print show.heading || return 1
     case "$S5_CARD_KIND" in
     placeholder) s5_msg_print show.placeholder "$S5_CARD_ADDR" || return 1 ;;
+    nat)
+        if [ -n "$S5_CARD_LOCAL" ]; then
+            s5_msg_print show.nat "$S5_CARD_ADDR" "$S5_CARD_LOCAL" "$S5_PORT" || return 1
+        else
+            s5_msg_print show.nat.unnamed "$S5_CARD_ADDR" "$S5_PORT" || return 1
+        fi
+        ;;
     esac
+    if [ "$S5_CARD_PORT" != "$S5_PORT" ]; then
+        s5_msg_print show.port.mapped "$S5_CARD_PORT" "$S5_PORT" || return 1
+    fi
     s5_msg_print show.socks "$_src_socks" || return 1
     s5_msg_print show.http "$_src_http" || return 1
     s5_msg_print show.warning || return 1
@@ -3093,12 +3364,20 @@ s5_render_card() {
 }
 
 s5_cmd_show() {
+    # The card is recorded state and stays useful while the daemon is down, so
+    # liveness is reported rather than used to withhold credentials. It stays on
+    # stdout because only stdout is proven to be a terminal here; sending it to
+    # redirected stderr would recreate the pristine-card defect. The return code
+    # mirrors status: only a positively reported crashed child fails.
     s5_is_root || { s5_msg_err root.required; return 1; }
     if [ ! -t 1 ]; then s5_msg_err show.terminal; return 1; fi
     s5_open_locked status || return 1
+    s5_liveness_probe
+    s5_msg_print show.service "$(s5_msg "$S5_LIVENESS_STATE")" || { s5_fail_locked; return 1; }
+    s5_report_listener || { s5_fail_locked; return 1; }
     s5_render_card || { s5_fail_locked; return 1; }
     s5_lock_release || return 1
-    return 0
+    return "$S5_LIVENESS_RC"
 }
 
 s5_cmd_restart() {

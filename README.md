@@ -57,11 +57,19 @@ On the first invocation without a saved language, choose `1` or Enter for Chines
 
 | Input | Press Enter | Manual value |
 | --- | --- | --- |
-| Port | Random `20000–60000` | Decimal `1024–65535`, without leading zeros |
+| Port | Random `20000–60000`, or `S5_LISTEN_PORT` when set | Decimal `1024–65535`, without leading zeros |
 | Username | 12 random characters | 3–32 ASCII letters and digits |
 | Password | 32 random characters | 12–128 ASCII letters and digits |
 
-**The password is visible while you type it.** The table describes a fresh install. During an update, a blank port keeps the current port only after its listener is verified as belonging to this installation; an explicit port uses the normal free-or-owned checks. Blank username and password answers generate new values.
+**The password is visible while you type it.** The table describes a fresh install. During an update, a blank port keeps the current port only after its listener is verified as belonging to this installation; an explicit port uses the normal free-or-owned checks. Blank username and password answers keep their current values. A historical credential containing characters this version no longer writes cannot be kept: the installer explains why and asks for a replacement, where another blank generates a narrowed value.
+
+If your host forwards one fixed external TCP port to this machine — a common LXC or NAT-VPS arrangement — bind that exact port rather than accepting a random one. Type it at the port prompt, or set `S5_LISTEN_PORT` so a blank answer uses it, which lets a scripted or repeated install keep the same port:
+
+```sh
+S5_LISTEN_PORT=56447 sh socks5.sh
+```
+
+The override supplies only the blank answer; a typed port still wins. It passes the same `1024–65535` validation and the same in-use checks as a typed port, and an invalid or occupied value is reported and re-asked rather than silently replaced. It sets the port Xray binds, not what the card advertises. When a provider maps a different external port to it, use `S5_SERVER_PORT` separately for the card.
 
 After successful installation and verification, a real terminal displays both connection links automatically. Redirected output hides credentials; use `show` later from a terminal.
 
@@ -128,8 +136,10 @@ http://USERNAME:PASSWORD@SERVER_IPV4:PORT
 Each card resolves its displayed address in this order:
 
 1. A valid canonical IPv4 in `S5_SERVER_IPV4`, if provided. This explicit override can be a private address for a private network and skips automatic lookup.
-2. One bounded HTTPS request to `icanhazip.com`. Only a strictly validated public IPv4 response is accepted. The request ignores proxy environment variables and does not follow redirects.
+2. One bounded HTTPS request to `icanhazip.com`. Only a strictly validated public IPv4 response is accepted. The request ignores proxy environment variables and does not follow redirects. What comes back is the address your server's request *left from*, which is your server's own address only when it is not behind NAT. Behind NAT it belongs to whatever forwards your traffic; when local address enumeration can confirm that this host does not hold it, the card says so instead of presenting it as the host's own.
 3. `SERVER_IPV4` with a warning, if no usable address is available. Replace it with the address your clients can reach.
+
+The displayed port is the port Xray listens on, unless `S5_SERVER_PORT` names a valid `1–65535` port — then that is displayed instead. Unlike the unprivileged listening port, the displayed port may be below 1024; use it where your provider maps an external port such as 443 to a high listening port.
 
 For an explicit address on one invocation:
 
@@ -137,7 +147,13 @@ For an explicit address on one invocation:
 S5_SERVER_IPV4=203.0.113.10 sh socks5.sh show
 ```
 
-Replace the example address with your own. This changes **only the displayed links**, not the listen address or firewall. An invalid override falls back to automatic lookup. Detecting a public address does not prove that the port is reachable from the Internet.
+For an external port that differs from the listening port:
+
+```sh
+S5_SERVER_PORT=56447 sh socks5.sh show
+```
+
+Replace the example values with your own. These change **only the displayed links**, not the listen address, the listening port, or any firewall or forwarding rule. An invalid override falls back to the automatic value. A detected public address proves neither that the address belongs to this host nor that the port is reachable from the Internet; when the card reports a forwarded address, the forward has to exist upstream and this script cannot see it from inside.
 
 ## Measured memory
 

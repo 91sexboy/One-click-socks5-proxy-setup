@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Exercise the terminal probe through its CLI with isolated external commands."""
 
+import errno
 import os
 from pathlib import Path
 import secrets
@@ -89,6 +90,109 @@ class TerminalProbeTests(unittest.TestCase):
         self.assertTrue("unique-wrong-card-diagnostic" in result.stderr)
         self.assertTrue("other-password" not in result.stderr)
         self.assert_private(result)
+
+
+class ShowLivenessTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory(prefix="s5-show-liveness-test-")
+        self.addCleanup(self.directory.cleanup)
+        self.work = Path(self.directory.name)
+        (self.work / ".s5-test-root").touch()
+        self.environment = dict(os.environ, S5_TEST_MODE="1", S5_LIB_ONLY="1",
+                                S5_TEST_ROOT=str(self.work))
+
+    def command(self, listener_status, service_status=0):
+        script = """
+. "$1"
+S5_LANG=en
+S5_PORT=23456
+S5_USERNAME=fixture
+S5_PASSWORD=FixtureSecret123
+S5T_LISTENER_STATUS=$2
+S5T_SERVICE_STATUS=$3
+s5_is_root() { return 0; }
+s5_open_locked() { return 0; }
+s5_render_card() { printf 'synthetic-credential-card\\n'; }
+s5_service_state() { return "$S5T_SERVICE_STATUS"; }
+s5_listener_state() { return "$S5T_LISTENER_STATUS"; }
+s5_lock_release() { return 0; }
+s5_fail_locked() { return 1; }
+s5_cmd_show
+"""
+        return shlex.split(os.environ.get("S5_TEST_SHELL", "sh")) + [
+            "-c", script, "show-liveness-test", str(ROOT / "socks5.sh"),
+            str(listener_status), str(service_status),
+        ]
+
+    def test_liveness_stays_with_card_when_stderr_is_redirected(self):
+        cases = ((0, "Xray is listening on port 23456."),
+                 (1, "Xray is not listening on port 23456."),
+                 (2, "the listen state of port 23456 could not be verified."))
+        for listener_status, message in cases:
+            with self.subTest(listener_status=listener_status), PtySession() as terminal:
+                process = None
+                try:
+                    process = subprocess.Popen(
+                        self.command(listener_status), env=self.environment,
+                        stdin=subprocess.DEVNULL, stdout=terminal.slave,
+                        stderr=subprocess.PIPE, start_new_session=True,
+                    )
+                    terminal.close_slave()
+                    output = bytearray()
+                    while True:
+                        try:
+                            chunk = os.read(terminal.master, 65536)
+                        except OSError as error:
+                            if error.errno != errno.EIO:
+                                raise
+                            break
+                        if not chunk:
+                            break
+                        output.extend(chunk)
+                    _, errors = process.communicate(timeout=5)
+                    self.assertEqual(process.returncode, 0)
+                    rendered = bytes(output).replace(b"\r\n", b"\n").decode()
+                    expected = "service: running\n" + message + "\nsynthetic-credential-card\n"
+                    self.assertEqual(rendered, expected)
+                    self.assertEqual(errors, b"", "liveness escaped the verified stdout TTY")
+                finally:
+                    if process is not None and process.poll() is None:
+                        kill_process_group(process)
+
+
+    def test_crashed_service_keeps_card_but_returns_failure(self):
+        with PtySession() as terminal:
+            process = None
+            try:
+                process = subprocess.Popen(
+                    self.command(1, service_status=3), env=self.environment,
+                    stdin=subprocess.DEVNULL, stdout=terminal.slave,
+                    stderr=subprocess.PIPE, start_new_session=True,
+                )
+                terminal.close_slave()
+                output = bytearray()
+                while True:
+                    try:
+                        chunk = os.read(terminal.master, 65536)
+                    except OSError as error:
+                        if error.errno != errno.EIO:
+                            raise
+                        break
+                    if not chunk:
+                        break
+                    output.extend(chunk)
+                _, errors = process.communicate(timeout=5)
+                rendered = bytes(output).replace(b"\r\n", b"\n").decode()
+                self.assertEqual(process.returncode, 1)
+                self.assertEqual(
+                    rendered,
+                    "service: crashed\nXray is not listening on port 23456.\n"
+                    "synthetic-credential-card\n",
+                )
+                self.assertEqual(errors, b"")
+            finally:
+                if process is not None and process.poll() is None:
+                    kill_process_group(process)
 
 
 class PromptInputTests(unittest.TestCase):

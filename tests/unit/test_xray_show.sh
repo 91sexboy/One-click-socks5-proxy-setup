@@ -109,8 +109,21 @@ assert_contains "the placeholder is called out" \
     'replace SERVER_IPV4 below' "$S5T_CARD_OUT"
 assert_eq "the placeholder kind is recorded" placeholder "$S5_CARD_KIND"
 
-# A usable public address reaches the card, and then no placeholder survives in
-# it: the URI a caller copies has to be one they can connect to.
+# s5t_local <ip-o-addr-output>: substitute the host's interface list. The seam
+# is a function rather than an environment variable, so it needs no entry in
+# s5_guard_environment, tests/run.sh or the contract oracle. The text goes
+# through a file rather than a captured argument, because the seam is called
+# with no arguments and a redefinition that read $1 would silently print
+# nothing -- which looks exactly like a host that cannot enumerate itself.
+s5t_local() { printf '%s' "$1" >"$S5_TEST_ROOT/local-addrs"; }
+s5_local_ipv4_command() { cat "$S5_TEST_ROOT/local-addrs" 2>/dev/null; }
+
+# A usable public address that this host actually holds reaches the card, and
+# then no placeholder survives in it: the URI a caller copies has to be one they
+# can connect to.
+s5t_local '1: lo    inet 127.0.0.1/8 scope host lo
+2: eth0    inet 198.100.20.30/24 brd 198.100.20.255 scope global eth0
+'
 printf '198.100.20.30\n' >"$S5_TEST_ADDR_PATH"
 s5t_card
 assert_eq "a card renders with a resolved address" 0 "$S5T_CARD_STATUS"
@@ -122,6 +135,129 @@ assert_not_contains "no placeholder survives a resolved address" \
     SERVER_IPV4 "$S5T_CARD_OUT"
 assert_eq "the resolved kind is recorded" external "$S5_CARD_KIND"
 
+# The bug this file exists to prevent: behind NAT the lookup answers with the
+# address the request egressed from, which the host does not hold and no client
+# can reach. Every local verification still passes, because they dial loopback.
+# The card has to say so instead of advertising an endpoint that does not exist.
+s5t_local '1: lo    inet 127.0.0.1/8 scope host lo
+2: eth0    inet 10.66.147.248/16 brd 10.66.255.255 scope global eth0
+'
+s5t_card
+assert_eq "a card still renders behind NAT" 0 "$S5T_CARD_STATUS"
+assert_eq "an egress address the host does not hold is recorded as nat" \
+    nat "$S5_CARD_KIND"
+assert_contains "the advisory names the egress address" \
+    '198.100.20.30 is the address this server egresses from' "$S5T_CARD_OUT"
+assert_contains "the advisory names an address the host does hold" \
+    '10.66.147.248' "$S5T_CARD_OUT"
+assert_contains "the advisory names the listening port" \
+    'listens on port 23456' "$S5T_CARD_OUT"
+# The count is the point: a second pair would give the operator two endpoints
+# and no way to tell which one to copy, and tests/protocol/terminal_install.py
+# counts occurrences for the same reason.
+assert_eq "a NAT card still carries exactly one SOCKS5 URI" 1 \
+    "$(printf '%s\n' "$S5T_CARD_OUT" | grep -c 'socks5://')"
+assert_eq "a NAT card still carries exactly one HTTP URI" 1 \
+    "$(printf '%s\n' "$S5T_CARD_OUT" | grep -c 'http://alice')"
+
+# One card must classify and explain locality from one immutable snapshot. The
+# seam deliberately changes its answer on a second call: the old implementation
+# classified against the first, enumerated again in the renderer, and printed
+# the contradiction "does not hold it (local address: 198.100.20.30)".
+printf '0\n' >"$S5_TEST_ROOT/local-call-count"
+s5_local_ipv4_command() {
+    _s5t_count=$(cat "$S5_TEST_ROOT/local-call-count")
+    _s5t_count=$((_s5t_count + 1))
+    printf '%s\n' "$_s5t_count" >"$S5_TEST_ROOT/local-call-count"
+    if [ "$_s5t_count" -eq 1 ]; then
+        printf '%s\n' \
+            '1: lo    inet 127.0.0.1/8 scope host lo' \
+            '2: eth0    inet 10.66.147.248/16 brd 10.66.255.255 scope global eth0'
+    else
+        printf '%s\n' \
+            '1: lo    inet 127.0.0.1/8 scope host lo' \
+            '2: eth0    inet 198.100.20.30/24 brd 198.100.20.255 scope global eth0'
+    fi
+}
+s5t_card
+assert_eq "one card enumerates local addresses once" 1 \
+    "$(cat "$S5_TEST_ROOT/local-call-count")"
+assert_eq "a changing interface set keeps the original nat classification" \
+    nat "$S5_CARD_KIND"
+assert_contains "the NAT advisory uses the classification snapshot's hint" \
+    'local address: 10.66.147.248' "$S5T_CARD_OUT"
+assert_not_contains "the NAT advisory never contradicts its classification" \
+    'local address: 198.100.20.30' "$S5T_CARD_OUT"
+# Restore the stable file-backed seam for the remaining card cases.
+s5_local_ipv4_command() { cat "$S5_TEST_ROOT/local-addrs" 2>/dev/null; }
+
+# Nothing but loopback to name, so the advisory drops the local-address clause
+# rather than printing an empty one.
+s5t_local '1: lo    inet 127.0.0.1/8 scope host lo
+'
+s5t_card
+assert_eq "a host with only loopback is still nat" nat "$S5_CARD_KIND"
+assert_contains "the unnamed advisory still names the egress address" \
+    '198.100.20.30 is the address this server egresses from' "$S5T_CARD_OUT"
+assert_not_contains "the unnamed advisory has no empty local-address clause" \
+    'local address: )' "$S5T_CARD_OUT"
+
+# A host that cannot enumerate its own addresses must not be annotated with a
+# guess. s5_ipv4_is_local returns 2 there, and the card reads as it always did.
+s5_local_ipv4_command() { return 1; }
+S5T_SAVED_ROOTDIR=$S5_ROOTDIR
+S5_ROOTDIR=$S5_TEST_ROOT/no-such-root
+s5t_card
+assert_eq "an unanswerable locality probe leaves the card external" \
+    external "$S5_CARD_KIND"
+assert_not_contains "an unanswerable locality probe adds no advisory" \
+    'egresses from' "$S5T_CARD_OUT"
+S5_ROOTDIR=$S5T_SAVED_ROOTDIR
+
+# S5_SERVER_PORT names the port a client dials when it differs from the port
+# Xray binds. The script does not create that mapping and says so.
+s5t_local '1: lo    inet 127.0.0.1/8 scope host lo
+2: eth0    inet 198.100.20.30/24 brd 198.100.20.255 scope global eth0
+'
+S5_SERVER_PORT=56447
+s5t_card
+assert_contains "the advertised port reaches the SOCKS5 URI" \
+    'socks5://alice:Secret123xyz@198.100.20.30:56447' "$S5T_CARD_OUT"
+assert_contains "the advertised port reaches the HTTP URI" \
+    'http://alice:Secret123xyz@198.100.20.30:56447' "$S5T_CARD_OUT"
+assert_contains "a mapped port is called out" \
+    'use port 56447 while the proxy listens on port 23456' "$S5T_CARD_OUT"
+assert_eq "a mapped card still carries exactly one SOCKS5 URI" 1 \
+    "$(printf '%s\n' "$S5T_CARD_OUT" | grep -c 'socks5://')"
+S5_SERVER_PORT=23456
+s5t_card
+assert_not_contains "an override equal to the listening port says nothing" \
+    'while the proxy listens on port' "$S5T_CARD_OUT"
+# The advertised port is what a client dials, so unlike the listening port it
+# has no privilege floor: external 443 to an internal high port is a common
+# shape, chosen to survive restrictive client networks.
+S5_SERVER_PORT=443
+s5t_card
+assert_contains "a privileged advertised port is accepted" \
+    'socks5://alice:Secret123xyz@198.100.20.30:443' "$S5T_CARD_OUT"
+assert_contains "a privileged advertised port is still called out" \
+    'use port 443 while the proxy listens on port 23456' "$S5T_CARD_OUT"
+S5_SERVER_PORT=0
+s5t_card
+assert_contains "port zero falls back to the listening port" \
+    'socks5://alice:Secret123xyz@198.100.20.30:23456' "$S5T_CARD_OUT"
+S5_SERVER_PORT=65536
+s5t_card
+assert_contains "an out-of-range override falls back to the listening port" \
+    'socks5://alice:Secret123xyz@198.100.20.30:23456' "$S5T_CARD_OUT"
+S5_SERVER_PORT=not-a-port
+s5t_card
+assert_contains "a non-numeric override falls back to the listening port" \
+    'socks5://alice:Secret123xyz@198.100.20.30:23456' "$S5T_CARD_OUT"
+assert_not_contains "a rejected override is never printed" \
+    'not-a-port' "$S5T_CARD_OUT"
+S5_SERVER_PORT=''
+
 # An operator behind NAT can name the address themselves, and that answer is
 # taken even when the endpoint would have answered with something else. It is
 # still validated, so a hostname or a malformed value cannot reach the URI.
@@ -132,6 +268,12 @@ assert_contains "a configured address is used as given" \
 assert_not_contains "a configured address is not called a placeholder" \
     'replace SERVER_IPV4' "$S5T_CARD_OUT"
 assert_eq "the configured kind is recorded" configured "$S5_CARD_KIND"
+# An explicit answer describes a topology the host cannot see, so it is never
+# locality-checked. 192.168.5.9 is on no interface here, and
+# tests/protocol/terminal_install.py installs with S5_SERVER_IPV4=192.0.2.1,
+# which is local on no runner: gating this branch would turn that job red.
+assert_not_contains "a configured address is never called out as nat" \
+    'egresses from' "$S5T_CARD_OUT"
 S5_SERVER_IPV4=proxy.example.com
 printf '10.0.0.7\n' >"$S5_TEST_ADDR_PATH"
 s5t_card
