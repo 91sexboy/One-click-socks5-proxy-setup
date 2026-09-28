@@ -186,7 +186,9 @@ assert_contains "the Alpine gate requires the configuration error to exit 23" \
 assert_contains "the Alpine gate requires exactly three bounded bad-config attempts" \
     'three_attempts_and_stopped' "$alpine_text"
 assert_contains "the Alpine gate proves the attempt count stays stable" \
-    'bad-config attempts=%s and stable' "$alpine_text"
+    'bad-config attempts=%s, stopped, and stable' "$alpine_text"
+assert_contains "the Alpine gate keeps checking the manager stays down" \
+    'a broken config brought the service back up' "$alpine_text"
 assert_contains "the Alpine gate counts the real supervised exit-23 process" \
     '.xray-exit23-real' "$alpine_text"
 assert_contains "OpenRC adds target addresses inside its native container" \

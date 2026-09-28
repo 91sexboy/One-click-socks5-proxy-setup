@@ -197,10 +197,18 @@ for n in $(seq 1 5); do
     printf "a broken config produced a listener\n" >&2
     exit 1
   fi
+  if rc-service xray-socks5 status >/dev/null 2>&1; then
+    printf "a broken config brought the service back up\n" >&2
+    exit 1
+  fi
   test "$(cat "$attempts")" = 3
   sleep 1
 done
-printf 'openrc: bad-config attempts=%s and stable\n' "$(cat "$attempts")"
+if rc-service xray-socks5 status >/dev/null 2>&1; then
+  printf "a broken config was active after the stable window\n" >&2
+  exit 1
+fi
+printf 'openrc: bad-config attempts=%s, stopped, and stable\n' "$(cat "$attempts")"
 rm -f /usr/local/libexec/xray-socks5/xray
 mv /usr/local/libexec/xray-socks5/.xray-exit23-real \
   /usr/local/libexec/xray-socks5/xray
