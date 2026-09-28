@@ -15,7 +15,7 @@ reads = set(re.findall(r'\$\{?(S5_[A-Z0-9_]+)', source))
 initialized = set(re.findall(r'^\s*(S5_[A-Z0-9_]+)=', source, re.M))
 guard = source.split('s5_guard_environment() {', 1)[1].split('\n}', 1)[0]
 guarded = set(re.findall(r'\$\{?(S5_[A-Z0-9_]+)', guard))
-expected = (reads - initialized - {'S5_SERVER_IPV4'}) | guarded
+expected = (reads - initialized - {'S5_LISTEN_PORT', 'S5_SERVER_IPV4', 'S5_SERVER_PORT'}) | guarded
 actual = set(re.findall(r'-u (S5_[A-Z0-9_]+)', runner))
 if actual != expected:
     raise AssertionError('runner test environment mismatch: missing=' +
@@ -132,14 +132,139 @@ rm -f "$S5_TEST_ROOT/occupied"
 # operator's listener without a word, so the port is named and the question is
 # asked again -- and the loop has to accept the explicit answer that follows.
 S5_PORT=25000
-printf '\n24500\n' >"$S5_TEST_ROOT/port.unverified"
+printf '\n\n24500\n' >"$S5_TEST_ROOT/port.unverified"
 s5_prompt_port <"$S5_TEST_ROOT/port.unverified" 2>"$S5_TEST_ROOT/port.out" >/dev/null
 _rpunv=$?
 assert_eq "an unverified recorded port re-asks instead of failing" 0 "$_rpunv"
 assert_contains "the unverified recorded port is named" \
     'could not verify that port 25000 belongs to this installation' \
     "$(cat "$S5_TEST_ROOT/port.out")"
+assert_contains "the re-ask requires an explicit port" \
+    'Port [enter explicitly]' "$(cat "$S5_TEST_ROOT/port.out")"
+assert_eq "the rejected keep prompt is shown only once" 1 \
+    "$(grep -c 'keep current 25000' "$S5_TEST_ROOT/port.out")"
 assert_eq "the explicit answer after the refusal is taken" 24500 "$S5_PORT"
+
+# A provider that forwards one fixed external port needs that exact port bound,
+# and a blank answer must be able to mean it. The existing probe fixture controls
+# which port is occupied, so these assertions remain in the parent shell and are
+# counted by t_summary rather than disappearing inside a subshell.
+S5_PORT=''
+S5_LISTEN_PORT=56447
+printf '\n' >"$S5_TEST_ROOT/listen.answers"
+s5_prompt_port <"$S5_TEST_ROOT/listen.answers" 2>"$S5_TEST_ROOT/listen-override.out" >/dev/null
+assert_eq "a blank answer takes the listen-port override" 56447 "$S5_PORT"
+assert_contains "the prompt says which override blank will use" \
+    'use S5_LISTEN_PORT' "$(cat "$S5_TEST_ROOT/listen-override.out")"
+
+S5_PORT=''
+S5_LISTEN_PORT=56447
+printf '23456\n' >"$S5_TEST_ROOT/listen.answers"
+s5_prompt_port <"$S5_TEST_ROOT/listen.answers" >/dev/null 2>&1
+assert_eq "a typed port still wins over the override" 23456 "$S5_PORT"
+
+S5_PORT=''
+S5_LISTEN_PORT=99
+printf '\n23456\n' >"$S5_TEST_ROOT/listen.answers"
+s5_prompt_port <"$S5_TEST_ROOT/listen.answers" 2>"$S5_TEST_ROOT/listen-invalid.out" >/dev/null
+assert_eq "an invalid override is consumed and re-asked once" 23456 "$S5_PORT"
+assert_contains "an invalid override names the validation rule" \
+    'port must be a decimal number from 1024 to 65535' \
+    "$(cat "$S5_TEST_ROOT/listen-invalid.out")"
+assert_contains "the re-ask falls back to the normal blank meaning" \
+    'Enter = random 20000-60000' "$(cat "$S5_TEST_ROOT/listen-invalid.out")"
+
+S5_PORT=''
+S5_LISTEN_PORT='bad
+injected-line'
+printf '\n23456\n' >"$S5_TEST_ROOT/listen.answers"
+s5_prompt_port <"$S5_TEST_ROOT/listen.answers" 2>"$S5_TEST_ROOT/listen-hostile.out" >/dev/null
+assert_eq "a hostile invalid override is consumed and re-asked" 23456 "$S5_PORT"
+assert_not_contains "an unvalidated override is never rendered" \
+    'injected-line' "$(cat "$S5_TEST_ROOT/listen-hostile.out")"
+
+S5_PORT=25000
+S5_LISTEN_PORT=56447
+printf '\n' >"$S5_TEST_ROOT/listen.answers"
+s5_prompt_port <"$S5_TEST_ROOT/listen.answers" 2>"$S5_TEST_ROOT/listen-update.out" >/dev/null
+assert_eq "the override takes precedence over keeping the current port" 56447 "$S5_PORT"
+assert_contains "an update prompt does not falsely promise to keep the old port" \
+    'use S5_LISTEN_PORT' "$(cat "$S5_TEST_ROOT/listen-update.out")"
+assert_not_contains "the override prompt never promises a different action" \
+    'keep current 25000' "$(cat "$S5_TEST_ROOT/listen-update.out")"
+
+S5_PORT=''
+S5_LISTEN_PORT=56447
+printf '56447\n' >"$S5_TEST_ROOT/occupied"
+printf '\n23456\n' >"$S5_TEST_ROOT/listen.answers"
+s5_prompt_port <"$S5_TEST_ROOT/listen.answers" 2>"$S5_TEST_ROOT/listen-busy.out" >/dev/null
+assert_eq "a busy foreign override is refused and re-asked" 23456 "$S5_PORT"
+assert_contains "a busy foreign override is named" \
+    'port 56447 is already in use' "$(cat "$S5_TEST_ROOT/listen-busy.out")"
+rm -f "$S5_TEST_ROOT/occupied"
+unset S5_LISTEN_PORT
+
+# The other two prompts now share the port's blank-answer contract: on update a
+# blank answer keeps the current value, while the empty fresh-install state still
+# generates. The password question names the action but never the value it keeps.
+S5_USERNAME=keptuser
+printf '\n' >"$S5_TEST_ROOT/credential.blank"
+s5_prompt_username <"$S5_TEST_ROOT/credential.blank" \
+    2>"$S5_TEST_ROOT/username.out" >/dev/null
+assert_eq "a blank username on update keeps the current account" keptuser "$S5_USERNAME"
+assert_contains "the username question says blank keeps the current account" \
+    'keep current keptuser' "$(cat "$S5_TEST_ROOT/username.out")"
+S5_USERNAME=''
+s5_prompt_username <"$S5_TEST_ROOT/credential.blank" >/dev/null 2>&1
+s5_valid_username "$S5_USERNAME"; _spufresh=$?
+assert_eq "a blank username on a fresh install still generates a valid value" 0 "$_spufresh"
+assert_ne "fresh username generation does not reuse the old account" keptuser "$S5_USERNAME"
+
+# A historical value can pass read-back validation while failing the narrowed
+# write validator. It is diagnosed before the candidate render instead of making
+# the update fail later without naming the cause; the blank re-answer generates.
+S5_USERNAME=legacy_name
+s5_prompt_username <"$S5_TEST_ROOT/credential.blank" \
+    2>"$S5_TEST_ROOT/username.out" >/dev/null
+s5_valid_username "$S5_USERNAME"; _spulegacy=$?
+assert_eq "a legacy username is replaced by a write-valid value" 0 "$_spulegacy"
+assert_ne "a legacy username is not silently kept" legacy_name "$S5_USERNAME"
+assert_contains "a legacy username names why it cannot be kept" \
+    'no longer writes' "$(cat "$S5_TEST_ROOT/username.out")"
+
+S5_PASSWORD=Keptpassword12
+S5_SECRET=$S5_PASSWORD
+s5_prompt_password <"$S5_TEST_ROOT/credential.blank" \
+    2>"$S5_TEST_ROOT/password.out" >/dev/null
+assert_eq "a blank password on update keeps the current secret" \
+    Keptpassword12 "$S5_PASSWORD"
+assert_eq "a kept password also refreshes S5_SECRET" \
+    Keptpassword12 "$S5_SECRET"
+assert_contains "the password question says blank keeps the current secret" \
+    'keep current' "$(cat "$S5_TEST_ROOT/password.out")"
+assert_not_contains "the keep question never prints the password" \
+    Keptpassword12 "$(cat "$S5_TEST_ROOT/password.out")"
+
+S5_PASSWORD='legacy.pass~01'
+S5_SECRET=$S5_PASSWORD
+s5_prompt_password <"$S5_TEST_ROOT/credential.blank" \
+    2>"$S5_TEST_ROOT/password.out" >/dev/null
+s5_valid_password "$S5_PASSWORD"; _sppwlegacy=$?
+assert_eq "a legacy password is replaced by a write-valid value" 0 "$_sppwlegacy"
+assert_ne "a legacy password is not silently kept" 'legacy.pass~01' "$S5_PASSWORD"
+assert_contains "a legacy password names why it cannot be kept" \
+    'no longer writes' "$(cat "$S5_TEST_ROOT/password.out")"
+assert_not_contains "the legacy diagnosis never prints the password" \
+    'legacy.pass~01' "$(cat "$S5_TEST_ROOT/password.out")"
+assert_eq "the generated replacement also refreshes S5_SECRET" \
+    "$S5_PASSWORD" "$S5_SECRET"
+
+S5_PASSWORD=''
+S5_SECRET=''
+s5_prompt_password <"$S5_TEST_ROOT/credential.blank" >/dev/null 2>&1
+s5_valid_password "$S5_PASSWORD"; _sppwfresh=$?
+assert_eq "a blank password on a fresh install still generates a valid value" 0 "$_sppwfresh"
+assert_eq "fresh password generation also sets S5_SECRET" "$S5_PASSWORD" "$S5_SECRET"
 
 S5_PORT=23456
 S5_USERNAME=alice
@@ -411,10 +536,11 @@ if ( s5_msg() { return 1; }; printf 'y\n' | s5_confirm_update ) 2>"$_prompt_outp
 then _prompt_status=0; else _prompt_status=$?; fi
 assert_ne "an unrenderable update prompt is not taken as consent" 0 "$_prompt_status"
 
-while IFS='|' read -r _catalog_key _catalog_arg1 _catalog_arg2 _catalog_en _catalog_zh; do
+while IFS='|' read -r _catalog_key _catalog_arg1 _catalog_arg2 _catalog_arg3 _catalog_en _catalog_zh; do
     set --
     [ -z "$_catalog_arg1" ] || set -- "$_catalog_arg1"
     [ -z "$_catalog_arg2" ] || set -- "$@" "$_catalog_arg2"
+    [ -z "$_catalog_arg3" ] || set -- "$@" "$_catalog_arg3"
     for S5_LANG in en zh; do
         t_run s5_msg "$_catalog_key" "$@"
         assert_eq "$_catalog_key renders in $S5_LANG" 0 "$T_STATUS"
@@ -422,25 +548,36 @@ while IFS='|' read -r _catalog_key _catalog_arg1 _catalog_arg2 _catalog_en _cata
         assert_eq "$_catalog_key has the expected $S5_LANG text" "$_catalog_expected" "$T_OUT"
     done
 done <<'CATALOG'
-status.state.running|||running|运行中
-status.state.stopped|||stopped|已停止
-status.state.crashed|||crashed|已崩溃
-status.state.unverified|||unverified|未验证
-openrc.logging.unavailable|||Xray stdout and stderr logging may be unavailable because /dev/log was not found; on Alpine, run rc-service syslog start and rc-update add syslog default, then run sh socks5.sh restart.|未发现 /dev/log，Xray 的标准输出和错误日志可能不可用；请在 Alpine 上运行 rc-service syslog start 和 rc-update add syslog default，然后运行 sh socks5.sh restart。
-account.remove.identity|900|901|account identity mismatch: recorded 900/901|账户身份不匹配：记录值为 900/901。
-account.remove.user|xray-socks5||could not remove service account: xray-socks5|无法删除服务账户：xray-socks5。
-account.remove.user.exists|xray-socks5||service account still exists after removal: xray-socks5|删除后服务账户仍然存在：xray-socks5。
-account.remove.user.verify|xray-socks5||could not verify service account removal: xray-socks5|无法验证服务账户已删除：xray-socks5。
-account.remove.group|xray-socks5||could not remove service group: xray-socks5|无法删除服务组：xray-socks5。
-account.remove.group.before|xray-socks5||could not verify service group before removal: xray-socks5|删除前无法验证服务组：xray-socks5。
-account.remove.group.exists|xray-socks5||service group still exists after removal: xray-socks5|删除后服务组仍然存在：xray-socks5。
-account.remove.group.verify|xray-socks5||could not verify service group removal: xray-socks5|无法验证服务组已删除：xray-socks5。
-uninstall.symlink|/owned||refusing symlink during uninstall: /owned|卸载时拒绝符号链接：/owned。
-uninstall.file|/owned||could not remove owned file: /owned|无法删除自有文件：/owned。
-uninstall.notdir|/owned||owned path is not a directory: /owned|自有路径不是目录：/owned。
-uninstall.nonempty|/owned||refusing non-empty owned directory: /owned|拒绝删除非空自有目录：/owned。
-uninstall.directory|/owned||could not remove owned directory: /owned|无法删除自有目录：/owned。
-usage.unknown|bogus||unknown command: bogus.|未知命令：bogus。
+status.state.running||||running|运行中
+status.state.stopped||||stopped|已停止
+status.state.crashed||||crashed|已崩溃
+status.state.unverified||||unverified|未验证
+show.service|running|||service: running|服务：running
+openrc.logging.unavailable||||Xray stdout and stderr logging may be unavailable because /dev/log was not found; on Alpine, run rc-service syslog start and rc-update add syslog default, then run sh socks5.sh restart.|未发现 /dev/log，Xray 的标准输出和错误日志可能不可用；请在 Alpine 上运行 rc-service syslog start 和 rc-update add syslog default，然后运行 sh socks5.sh restart。
+account.remove.identity|900|901||account identity mismatch: recorded 900/901|账户身份不匹配：记录值为 900/901。
+account.remove.user|xray-socks5|||could not remove service account: xray-socks5|无法删除服务账户：xray-socks5。
+account.remove.user.exists|xray-socks5|||service account still exists after removal: xray-socks5|删除后服务账户仍然存在：xray-socks5。
+account.remove.user.verify|xray-socks5|||could not verify service account removal: xray-socks5|无法验证服务账户已删除：xray-socks5。
+account.remove.group|xray-socks5|||could not remove service group: xray-socks5|无法删除服务组：xray-socks5。
+account.remove.group.before|xray-socks5|||could not verify service group before removal: xray-socks5|删除前无法验证服务组：xray-socks5。
+account.remove.group.exists|xray-socks5|||service group still exists after removal: xray-socks5|删除后服务组仍然存在：xray-socks5。
+account.remove.group.verify|xray-socks5|||could not verify service group removal: xray-socks5|无法验证服务组已删除：xray-socks5。
+uninstall.symlink|/owned|||refusing symlink during uninstall: /owned|卸载时拒绝符号链接：/owned。
+uninstall.file|/owned|||could not remove owned file: /owned|无法删除自有文件：/owned。
+uninstall.notdir|/owned|||owned path is not a directory: /owned|自有路径不是目录：/owned。
+uninstall.nonempty|/owned|||refusing non-empty owned directory: /owned|拒绝删除非空自有目录：/owned。
+uninstall.directory|/owned|||could not remove owned directory: /owned|无法删除自有目录：/owned。
+usage.unknown|bogus|||unknown command: bogus.|未知命令：bogus。
+show.nat|212.189.21.55|10.66.147.248|59093|WARNING: 212.189.21.55 is the address this server egresses from, and this machine does not hold it (local address: 10.66.147.248). The proxy listens on port 59093. The links below work only if something upstream forwards inbound connections for that address to this machine; otherwise set S5_SERVER_IPV4 and S5_SERVER_PORT to the address and port your clients actually use.|警告：212.189.21.55 是本服务器出站流量的来源地址，本机并未持有它（本机地址：10.66.147.248）。代理监听在端口 59093。只有当上级把发往该地址的入站连接转发到本机时，下面的链接才可用；否则请用 S5_SERVER_IPV4 和 S5_SERVER_PORT 指定客户端真正使用的地址和端口。
+input.port.keep|25000|||Port [Enter = keep current 25000]: |端口 [回车 = 保留当前的 25000]：
+input.port.override||||Port [Enter = use S5_LISTEN_PORT]: |端口 [回车 = 使用 S5_LISTEN_PORT]：
+input.port.explicit||||Port [enter explicitly]: |端口 [请明确输入]：
+input.username.keep|keptuser|||Username [Enter = keep current keptuser]: |账户名 [回车 = 保留当前的 keptuser]：
+input.username.legacy||||the current username contains characters this version no longer writes and cannot be kept; enter a new username, or press Enter to generate one.|当前账户名含有本版本不再写入的字符，无法保留；请输入新账户名，或回车生成随机值。
+input.password.keep||||Password (visible while typed) [Enter = keep current]: |密码（输入时可见）[回车 = 保留当前密码]：
+input.password.legacy||||the current password contains characters this version no longer writes and cannot be kept; enter a new password, or press Enter to generate one.|当前密码含有本版本不再写入的字符，无法保留；请输入新密码，或回车生成随机值。
+show.nat.unnamed|212.189.21.55|59093||WARNING: 212.189.21.55 is the address this server egresses from, and this machine does not hold it. The proxy listens on port 59093. The links below work only if something upstream forwards inbound connections for that address to this machine; otherwise set S5_SERVER_IPV4 and S5_SERVER_PORT to the address and port your clients actually use.|警告：212.189.21.55 是本服务器出站流量的来源地址，本机并未持有它。代理监听在端口 59093。只有当上级把发往该地址的入站连接转发到本机时，下面的链接才可用；否则请用 S5_SERVER_IPV4 和 S5_SERVER_PORT 指定客户端真正使用的地址和端口。
+show.port.mapped|56447|59093||the links below use port 56447 while the proxy listens on port 59093. That mapping comes from S5_SERVER_PORT; the script does not create it.|下面的链接使用端口 56447，而代理监听在端口 59093。该映射来自 S5_SERVER_PORT，脚本不会创建它。
 CATALOG
 
 S5_LANG=en

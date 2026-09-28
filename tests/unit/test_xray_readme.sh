@@ -58,8 +58,10 @@ for _doc in README.md README.zh-CN.md; do
             'an actual short write reports observed and expected bytes' "$_doctext"
         assert_contains "English update docs retain a verified blank port" \
             'blank port keeps the current port only after its listener is verified' "$_doctext"
-        assert_contains "English update docs rotate blank credentials" \
-            'Blank username and password answers generate new values' "$_doctext"
+        assert_contains "English port docs name the listen-port override" \
+            'S5_LISTEN_PORT' "$_doctext"
+        assert_contains "English update docs keep blank credentials" \
+            'Blank username and password answers keep their current values' "$_doctext"
         assert_contains "English status docs report installed release" \
             '`status` reports the installed release' "$_doctext"
         assert_contains "English update docs name pinned artifact replacement" \
@@ -74,8 +76,10 @@ for _doc in README.md README.zh-CN.md; do
             '实际短写会报告已写入和预期字节数' "$_doctext"
         assert_contains "Chinese update docs retain a verified blank port" \
             '更新时端口留空，仅在确认当前监听器属于本次安装后保留原端口' "$_doctext"
-        assert_contains "Chinese update docs rotate blank credentials" \
-            '账户名或密码留空会生成新值' "$_doctext"
+        assert_contains "Chinese port docs name the listen-port override" \
+            'S5_LISTEN_PORT' "$_doctext"
+        assert_contains "Chinese update docs keep blank credentials" \
+            '账户名或密码留空会保留当前值' "$_doctext"
         assert_contains "Chinese status docs report installed release" \
             '`status` 报告的是已安装版本' "$_doctext"
         assert_contains "Chinese update docs name pinned artifact replacement" \
