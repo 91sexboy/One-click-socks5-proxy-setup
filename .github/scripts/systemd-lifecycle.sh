@@ -120,8 +120,8 @@ printf 'lifecycle: update-ok\n'
 sudo sh .github/scripts/run-socks5.sh status \
   "$work/answers.empty" "$work/status.log" "$work/pass.update" "$work/pass"
 printf 'lifecycle: status-ok\n'
-# status always exits 0 by design (README.md), so the log content is the only
-# signal. The heading carries "mixed" on its own, which left a listener degraded
+# This healthy systemd status is informational, so output evidence rather than
+# a zero exit alone proves the listener is ready. The heading carries "mixed" on its own, which left a listener degraded
 # to service.listen or service.unverified passing: match the service.ready line
 # for the installed port, and the protocol summary in the status line rather than
 # the word in the heading.

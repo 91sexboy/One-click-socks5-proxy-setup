@@ -139,7 +139,9 @@ S5_LOCKDIR=$S5_ROOTDIR/run/$S5_PROJECT.lock
 S5_LOCK_OWNER=$S5_LOCKDIR/owner
 S5_TXNDIR=$S5_STATEDIR/transaction
 S5_TXN_COMMITTED=$S5_TXNDIR/committed
+S5_TXN_ROLLED_BACK=$S5_TXNDIR/rolled-back
 S5_TXN_STOPPING=$S5_TXNDIR/stopping
+S5_TXN_UNIT_REPLACING=$S5_TXNDIR/unit-replacing
 S5_UNINSTALL_STATE=$S5_STATEDIR/uninstall
 S5_UNINSTALL_FINAL=$S5_ROOTDIR/var/lib/.xray-socks5-uninstall
 S5_PIDFILE=$S5_ROOTDIR/run/$S5_PROJECT.pid
@@ -199,6 +201,7 @@ s5_msg() {
     install.done) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf 'Xray mixed 代理安装完成。' ;; en) printf 'Xray mixed proxy installation completed.' ;; esac ;;
     install.updated) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '配置已更新，Xray 已重新启动并验证。' ;; en) printf 'configuration updated; Xray restarted and verified.' ;; esac ;;
     install.card.hidden) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '连接信息未显示；请在终端运行 sh socks5.sh show 查看。' ;; en) printf 'connection details were not displayed; run sh socks5.sh show in a terminal to view them.' ;; esac ;;
+    openrc.logging.unavailable) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '未发现 /dev/log，Xray 的标准输出和错误日志可能不可用；请在 Alpine 上运行 rc-service syslog start 和 rc-update add syslog default，然后运行 sh socks5.sh restart。' ;; en) printf 'Xray stdout and stderr logging may be unavailable because /dev/log was not found; on Alpine, run rc-service syslog start and rc-update add syslog default, then run sh socks5.sh restart.' ;; esac ;;
     install.cancelled) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '操作已取消。' ;; en) printf 'operation cancelled.' ;; esac ;;
     asset.download) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '正在下载并校验 Xray 资产：%s。' "$1" ;; en) printf 'downloading and verifying Xray asset: %s.' "$1" ;; esac ;;
     asset.invalid) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf 'Xray 资产校验失败：%s。' "$1" ;; en) printf 'Xray asset verification failed: %s.' "$1" ;; esac ;;
@@ -230,6 +233,7 @@ s5_msg() {
     state.unsupported) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf 'state 架构不受支持：%s。已保留资源。' "$1" ;; en) printf 'unsupported state schema: %s. Resources were preserved.' "$1" ;; esac ;;
     status.state.running) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '运行中' ;; en) printf 'running' ;; esac ;;
     status.state.stopped) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '已停止' ;; en) printf 'stopped' ;; esac ;;
+    status.state.crashed) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '已崩溃' ;; en) printf 'crashed' ;; esac ;;
     status.state.unverified) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '未验证' ;; en) printf 'unverified' ;; esac ;;
     status.heading) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf 'Xray mixed 代理状态：' ;; en) printf 'Xray mixed proxy status:' ;; esac ;;
     status.line) [ "$#" -eq 3 ] || return 1; case "$S5_LANG" in zh) printf '服务：%s；端口：%s；账户：%s；协议：mixed（SOCKS5 + HTTP）；认证：password；UDP：关闭' "$1" "$2" "$3" ;; en) printf 'service: %s; port: %s; username: %s; protocol: mixed (SOCKS5 + HTTP); auth: password; UDP: disabled' "$1" "$2" "$3" ;; esac ;;
@@ -1409,7 +1413,7 @@ command="$S5_BIN"
 command_args="run -c $S5_CFG"
 command_user="$S5_SERVICE_USER:$S5_SERVICE_GROUP"
 supervisor="supervise-daemon"
-respawn_max=1
+respawn_max=2
 respawn_period=60
 respawn_delay=1
 output_logger="logger -t $S5_PROJECT -p daemon.info"
@@ -2058,8 +2062,10 @@ s5_service_state() {
         # which supervise-daemon leaves behind while the supervised process is
         # still alive and still holding the port, and 1 is a plain rc-service
         # error; treating either as stopped let uninstall delete everything from
-        # under a live proxy. Unknown means unverified, as on systemd.
-        case $? in 0 | 8) return 0 ;; 3) return 1 ;; *) return 2 ;; esac
+        # under a live proxy. 32 positively reports a crashed child but the
+        # supervisor is still managed, so it is distinct for status while every
+        # destructive stop boundary continues to fail closed on it.
+        case $? in 0 | 8) return 0 ;; 3) return 1 ;; 32) return 3 ;; *) return 2 ;; esac
         ;;
     *)
         systemctl is-active "$S5_PROJECT.service" >/dev/null 2>&1
@@ -2202,9 +2208,20 @@ s5_transaction_file_contract() {
 s5_transaction_contract() {
     s5_path_contract "$S5_TXNDIR" dir root:root 700 || return 1
     for _stc_path in "$S5_TXNDIR/old.config.json" "$S5_TXNDIR/old.state" \
-        "$S5_TXNDIR/old.xray" "$S5_TXN_COMMITTED" "$S5_TXN_STOPPING"; do
+        "$S5_TXNDIR/old.xray" "$S5_TXNDIR/old.unit" \
+        "$S5_TXN_COMMITTED" "$S5_TXN_ROLLED_BACK" "$S5_TXN_STOPPING" \
+        "$S5_TXN_UNIT_REPLACING"; do
         s5_transaction_file_contract "$_stc_path" || return 1
     done
+    if { [ -e "$S5_TXNDIR/old.unit" ] || [ -L "$S5_TXNDIR/old.unit" ]; } &&
+        [ "$S5_INIT" != openrc ]; then return 1; fi
+    if [ -f "$S5_TXN_UNIT_REPLACING" ] && [ ! -L "$S5_TXN_UNIT_REPLACING" ] &&
+        { { [ ! -f "$S5_TXN_COMMITTED" ] || [ -L "$S5_TXN_COMMITTED" ]; } &&
+          { [ ! -f "$S5_TXN_ROLLED_BACK" ] || [ -L "$S5_TXN_ROLLED_BACK" ]; }; }; then
+        [ "$S5_INIT" = openrc ] && [ -f "$S5_TXN_STOPPING" ] &&
+            [ ! -L "$S5_TXN_STOPPING" ] && [ -f "$S5_TXNDIR/old.unit" ] &&
+            [ ! -L "$S5_TXNDIR/old.unit" ] || return 1
+    fi
     for _stc_path in "$S5_TXNDIR"/.s5new.* "$S5_TXNDIR"/.s5tmp.*; do
         [ -e "$_stc_path" ] || [ -L "$_stc_path" ] || continue
         s5_path_contract "$_stc_path" file root:root 600 || return 1
@@ -2213,7 +2230,8 @@ s5_transaction_contract() {
         [ -e "$_stc_path" ] || [ -L "$_stc_path" ] || continue
         case "$_stc_path" in
         "$S5_TXNDIR/old.config.json"|"$S5_TXNDIR/old.state"|"$S5_TXNDIR/old.xray"| \
-        "$S5_TXN_COMMITTED"|"$S5_TXN_STOPPING"|"$S5_TXNDIR"/.s5new.*|"$S5_TXNDIR"/.s5tmp.*) ;;
+        "$S5_TXNDIR/old.unit"|"$S5_TXN_COMMITTED"|"$S5_TXN_ROLLED_BACK"| \
+        "$S5_TXN_STOPPING"|"$S5_TXN_UNIT_REPLACING"|"$S5_TXNDIR"/.s5new.*|"$S5_TXNDIR"/.s5tmp.*) ;;
         *) return 1 ;;
         esac
     done
@@ -2223,7 +2241,14 @@ s5_transaction_contract() {
 s5_cleanup_transaction() {
     [ -e "$S5_TXNDIR" ] || [ -L "$S5_TXNDIR" ] || return 0
     s5_transaction_contract || return 1
-    for _sctf in "$S5_TXNDIR"/old.config.json "$S5_TXNDIR"/old.state "$S5_TXNDIR"/old.xray \
+    _sct_authority=''
+    [ ! -f "$S5_TXN_COMMITTED" ] || _sct_authority=committed
+    [ ! -f "$S5_TXN_ROLLED_BACK" ] || _sct_authority=rolled-back
+    # Remove the intent marker before old.unit. A hard kill between those two
+    # deletions then leaves a replayable extra backup, never a marker whose
+    # required rollback copy has already disappeared.
+    for _sctf in "$S5_TXN_UNIT_REPLACING" "$S5_TXNDIR"/old.config.json \
+        "$S5_TXNDIR"/old.state "$S5_TXNDIR"/old.xray "$S5_TXNDIR"/old.unit \
         "$S5_TXNDIR"/.s5new.* "$S5_TXNDIR"/.s5tmp.* "$S5_TXN_STOPPING"; do
         [ -e "$_sctf" ] || [ -L "$_sctf" ] || continue
         [ ! -L "$_sctf" ] && [ -f "$_sctf" ] || return 1
@@ -2231,11 +2256,20 @@ s5_cleanup_transaction() {
     done
     # Keep the commit marker through a failed rmdir so the next process cannot
     # mistake a partial delete-only cleanup for a rollback pair.
-    rm -f "$S5_TXN_COMMITTED" || return 1
+    rm -f "$S5_TXN_COMMITTED" "$S5_TXN_ROLLED_BACK" || return 1
     rmdir "$S5_TXNDIR" || {
-        s5_atomic_write "$S5_TXN_COMMITTED" root:root 0600 <<COMMITTED || return 1
+        case "$_sct_authority" in
+        rolled-back)
+            s5_atomic_write "$S5_TXN_ROLLED_BACK" root:root 0600 <<ROLLED_BACK || return 1
+rolled-back
+ROLLED_BACK
+            ;;
+        *)
+            s5_atomic_write "$S5_TXN_COMMITTED" root:root 0600 <<COMMITTED || return 1
 committed
 COMMITTED
+            ;;
+        esac
         return 1
     }
     S5_CREATED_TRANSACTION=0
@@ -2245,10 +2279,11 @@ COMMITTED
 s5_transaction_recover() {
     [ -e "$S5_TXNDIR" ] || [ -L "$S5_TXNDIR" ] || return 0
     s5_transaction_contract || return 1
-    if [ -f "$S5_TXN_COMMITTED" ] && [ ! -L "$S5_TXN_COMMITTED" ]; then
-        # Delete-only cleanup is allowed only while the newly authoritative state
-        # still validates. Drift preserves the old backups for diagnosis; they
-        # are never restored after the commit marker exists.
+    if { [ -f "$S5_TXN_COMMITTED" ] && [ ! -L "$S5_TXN_COMMITTED" ]; } ||
+        { [ -f "$S5_TXN_ROLLED_BACK" ] && [ ! -L "$S5_TXN_ROLLED_BACK" ]; }; then
+        # Delete-only cleanup is allowed only while the authoritative state still
+        # validates. Drift preserves remaining backups for diagnosis; a committed
+        # update and a completed rollback are never reversed during cleanup.
         s5_state_load || return 1
         s5_cleanup_transaction
         return $?
@@ -2599,11 +2634,17 @@ ROLLBACK_FIELDS
     _stvr_unit_mode=644
     _stvr_unit_type='file'
     if [ "$S5_INIT" = openrc ]; then _stvr_unit_mode=755; _stvr_unit_type='exec'; fi
-    s5_path_contract "$S5_SERVICE_ARTIFACT" "$_stvr_unit_type" root:root "$_stvr_unit_mode" || return 1
+    _stvr_unit=$S5_SERVICE_ARTIFACT
+    if [ -f "$S5_TXNDIR/old.unit" ] && [ ! -L "$S5_TXNDIR/old.unit" ]; then
+        s5_path_contract "$S5_TXNDIR/old.unit" file root:root 600 || return 1
+        _stvr_unit=$S5_TXNDIR/old.unit
+    else
+        s5_path_contract "$S5_SERVICE_ARTIFACT" "$_stvr_unit_type" root:root "$_stvr_unit_mode" || return 1
+    fi
     s5_path_contract "$S5_CFG" file "root:$S5_SERVICE_GROUP" 640 || return 1
     s5_path_contract "$S5_STATE" file root:root 600 || return 1
     s5_path_contract "$S5_BIN" exec root:root 755 || return 1
-    [ "$(s5_sha256 "$S5_SERVICE_ARTIFACT" 2>/dev/null)" = "$_stvr_unit_sha" ] || return 1
+    [ "$(s5_sha256 "$_stvr_unit" 2>/dev/null)" = "$_stvr_unit_sha" ] || return 1
     [ "$(s5_sha256 "$S5_TXNDIR/old.config.json" 2>/dev/null)" = "$_stvr_config_sha" ] || return 1
     _stvr_binary=$S5_BIN
     [ ! -e "$S5_TXNDIR/old.xray" ] || _stvr_binary=$S5_TXNDIR/old.xray
@@ -2615,6 +2656,11 @@ ROLLBACK_FIELDS
 s5_restore_transaction() {
     _srtcfg=$1
     _srtstate=$2
+    if [ -f "$S5_TXNDIR/old.unit" ] && [ ! -L "$S5_TXNDIR/old.unit" ]; then
+        if ! s5_atomic_write "$S5_SERVICE_ARTIFACT" root:root 0755 \
+            <"$S5_TXNDIR/old.unit"; then return 1; fi
+        s5_svc reload || return 1
+    fi
     if ! s5_atomic_write "$S5_CFG" "root:$S5_SERVICE_GROUP" 0640 <"$_srtcfg"; then return 1; fi
     if ! s5_atomic_write "$S5_STATE" root:root 0600 <"$_srtstate"; then return 1; fi
     return 0
@@ -2641,6 +2687,12 @@ s5_update_rollback() {
     if [ "$S5_SERVICE_TOUCHED" = 1 ]; then
         s5_svc restart || { s5_msg_err service.start; return 1; }
     fi
+    s5_atomic_write "$S5_TXN_ROLLED_BACK" root:root 0600 <<ROLLED_BACK || {
+rolled-back
+ROLLED_BACK
+        s5_msg_err transaction.restore "$S5_TXNDIR"
+        return 1
+    }
     S5_CONFIG_REPLACED=0
     S5_BINARY_REPLACED=0
     S5_SERVICE_TOUCHED=0
@@ -2741,9 +2793,15 @@ s5_install_update() {
     _sioldcfg=$S5_TXNDIR/old.config.json
     _sioldstate=$S5_TXNDIR/old.state
     _sioldbin=$S5_TXNDIR/old.xray
+    _sioldunit=$S5_TXNDIR/old.unit
     cp "$S5_CFG" "$_sioldcfg" || return 1
     cp "$S5_STATE" "$_sioldstate" || return 1
     chmod 0600 "$_sioldcfg" "$_sioldstate" || return 1
+    if [ "$S5_INIT" = openrc ]; then
+        cp "$S5_SERVICE_ARTIFACT" "$_sioldunit" || return 1
+        if [ "${S5_SKIP_OWNERSHIP:-0}" != 1 ]; then chown root:root "$_sioldunit" || return 1; fi
+        chmod 0600 "$_sioldunit" || return 1
+    fi
     if [ "$S5_UPDATE_NEEDS_BINARY" = 1 ]; then
         # The rollback copy is as large as the engine itself, and it is written
         # before anything is replaced, so a filesystem without room for it is named
@@ -2785,6 +2843,23 @@ STOPPING
         s5_svc start || true
         return 1
     fi
+    if [ "$S5_INIT" = openrc ]; then
+        s5_atomic_write "$S5_TXN_UNIT_REPLACING" root:root 0600 <<UNIT_REPLACING || {
+unit-replacing
+UNIT_REPLACING
+            s5_update_rollback "$_sioldcfg" "$_sioldstate"
+            return 1
+        }
+        if ! s5_write_unit || ! s5_record_digest service-artifact "$S5_SERVICE_ARTIFACT"; then
+            s5_update_rollback "$_sioldcfg" "$_sioldstate"
+            return 1
+        fi
+        S5_UNIT_SHA256=$S5_RECORDED_DIGEST
+        s5_svc reload || {
+            s5_update_rollback "$_sioldcfg" "$_sioldstate"
+            return 1
+        }
+    fi
     if ! s5_svc start; then
         s5_update_rollback "$_sioldcfg" "$_sioldstate"
         return 1
@@ -2824,6 +2899,12 @@ COMMITTED
     return 0
 }
 
+s5_warn_openrc_logging() {
+    [ "$S5_INIT" = openrc ] || return 0
+    [ -e "$S5_ROOTDIR/dev/log" ] || [ -L "$S5_ROOTDIR/dev/log" ] ||
+        s5_msg_warn openrc.logging.unavailable || true
+}
+
 s5_cmd_install() {
     s5_precheck install || return 1
     s5_lock_acquire || return 1
@@ -2855,6 +2936,7 @@ s5_cmd_install() {
     fi
     s5_lock_release || return 1
     trap - EXIT HUP INT TERM
+    s5_warn_openrc_logging
     if [ "$_siupdate" = 1 ]; then s5_msg_print install.updated; else s5_msg_print install.done; fi
     if [ -t 1 ]; then
         s5_render_card || s5_msg_warn install.card.hidden
@@ -2882,7 +2964,12 @@ s5_cmd_status() {
     s5_open_locked status || return 1
     s5_service_state
     _ssa=$?
-    case "$_ssa" in 0) _ssv=status.state.running ;; 1) _ssv=status.state.stopped ;; *) _ssv=status.state.unverified ;; esac
+    case "$_ssa" in
+    0) _ssv=status.state.running; _ssr=0 ;;
+    1) _ssv=status.state.stopped; _ssr=0 ;;
+    3) _ssv=status.state.crashed; _ssr=1 ;;
+    *) _ssv=status.state.unverified; _ssr=0 ;;
+    esac
     s5_msg_print status.heading
     s5_msg_print status.line "$(s5_msg "$_ssv")" "$S5_PORT" "$S5_USERNAME"
     s5_msg_print status.version "$S5_INSTALLED_RELEASE"
@@ -2894,7 +2981,7 @@ s5_cmd_status() {
     *) s5_msg_print service.unverified "$S5_PORT" ;;
     esac
     s5_lock_release || return 1
-    return 0
+    return "$_ssr"
 }
 
 # Returns a candidate line in S5_PUBLIC_IPV4_CANDIDATE, empty on failure; the

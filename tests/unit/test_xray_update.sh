@@ -873,7 +873,7 @@ test_older_release_download_failure() {
 }
 
 test_transaction_contract_drift() {
-    for _tcd_path in old.config.json old.state old.xray committed stopping; do
+    for _tcd_path in old.config.json old.state old.xray old.unit committed rolled-back stopping unit-replacing; do
         t_xray_fixture 23999
         t_xray_install
         mkdir -m 0700 "$S5_TXNDIR"
@@ -881,8 +881,11 @@ test_transaction_contract_drift() {
         old.config.json) cp "$S5_CFG" "$S5_TXNDIR/old.config.json" ;;
         old.state) cp "$S5_STATE" "$S5_TXNDIR/old.state" ;;
         old.xray) cp "$S5_BIN" "$S5_TXNDIR/old.xray" ;;
+        old.unit) cp "$S5_SERVICE_ARTIFACT" "$S5_TXNDIR/old.unit" ;;
         committed) printf 'committed\n' >"$S5_TXN_COMMITTED" ;;
+        rolled-back) printf 'rolled-back\n' >"$S5_TXN_ROLLED_BACK" ;;
         stopping) printf 'stopping\n' >"$S5_TXN_STOPPING" ;;
+        unit-replacing) printf 'unit-replacing\n' >"$S5_TXN_UNIT_REPLACING" ;;
         esac
         chmod 0644 "$S5_TXNDIR/$_tcd_path"
         t_run s5_transaction_recover
@@ -900,8 +903,31 @@ test_transaction_contract_drift() {
     assert_eq "valid binary backup cleanup succeeds" 0 "$?"
 }
 
+test_unit_replacing_requires_stopping_marker() {
+    t_xray_fixture 23456
+    S5_INIT=openrc
+    S5_OS_FAMILY=alpine
+    s5_select_service_artifact
+    mkdir -p "$S5_STATEDIR"
+    chmod 0700 "$S5_STATEDIR"
+    mkdir -m 0700 "$S5_TXNDIR"
+    printf 'verified old unit\n' >"$S5_TXNDIR/old.unit"
+    chmod 0600 "$S5_TXNDIR/old.unit"
+    printf 'unit-replacing\n' >"$S5_TXN_UNIT_REPLACING"
+    chmod 0600 "$S5_TXN_UNIT_REPLACING"
+    _urws_backup=$(t_sha256 "$S5_TXNDIR/old.unit")
+
+    t_run s5_transaction_recover
+    assert_ne "unit replacement without a stopping checkpoint fails closed" \
+        0 "$T_STATUS"
+    assert_eq "malformed unit transaction preserves its only rollback copy" \
+        "$_urws_backup" "$(t_sha256 "$S5_TXNDIR/old.unit")"
+    assert_file_exists "malformed unit transaction preserves its phase marker" \
+        "$S5_TXN_UNIT_REPLACING"
+}
+
 test_rollback_backup_drift() {
-    for _rbd_target in config state binary; do
+    for _rbd_target in config state binary unit; do
         t_xray_fixture 23456
         t_xray_install
         mkdir -m 0700 "$S5_TXNDIR"
@@ -915,6 +941,10 @@ test_rollback_backup_drift() {
             cp "$S5_BIN" "$S5_TXNDIR/old.xray"
             chmod 0600 "$S5_TXNDIR/old.xray"
             printf 'foreign binary\n' >>"$S5_TXNDIR/old.xray" ;;
+        unit)
+            cp "$S5_SERVICE_ARTIFACT" "$S5_TXNDIR/old.unit"
+            chmod 0600 "$S5_TXNDIR/old.unit"
+            printf 'foreign unit\n' >>"$S5_TXNDIR/old.unit" ;;
         esac
         _rbd_live_cfg=$(t_sha256 "$S5_CFG")
         _rbd_live_state=$(t_sha256 "$S5_STATE")
@@ -1203,7 +1233,316 @@ test_update_commit_cleanup_failure() {
     done
 }
 
-SCENARIOS='uninstall_confirmation uninstall_messages family update owned_port rejected_candidate listener_failure rejected_command publish_signal config_symlink uninstall_leftovers uninstall_residue verifier_cleanup txn_mkdir_failure txn_copy_failure txn_chmod_failure stop_failure wait_stopped_failure publication_failure new_start_failure dataplane_failure state_write_failure rollback_restart_failure restore_failure uninstall_unknown rollback_exit uninstall_group_residue uninstall_resume uninstall_signal_resume uninstall_resume_drift uninstall_phase_gap_resume uninstall_final_window older_release_operations older_release_update binary_ready_gate older_release_download_failure transaction_contract_drift rollback_backup_drift uninstall_directory_drift transaction_all_commands transaction_unknown_residue sha256_binary_update_failure sha256_config_update_failure update_commit_cleanup_failure existing_stage_failure existing_stage_cleanup_failure existing_stage_cleanup_restore_failure'
+test_rollback_cleanup_interruption_recovery() {
+    t_xray_fixture 23456
+    S5_INIT=openrc
+    S5_OS_FAMILY=alpine
+    s5_select_service_artifact
+    t_stub rc-service <<'RCSERVICE'
+#!/bin/sh
+case "$2" in
+start|restart)
+    port=$(sed -n 's/^[[:space:]]*"port":[[:space:]]*\([0-9][0-9]*\),*/\1/p' \
+        "$S5_STUB_CFG" | head -n 1)
+    printf '%s\n' "$port" >"$S5_TEST_ROOT/svc_active"
+    ;;
+stop) rm -f "$S5_TEST_ROOT/svc_active" ;;
+status) [ -f "$S5_TEST_ROOT/svc_active" ] && exit 0 || exit 3 ;;
+esac
+exit 0
+RCSERVICE
+    t_stub rc-update <<'RCUPDATE'
+#!/bin/sh
+exit 0
+RCUPDATE
+    t_xray_install
+    mkdir -m 0700 "$S5_TXNDIR"
+    cp "$S5_CFG" "$S5_TXNDIR/old.config.json"
+    cp "$S5_STATE" "$S5_TXNDIR/old.state"
+    cp "$S5_SERVICE_ARTIFACT" "$S5_TXNDIR/old.unit"
+    chmod 0600 "$S5_TXNDIR/old.config.json" "$S5_TXNDIR/old.state" \
+        "$S5_TXNDIR/old.unit"
+    printf 'stopping\n' >"$S5_TXN_STOPPING"
+    printf 'unit-replacing\n' >"$S5_TXN_UNIT_REPLACING"
+    chmod 0600 "$S5_TXN_STOPPING" "$S5_TXN_UNIT_REPLACING"
+    S5_SERVICE_TOUCHED=1
+
+    _rci_real_rm=/usr/bin/rm
+    [ -x "$_rci_real_rm" ] || _rci_real_rm=/bin/rm
+    _rci_fired=0
+    rm() {
+        if [ "${2:-}" = "$S5_TXNDIR/old.state" ] && [ "$_rci_fired" = 0 ]; then
+            _rci_fired=1
+            return 79
+        fi
+        "$_rci_real_rm" "$@"
+    }
+    t_run s5_update_rollback "$S5_TXNDIR/old.config.json" "$S5_TXNDIR/old.state"
+    assert_ne "interrupted rollback cleanup reports incomplete cleanup" 0 "$T_STATUS"
+    assert_file_absent "interrupted cleanup already removed old.config" \
+        "$S5_TXNDIR/old.config.json"
+    assert_file_exists "interrupted cleanup still has old.state" \
+        "$S5_TXNDIR/old.state"
+    unset -f rm
+
+    t_run s5_transaction_recover
+    assert_eq "the next command finishes cleanup after a successful rollback" \
+        0 "$T_STATUS"
+    assert_file_absent "resumed rollback cleanup removes the transaction" "$S5_TXNDIR"
+    t_xray_assert_healthy
+}
+
+test_openrc_committed_unit_cleanup_recovery() {
+    t_xray_fixture 23456
+    S5_INIT=openrc
+    S5_OS_FAMILY=alpine
+    s5_select_service_artifact
+    t_stub rc-service <<'RCSERVICE'
+#!/bin/sh
+case "$2" in
+start|restart)
+    port=$(sed -n 's/^[[:space:]]*"port":[[:space:]]*\([0-9][0-9]*\),*/\1/p' \
+        "$S5_STUB_CFG" | head -n 1)
+    printf '%s\n' "$port" >"$S5_TEST_ROOT/svc_active"
+    ;;
+stop) rm -f "$S5_TEST_ROOT/svc_active" ;;
+status) [ -f "$S5_TEST_ROOT/svc_active" ] && exit 0 || exit 3 ;;
+esac
+exit 0
+RCSERVICE
+    t_stub rc-update <<'RCUPDATE'
+#!/bin/sh
+exit 0
+RCUPDATE
+    t_xray_install
+
+    # A committed transaction never rolls back. This is the durable shape after
+    # cleanup has removed old.unit but was interrupted before removing the
+    # unit-replacing marker and directory.
+    mkdir -m 0700 "$S5_TXNDIR"
+    printf 'committed\n' >"$S5_TXN_COMMITTED"
+    printf 'unit-replacing\n' >"$S5_TXN_UNIT_REPLACING"
+    chmod 0600 "$S5_TXN_COMMITTED" "$S5_TXN_UNIT_REPLACING"
+    t_run s5_transaction_recover
+    assert_eq "committed unit cleanup resumes without a rollback copy" 0 "$T_STATUS"
+    assert_file_absent "committed unit cleanup removes the partial transaction" \
+        "$S5_TXNDIR"
+    t_xray_assert_healthy
+}
+
+test_openrc_unit_migration() {
+    t_xray_fixture 23456
+    S5_INIT=openrc
+    S5_OS_FAMILY=alpine
+    s5_select_service_artifact
+    t_stub rc-service <<'RCSERVICE'
+#!/bin/sh
+case "$2" in
+start|restart)
+    port=$(sed -n 's/^[[:space:]]*"port":[[:space:]]*\([0-9][0-9]*\),*/\1/p' \
+        "$S5_STUB_CFG" | head -n 1)
+    printf '%s\n' "$port" >"$S5_TEST_ROOT/svc_active"
+    ;;
+stop) rm -f "$S5_TEST_ROOT/svc_active" ;;
+status) [ -f "$S5_TEST_ROOT/svc_active" ] && exit 0 || exit 3 ;;
+esac
+exit 0
+RCSERVICE
+    t_stub rc-update <<'RCUPDATE'
+#!/bin/sh
+exit 0
+RCUPDATE
+    t_xray_install
+    # Synthesize a self-consistent pre-fix installation: both the published unit
+    # and the authoritative state digest describe the historical one-respawn
+    # policy. The public update must migrate this, not only fresh installs.
+    sed 's/^respawn_max=2$/respawn_max=1/' "$S5_SERVICE_ARTIFACT" \
+        >"$S5_TEST_ROOT/legacy.unit"
+    cat "$S5_TEST_ROOT/legacy.unit" >"$S5_SERVICE_ARTIFACT"
+    chmod 0755 "$S5_SERVICE_ARTIFACT"
+    _oum_old_unit=$(t_sha256 "$S5_SERVICE_ARTIFACT")
+    awk -F '\t' -v h="$_oum_old_unit" 'BEGIN {OFS="\t"} $1=="unit_sha256" {$2=h} {print}' \
+        "$S5_STATE" >"$S5_TEST_ROOT/legacy.state"
+    cat "$S5_TEST_ROOT/legacy.state" >"$S5_STATE"
+    chmod 0600 "$S5_STATE"
+    assert_contains "legacy OpenRC fixture starts with one respawn" \
+        'respawn_max=1' "$(cat "$S5_SERVICE_ARTIFACT")"
+    assert_eq "legacy state records its original service artifact" \
+        "$_oum_old_unit" "$(t_state_get unit_sha256)"
+    t_run s5_state_load
+    assert_eq "the synthesized legacy installation is valid" 0 "$T_STATUS"
+
+    s5_precheck() { return 0; }
+    t_run s5_cmd_install
+    assert_eq "OpenRC in-place update migrates the service policy" 0 "$T_STATUS"
+    assert_contains "updated OpenRC service permits two rapid recoveries" \
+        'respawn_max=2' "$(cat "$S5_SERVICE_ARTIFACT")"
+    assert_ne "OpenRC service migration replaces the legacy artifact" \
+        "$_oum_old_unit" "$(t_sha256 "$S5_SERVICE_ARTIFACT")"
+    assert_eq "updated state records the migrated service artifact" \
+        "$(t_sha256 "$S5_SERVICE_ARTIFACT")" "$(t_state_get unit_sha256)"
+    assert_file_absent "service migration leaves no transaction" "$S5_TXNDIR"
+    t_xray_assert_healthy
+}
+
+test_openrc_unit_migration_rollback() {
+    t_xray_fixture 23456
+    S5_INIT=openrc
+    S5_OS_FAMILY=alpine
+    s5_select_service_artifact
+    t_stub rc-service <<'RCSERVICE'
+#!/bin/sh
+case "$2" in
+start|restart)
+    port=$(sed -n 's/^[[:space:]]*"port":[[:space:]]*\([0-9][0-9]*\),*/\1/p' \
+        "$S5_STUB_CFG" | head -n 1)
+    printf '%s\n' "$port" >"$S5_TEST_ROOT/svc_active"
+    ;;
+stop) rm -f "$S5_TEST_ROOT/svc_active" ;;
+status) [ -f "$S5_TEST_ROOT/svc_active" ] && exit 0 || exit 3 ;;
+esac
+exit 0
+RCSERVICE
+    t_stub rc-update <<'RCUPDATE'
+#!/bin/sh
+exit 0
+RCUPDATE
+    t_xray_install
+    sed 's/^respawn_max=2$/respawn_max=1/' "$S5_SERVICE_ARTIFACT" \
+        >"$S5_TEST_ROOT/legacy.unit"
+    cat "$S5_TEST_ROOT/legacy.unit" >"$S5_SERVICE_ARTIFACT"
+    chmod 0755 "$S5_SERVICE_ARTIFACT"
+    _our_old_unit=$(t_sha256 "$S5_SERVICE_ARTIFACT")
+    awk -F '\t' -v h="$_our_old_unit" 'BEGIN {OFS="\t"} $1=="unit_sha256" {$2=h} {print}' \
+        "$S5_STATE" >"$S5_TEST_ROOT/legacy.state"
+    cat "$S5_TEST_ROOT/legacy.state" >"$S5_STATE"
+    chmod 0600 "$S5_STATE"
+    _our_old_state=$(t_sha256 "$S5_STATE")
+    _our_old_config=$(t_sha256 "$S5_CFG")
+
+    s5_precheck() { return 0; }
+    s5_state_write() { return 77; }
+    t_run s5_cmd_install
+    assert_ne "state failure aborts OpenRC service migration" 0 "$T_STATUS"
+    assert_eq "failed migration restores the exact legacy unit" \
+        "$_our_old_unit" "$(t_sha256 "$S5_SERVICE_ARTIFACT")"
+    assert_contains "failed migration restores the one-respawn policy" \
+        'respawn_max=1' "$(cat "$S5_SERVICE_ARTIFACT")"
+    assert_eq "failed migration restores the exact old state" \
+        "$_our_old_state" "$(t_sha256 "$S5_STATE")"
+    assert_eq "failed migration restores the exact old config" \
+        "$_our_old_config" "$(t_sha256 "$S5_CFG")"
+    assert_eq "failed migration restarts the old listener" 23456 \
+        "$(cat "$S5_TEST_ROOT/svc_active")"
+    assert_file_absent "successful unit rollback removes transaction evidence" "$S5_TXNDIR"
+    t_xray_assert_healthy
+}
+
+test_openrc_unit_transaction_recovery() {
+    t_xray_fixture 23456
+    S5_INIT=openrc
+    S5_OS_FAMILY=alpine
+    s5_select_service_artifact
+    t_stub rc-service <<'RCSERVICE'
+#!/bin/sh
+case "$2" in
+start|restart)
+    port=$(sed -n 's/^[[:space:]]*"port":[[:space:]]*\([0-9][0-9]*\),*/\1/p' \
+        "$S5_STUB_CFG" | head -n 1)
+    printf '%s\n' "$port" >"$S5_TEST_ROOT/svc_active"
+    ;;
+stop) rm -f "$S5_TEST_ROOT/svc_active" ;;
+status) [ -f "$S5_TEST_ROOT/svc_active" ] && exit 0 || exit 3 ;;
+esac
+exit 0
+RCSERVICE
+    t_stub rc-update <<'RCUPDATE'
+#!/bin/sh
+exit 0
+RCUPDATE
+    t_xray_install
+
+    # Construct the durable shape left by a hard interruption after publishing a
+    # new unit but before committing its digest to state.
+    sed 's/^respawn_max=2$/respawn_max=1/' "$S5_SERVICE_ARTIFACT" \
+        >"$S5_TEST_ROOT/legacy.unit"
+    cat "$S5_TEST_ROOT/legacy.unit" >"$S5_SERVICE_ARTIFACT"
+    chmod 0755 "$S5_SERVICE_ARTIFACT"
+    _outr_old_unit=$(t_sha256 "$S5_SERVICE_ARTIFACT")
+    awk -F '\t' -v h="$_outr_old_unit" 'BEGIN {OFS="\t"} $1=="unit_sha256" {$2=h} {print}' \
+        "$S5_STATE" >"$S5_TEST_ROOT/legacy.state"
+    cat "$S5_TEST_ROOT/legacy.state" >"$S5_STATE"
+    chmod 0600 "$S5_STATE"
+    _outr_old_state=$(t_sha256 "$S5_STATE")
+    _outr_old_config=$(t_sha256 "$S5_CFG")
+
+    mkdir -m 0700 "$S5_TXNDIR"
+    cp "$S5_CFG" "$S5_TXNDIR/old.config.json"
+    cp "$S5_STATE" "$S5_TXNDIR/old.state"
+    cp "$S5_SERVICE_ARTIFACT" "$S5_TXNDIR/old.unit"
+    chmod 0600 "$S5_TXNDIR/old.config.json" "$S5_TXNDIR/old.state" \
+        "$S5_TXNDIR/old.unit"
+    printf 'stopping\n' >"$S5_TXN_STOPPING"
+    printf 'unit-replacing\n' >"$S5_TXN_UNIT_REPLACING"
+    chmod 0600 "$S5_TXN_STOPPING" "$S5_TXN_UNIT_REPLACING"
+    s5_write_unit
+    assert_contains "interrupted fixture has the uncommitted new unit" \
+        'respawn_max=2' "$(cat "$S5_SERVICE_ARTIFACT")"
+
+    s5_precheck() { return 0; }
+    t_run s5_cmd_status
+    assert_eq "the next command recovers an interrupted unit migration" 0 "$T_STATUS"
+    assert_eq "hard-crash recovery restores the exact old unit" \
+        "$_outr_old_unit" "$(t_sha256 "$S5_SERVICE_ARTIFACT")"
+    assert_eq "hard-crash recovery restores the exact old state" \
+        "$_outr_old_state" "$(t_sha256 "$S5_STATE")"
+    assert_eq "hard-crash recovery restores the exact old config" \
+        "$_outr_old_config" "$(t_sha256 "$S5_CFG")"
+    assert_contains "hard-crash recovery restores the old service policy" \
+        'respawn_max=1' "$(cat "$S5_SERVICE_ARTIFACT")"
+    assert_eq "hard-crash recovery restarts the old listener" 23456 \
+        "$(cat "$S5_TEST_ROOT/svc_active")"
+    assert_file_absent "hard-crash recovery removes the completed transaction" \
+        "$S5_TXNDIR"
+    t_xray_assert_healthy
+}
+
+test_openrc_logging_warning() {
+    t_xray_fixture 23456
+    S5_INIT=openrc
+    S5_OS_FAMILY=alpine
+    s5_select_service_artifact
+    t_stub rc-service <<'RCSERVICE'
+#!/bin/sh
+case "$2" in
+start|restart)
+    port=$(sed -n 's/^[[:space:]]*"port":[[:space:]]*\([0-9][0-9]*\),*/\1/p' \
+        "$S5_STUB_CFG" | head -n 1)
+    printf '%s\n' "$port" >"$S5_TEST_ROOT/svc_active"
+    ;;
+stop) rm -f "$S5_TEST_ROOT/svc_active" ;;
+status) [ -f "$S5_TEST_ROOT/svc_active" ] && exit 0 || exit 3 ;;
+esac
+exit 0
+RCSERVICE
+    t_stub rc-update <<'RCUPDATE'
+#!/bin/sh
+exit 0
+RCUPDATE
+    t_xray_install
+    s5_precheck() { return 0; }
+    t_run s5_cmd_install
+    assert_eq "OpenRC update succeeds without a syslog endpoint" 0 "$T_STATUS"
+    assert_contains "OpenRC update warns when /dev/log is absent" '/dev/log' "$T_OUT"
+    assert_eq "OpenRC update emits the missing-syslog warning once" 1 \
+        "$(printf '%s\n' "$T_OUT" | grep -c '/dev/log')"
+    assert_file_absent "OpenRC logging warning leaves no transaction" "$S5_TXNDIR"
+    assert_file_absent "OpenRC logging warning is issued after releasing the lock" \
+        "$S5_LOCKDIR"
+    t_xray_assert_healthy
+}
+
+SCENARIOS='rollback_cleanup_interruption_recovery openrc_committed_unit_cleanup_recovery openrc_unit_migration openrc_unit_migration_rollback openrc_unit_transaction_recovery openrc_logging_warning uninstall_confirmation uninstall_messages family update owned_port rejected_candidate listener_failure rejected_command publish_signal config_symlink uninstall_leftovers uninstall_residue verifier_cleanup txn_mkdir_failure txn_copy_failure txn_chmod_failure stop_failure wait_stopped_failure publication_failure new_start_failure dataplane_failure state_write_failure rollback_restart_failure restore_failure uninstall_unknown rollback_exit uninstall_group_residue uninstall_resume uninstall_signal_resume uninstall_resume_drift uninstall_phase_gap_resume uninstall_final_window older_release_operations older_release_update binary_ready_gate older_release_download_failure transaction_contract_drift unit_replacing_requires_stopping_marker rollback_backup_drift uninstall_directory_drift transaction_all_commands transaction_unknown_residue sha256_binary_update_failure sha256_config_update_failure update_commit_cleanup_failure existing_stage_failure existing_stage_cleanup_failure existing_stage_cleanup_restore_failure'
 if [ "$#" -eq 0 ]; then
     # Expand the fixed scenario words into the default argument list.
     # shellcheck disable=SC2086

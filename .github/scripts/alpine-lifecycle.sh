@@ -45,8 +45,12 @@ if apk info -e unzip >/dev/null 2>&1; then
   exit 1
 fi
 pkgs_before_install=$(apk info | sort | sha256sum)
+# A bare Alpine container has no syslog endpoint. The installer must expose that
+# fact rather than letting logger discard Xray diagnostics silently.
+test ! -e /dev/log
 sh .github/scripts/run-socks5.sh install \
   "$work/answers" "$work/install.log" "$work/pass"
+test "$(grep -cF '/dev/log' "$work/install.log")" = 1
 if apk info -e unzip >/dev/null 2>&1; then
   printf 'raw installation added an unnecessary unzip package\n' >&2
   exit 1
@@ -70,11 +74,31 @@ if [ "${ALPINE_HOSTILE_CURL:-0}" = 1 ]; then
   export PATH
 fi
 
+# Exercise upgrade, not only fresh generation: make the installed OpenRC
+# artifact and its recorded digest a self-consistent pre-fix installation with
+# one respawn. Updating must transactionally migrate both back to the new policy.
+sed 's/^respawn_max=2$/respawn_max=1/' /etc/init.d/xray-socks5 >"$work/legacy.unit"
+cat "$work/legacy.unit" >/etc/init.d/xray-socks5
+chmod 0755 /etc/init.d/xray-socks5
+legacy_unit_sha=$(sha256sum /etc/init.d/xray-socks5 | awk '{print $1}')
+awk -F '\t' -v h="$legacy_unit_sha" 'BEGIN {OFS="\t"} $1=="unit_sha256" {$2=h} {print}' \
+  /var/lib/xray-socks5/state >"$work/legacy.state"
+cat "$work/legacy.state" >/var/lib/xray-socks5/state
+chmod 0600 /var/lib/xray-socks5/state
+grep -qxF 'respawn_max=1' /etc/init.d/xray-socks5
+grep -qxF "unit_sha256	$legacy_unit_sha" /var/lib/xray-socks5/state
+
 # SPEC 5: re-running install over an existing installation is an
-# in-place update. Rotate the credentials, keep the port, and require
-# the new identity in both the config and the state.
+# in-place update. Rotate the credentials, keep the port, migrate the service
+# policy, and require the new identity/digest in config and state.
 sh .github/scripts/run-socks5.sh install \
   "$work/answers.update" "$work/update.log" "$work/pass.update" "$work/pass"
+test "$(grep -cF '/dev/log' "$work/update.log")" = 1
+test ! -e /dev/log
+grep -qxF 'respawn_max=2' /etc/init.d/xray-socks5
+updated_unit_sha=$(sha256sum /etc/init.d/xray-socks5 | awk '{print $1}')
+test "$updated_unit_sha" != "$legacy_unit_sha"
+grep -qxF "unit_sha256	$updated_unit_sha" /var/lib/xray-socks5/state
 sh .github/scripts/lifecycle-update-assert.sh
 rc-service xray-socks5 status
 pkgs_after_install=$(apk info | sort | sha256sum)
@@ -85,15 +109,18 @@ sh .github/scripts/run-socks5.sh status \
 sh .github/scripts/run-socks5.sh restart \
   "$work/answers.empty" "$work/restart.log" "$work/pass.update" "$work/pass"
 rc-service xray-socks5 status
-# status always exits 0 by design (README.md), so the log content is the only
-# signal. The heading carries "mixed" on its own, which left a listener degraded
+# Healthy/stopped/unverified status is informational; only an explicit OpenRC
+# crash is nonzero. This healthy case still requires output evidence. The heading carries "mixed" on its own, which left a listener degraded
 # to service.listen or service.unverified passing: match the service.ready line
 # for the installed port, and the protocol summary in the status line rather than
 # the word in the heading.
 grep -qxF 'Xray is listening on port 23456.' "$work/status.log"
 grep -qF 'protocol: mixed (SOCKS5 + HTTP); auth: password; UDP: disabled' "$work/status.log"
-# SPEC 5: OpenRC recovers a crash with the listener returning, and a
-# configuration error does not enter an automatic restart loop.
+# SPEC 5: OpenRC recovers two rapid ordinary crashes with the listener
+# returning, while a configuration error remains bounded below. Record the
+# window so a slow runner cannot accidentally issue the second kill after the
+# configured 60-second retry period and make a broken counter look healthy.
+crash_window_started=$(date +%s)
 crash_pid=$(cat /run/openrc/options/xray-socks5/child_pid)
 test "$crash_pid" -gt 0
 kill -9 "$crash_pid"
@@ -103,30 +130,33 @@ crash_recovered() {
   test "$new_pid" != "$crash_pid" && test "$new_pid" -gt 0
 }
 # The assertions below remain authoritative after the final sleep.
-lifecycle_wait_until 60 1 crash_recovered || true
+lifecycle_wait_until 45 1 crash_recovered || true
 test "$new_pid" != "$crash_pid"
 test "$new_pid" -gt 0
 listener_recovered() {
   ss -H -ltnp 2>/dev/null | grep -q "pid=$new_pid,"
 }
-lifecycle_wait_until 60 1 listener_recovered || true
+lifecycle_wait_until 45 1 listener_recovered || true
 ss -H -ltnp | grep -q "pid=$new_pid,"
+
+# The second death is deliberately inside the same retry period. With the old
+# historical respawn_max=1 policy no second replacement child appeared. The
+# migrated policy grants exactly this second recoverable respawn.
+crash_pid=$new_pid
+new_pid=0
+kill -9 "$crash_pid"
+lifecycle_wait_until 45 1 crash_recovered || true
+test "$new_pid" != "$crash_pid"
+test "$new_pid" -gt 0
+lifecycle_wait_until 45 1 listener_recovered || true
+ss -H -ltnp | grep -q "pid=$new_pid,"
+test "$(( $(date +%s) - crash_window_started ))" -lt 60
 cp /etc/xray-socks5/config.json "$work/good.json"
 printf "{broken\n" >/etc/xray-socks5/config.json
-rc-service xray-socks5 restart || true
-service_stopped() {
-  if rc-service xray-socks5 status >/dev/null 2>&1; then return 1; fi
-}
-lifecycle_wait_until 30 1 service_stopped || true
-if rc-service xray-socks5 status >/dev/null 2>&1; then
-  printf "a broken config left the service running\n" >&2
-  exit 1
-fi
-# SPEC 8: a configuration error exits 23. OpenRC bounds respawns by
-# count rather than by exit status, so the status has to come from the
-# supervised binary, and the respawn guard is proven by child_pid
-# holding still across the settle window below.
-respawn_before=$(cat /run/openrc/options/xray-socks5/child_pid 2>/dev/null || printf none)
+# First prove the real pinned Xray classifies this exact configuration as exit
+# 23. The supervisor is count-bounded rather than exit-code-aware, so a temporary
+# transparent counter wrapper then execs the real binary and records every native
+# supervise-daemon attempt.
 broken_status=0
 /usr/local/libexec/xray-socks5/xray run -c /etc/xray-socks5/config.json \
   >"$work/broken.log" 2>&1 || broken_status=$?
@@ -135,29 +165,54 @@ if test "$broken_status" != 23; then
   cat "$work/broken.log" >&2
   exit 1
 fi
-for n in $(seq 1 12); do
+rc-service xray-socks5 stop
+mv /usr/local/libexec/xray-socks5/xray \
+  /usr/local/libexec/xray-socks5/.xray-exit23-real
+attempts=/run/xray-socks5-exit23-attempts
+: >"$attempts"
+chown xray-socks5:xray-socks5 "$attempts"
+chmod 0600 "$attempts"
+cat >/usr/local/libexec/xray-socks5/xray <<'EXIT23_WRAPPER'
+#!/bin/sh
+attempts=/run/xray-socks5-exit23-attempts
+count=$(cat "$attempts" 2>/dev/null || printf 0)
+printf '%s\n' "$((count + 1))" >"$attempts"
+exec /usr/local/libexec/xray-socks5/.xray-exit23-real "$@"
+EXIT23_WRAPPER
+chmod 0755 /usr/local/libexec/xray-socks5/xray
+rc-service xray-socks5 start || true
+
+three_attempts_and_stopped() {
+  test "$(cat "$attempts" 2>/dev/null || printf 0)" = 3 &&
+    ! rc-service xray-socks5 status >/dev/null 2>&1
+}
+lifecycle_wait_until 20 1 three_attempts_and_stopped || true
+if ! three_attempts_and_stopped; then
+  printf "bad-config attempts=%s; expected exactly 3 and stopped\n" \
+    "$(cat "$attempts" 2>/dev/null || printf 0)" >&2
+  exit 1
+fi
+for n in $(seq 1 5); do
   if ss -H -ltn 2>/dev/null | grep -q ":23456 "; then
     printf "a broken config produced a listener\n" >&2
     exit 1
   fi
+  if rc-service xray-socks5 status >/dev/null 2>&1; then
+    printf "a broken config brought the service back up\n" >&2
+    exit 1
+  fi
+  test "$(cat "$attempts")" = 3
   sleep 1
 done
-respawn_after=$(cat /run/openrc/options/xray-socks5/child_pid 2>/dev/null || printf none)
-printf "openrc: child_pid %s then %s\n" "$respawn_before" "$respawn_after"
-if test "$respawn_after" != "$respawn_before"; then
-  printf "a broken config respawned: child_pid %s then %s\n" \
-    "$respawn_before" "$respawn_after" >&2
-  exit 1
-fi
-# A stopped supervise-daemon removes its options directory, so the
-# comparison above is between two absent values and cannot fail on its
-# own. This is the independent half: a respawn that is still alive puts
-# the service back up, and one that came and went inside the window is
-# caught by the listener loop above.
 if rc-service xray-socks5 status >/dev/null 2>&1; then
-  printf "a broken config brought the service back up\n" >&2
+  printf "a broken config was active after the stable window\n" >&2
   exit 1
 fi
+printf 'openrc: bad-config attempts=%s, stopped, and stable\n' "$(cat "$attempts")"
+rm -f /usr/local/libexec/xray-socks5/xray
+mv /usr/local/libexec/xray-socks5/.xray-exit23-real \
+  /usr/local/libexec/xray-socks5/xray
+rm -f "$attempts"
 # Redirection truncates in place, so the config keeps the owner and
 # mode the installer gave it. BusyBox cp replaces the destination and
 # would hand it the private attributes of the backup copy.

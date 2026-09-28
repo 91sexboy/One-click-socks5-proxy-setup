@@ -41,6 +41,12 @@ listening. See the [systemd](../../.github/scripts/systemd-lifecycle.sh) and
 - Two backends mean two lifecycle gates in CI (the systemd and OpenRC integration
   jobs), which are the authority for service behaviour; unit tests stub the
   managers. The backend decision is centralized in `s5_svc <verb>`.
+- OpenRC cannot suppress a restart by child exit status, so its finite respawn
+  budget is deliberately not equivalent to systemd's `RestartPreventExitStatus`.
+  Updates transactionally migrate the owned init script and state digest.
+- OpenRC logger routing depends on the host's `/dev/log`; successful install and
+  update expose a known-missing endpoint as an advisory warning without
+  provisioning syslog or adding a mutable log artifact.
 - Config-test failures leave the healthy service and published configuration
   untouched. Failures after publication restore the previous config and state
   before restarting; if restoration fails, retain the transaction copies and
