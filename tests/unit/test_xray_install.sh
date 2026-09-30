@@ -421,7 +421,8 @@ is-active|status)
         { [ "$S5T_CLEANUP_FAULT" = unknown ] && [ -f "$S5_TEST_ROOT/stop-attempted" ]; }; then
         exit 4
     fi
-    [ -f "$S5_TEST_ROOT/svc_active" ] && exit 0
+    [ -f "$S5_TEST_ROOT/svc_active" ] && { printf 'active\n'; exit 0; }
+    printf 'inactive\n'
     exit 3
     ;;
 esac

@@ -96,8 +96,32 @@ sleep 12
 test "$(systemctl show xray-socks5.service -p NRestarts --value)" = "$loop_restarts"
 sudo sh -c 'cat "$1" >"$2"' restore "$work/good.json" /etc/xray-socks5/config.json
 test "$(sudo stat -c '%U:%G %a' /etc/xray-socks5/config.json)" = "root:xray-socks5 640"
-sudo systemctl restart xray-socks5.service
+# The exit-23 unit is now failed, not stopped, and the restored config matches
+# its recorded hash again, so status sees the real systemd state. It must name
+# the failure and return nonzero, the systemd counterpart of OpenRC's crashed.
+test "$(systemctl is-active xray-socks5.service || true)" = failed
+failed_status=0
+sudo sh .github/scripts/run-socks5.sh status \
+  "$work/answers.empty" "$work/failed-status.log" "$work/pass" || failed_status=$?
+if [ "$failed_status" -eq 0 ]; then
+  printf 'status returned 0 for a failed unit\n' >&2
+  exit 1
+fi
+sudo grep -qF 'service: failed; port: 23456;' "$work/failed-status.log"
+# A failed unit has no MainPID, which the listener probe reports as
+# unobservable; either non-ready line is correct, a ready one is not.
+sudo grep -qxE 'Xray is not listening on port 23456\.|the listen state of port 23456 could not be verified\.' \
+  "$work/failed-status.log"
+if sudo grep -qxF 'Xray is listening on port 23456.' "$work/failed-status.log"; then
+  printf 'a failed unit was reported listening\n' >&2
+  exit 1
+fi
+test ! -e /run/xray-socks5.lock
+printf 'lifecycle: failed-status-ok\n'
+sudo sh .github/scripts/run-socks5.sh restart \
+  "$work/answers.empty" "$work/failed-restart.log" "$work/pass"
 sudo systemctl is-active --quiet xray-socks5.service
+printf 'lifecycle: failed-restart-ok\n'
 python3 tests/protocol/duplex_target.py --host 0.0.0.0 --host6 :: --ready-file "$work/target.port" --count-file "$work/count" --report-file "$work/report" >"$work/target.log" 2>&1 &
 target_pid=$!
 lifecycle_wait_until 50 0.1 test -s "$work/target.port" || true

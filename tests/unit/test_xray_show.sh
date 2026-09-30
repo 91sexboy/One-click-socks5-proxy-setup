@@ -349,28 +349,60 @@ if [ "$T_STATUS" -ne 0 ]; then printf '%s\n' "$T_OUT" >&2; fi
 t_xray_fixture 23456
 t_xray_install
 s5_precheck() { return 0; }
-for _status_case in running stopped unverified; do
+# systemctl is-active exits 3 for every state that is not active, so the word
+# it prints decides the mapping: inactive is stopped, failed (exit 23 or a
+# spent restart budget) is failed and fails the command like OpenRC's crashed,
+# and any other word, or another exit, is unverified.
+for _status_word in active:0:running inactive:3:stopped failed:3:failed \
+    activating:3:unverified deactivating:3:unverified :1:unverified; do
+    _status_case=${_status_word##*:}
+    _status_rc=${_status_word#*:}
+    _status_rc=${_status_rc%%:*}
+    _status_word=${_status_word%%:*}
     systemctl() {
         if [ "$1" = is-active ]; then
-            case "$_status_case" in running) return 0 ;; stopped) return 3 ;; *) return 1 ;; esac
+            [ -z "$_status_word" ] || printf '%s\n' "$_status_word"
+            return "$_status_rc"
         fi
         "$S5_TEST_ROOT/bin/systemctl" "$@"
     }
-    case "$_status_case" in running) _status_zh=运行中 ;; stopped) _status_zh=已停止 ;; *) _status_zh=未验证 ;; esac
+    case "$_status_case" in
+    running) _status_zh=运行中 ;; stopped) _status_zh=已停止 ;; failed) _status_zh=已失败 ;; *) _status_zh=未验证 ;;
+    esac
+    case "$_status_case" in failed) _status_exit=1 ;; *) _status_exit=0 ;; esac
     for S5_LANG in en zh; do
         t_run s5_cmd_status
-        assert_eq "status reports $_status_case in $S5_LANG" 0 "$T_STATUS"
+        assert_eq "status reports is-active $_status_word/$_status_rc as $_status_case in $S5_LANG" \
+            "$_status_exit" "$T_STATUS"
         if [ "$S5_LANG" = zh ]; then
             assert_contains "Chinese status names its service state" "服务：$_status_zh；" "$T_OUT"
-            for _status_en in running stopped unverified; do
+            for _status_en in running stopped failed unverified; do
                 assert_not_contains "Chinese status has no English state word" "$_status_en" "$T_OUT"
             done
+            assert_contains "Chinese status still reports the listener" '端口 23456' "$T_OUT"
         else
             assert_contains "English status keeps its original line" \
                 "service: $_status_case; port: 23456; username: alice; protocol: mixed (SOCKS5 + HTTP); auth: password; UDP: disabled" "$T_OUT"
+            assert_contains "English status still reports the listener" 'port 23456' "$T_OUT"
         fi
         assert_file_absent "status releases the operation lock" "$S5_LOCKDIR"
     done
+done
+unset -f systemctl
+
+# The stop boundary: a failed systemd unit proves the process is gone and
+# nothing will restart it, so stop-and-wait accepts it; OpenRC's crashed child
+# (3) keeps its supervisor and stays refused. sleep is stubbed because the real
+# wait is fifteen one-second polls.
+s5t_stop_wait() (
+    s5t_stop_state=$1
+    s5_service_state() { return "$s5t_stop_state"; }
+    sleep() { :; }
+    s5_wait_stopped
+)
+for _stop_case in 1:0 4:0 3:2 2:1 0:1; do
+    t_run s5t_stop_wait "${_stop_case%%:*}"
+    assert_eq "service state ${_stop_case%%:*} gives stop wait ${_stop_case#*:}" "${_stop_case#*:}" "$T_STATUS"
 done
 
 t_summary

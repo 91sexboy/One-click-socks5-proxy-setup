@@ -102,10 +102,15 @@ case "$1" in
 start|restart)
     port=$(sed -n 's/^[[:space:]]*"port":[[:space:]]*\([0-9][0-9]*\),*/\1/p' "$S5_STUB_CFG" | head -n 1)
     printf '%s\n' "$port" >"$S5_TEST_ROOT/svc_active"
+    rm -f "$S5_TEST_ROOT/svc_failed"
     ;;
 stop) rm -f "$S5_TEST_ROOT/svc_active" ;;
 is-active)
-    if [ -f "$S5_TEST_ROOT/svc_active" ]; then exit 0; else exit 3; fi
+    # Like systemctl, print the state word; a failed unit stays failed across stop.
+    if [ -f "$S5_TEST_ROOT/svc_active" ]; then printf 'active\n'; exit 0; fi
+    if [ -f "$S5_TEST_ROOT/svc_failed" ]; then printf 'failed\n'; exit 3; fi
+    printf 'inactive\n'
+    exit 3
     ;;
 daemon-reload|enable|disable) ;;
 esac

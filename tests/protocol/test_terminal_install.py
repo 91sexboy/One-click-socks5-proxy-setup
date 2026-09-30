@@ -167,12 +167,19 @@ s5_cmd_show
                         kill_process_group(process)
 
 
-    def test_crashed_service_keeps_card_but_returns_failure(self):
+    def test_exited_service_keeps_card_but_returns_failure(self):
+        # 3 is OpenRC's crashed child, 4 a failed systemd unit: both are a
+        # positively reported exit, so show keeps the card and fails.
+        for service_status, word in ((3, "crashed"), (4, "failed")):
+            with self.subTest(service_status=service_status):
+                self.check_exited_service(service_status, word)
+
+    def check_exited_service(self, service_status, word):
         with PtySession() as terminal:
             process = None
             try:
                 process = subprocess.Popen(
-                    self.command(1, service_status=3), env=self.environment,
+                    self.command(1, service_status=service_status), env=self.environment,
                     stdin=subprocess.DEVNULL, stdout=terminal.slave,
                     stderr=subprocess.PIPE, start_new_session=True,
                 )
@@ -183,7 +190,7 @@ s5_cmd_show
                 self.assertEqual(process.returncode, 1)
                 self.assertEqual(
                     rendered,
-                    "service: crashed\nXray is not listening on port 23456.\n"
+                    "service: " + word + "\nXray is not listening on port 23456.\n"
                     "synthetic-credential-card\n",
                 )
                 self.assertEqual(errors, b"")
