@@ -1,0 +1,19 @@
+#!/sbin/openrc-run
+
+name="xray-socks5"
+description="Xray mixed SOCKS5 and HTTP proxy"
+command="/usr/local/libexec/xray-socks5/xray"
+command_args="run -c /etc/xray-socks5/config.json"
+command_user="xray-socks5:xray-socks5"
+supervisor="supervise-daemon"
+respawn_max=2
+respawn_period=60
+respawn_delay=1
+output_logger="logger -t xray-socks5 -p daemon.info"
+error_logger="logger -t xray-socks5 -p daemon.err"
+pidfile="/run/xray-socks5.pid"
+
+depend() {
+	after firewall
+	use dns logger
+}
