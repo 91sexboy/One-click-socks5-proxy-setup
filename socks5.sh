@@ -219,6 +219,7 @@ s5_msg() {
     asset.size) [ "$#" -eq 3 ] || return 1; case "$S5_LANG" in zh) printf 'Xray 资产校验失败：%s 为 %s 字节，应为 %s 字节。' "$1" "$2" "$3" ;; en) printf 'Xray asset verification failed: %s is %s bytes, expected %s.' "$1" "$2" "$3" ;; esac ;;
     disk.space) [ "$#" -eq 3 ] || return 1; case "$S5_LANG" in zh) printf '%s 所在文件系统空间不足：需要 %s KiB，仅剩 %s KiB。' "$1" "$2" "$3" ;; en) printf 'not enough space on the filesystem holding %s: %s KiB required, %s KiB available.' "$1" "$2" "$3" ;; esac ;;
     disk.write) [ "$#" -eq 3 ] || return 1; case "$S5_LANG" in zh) printf '无法写完 %s：已写入 %s 字节，应为 %s 字节；文件系统已满或超出配额。' "$1" "$2" "$3" ;; en) printf 'could not write all of %s: %s bytes written of %s; the filesystem is full or over quota.' "$1" "$2" "$3" ;; esac ;;
+    digest.candidate) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法计算下载资产的 SHA-256：%s。' "$1" ;; en) printf 'could not compute SHA-256 for downloaded asset: %s.' "$1" ;; esac ;;
     digest.failed) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法计算已安装资源的 SHA-256：%s。' "$1" ;; en) printf 'could not compute SHA-256 for installed artifact: %s.' "$1" ;; esac ;;
     cleanup.service) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '无法确认 Xray 服务已停止；已保留安装文件和账户。' ;; en) printf 'could not verify that the Xray service stopped; installation files and account were retained.' ;; esac ;;
     cleanup.download) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法删除下载临时文件：%s。' "$1" ;; en) printf 'could not remove temporary download file: %s.' "$1" ;; esac ;;
@@ -226,21 +227,30 @@ s5_msg() {
     config.invalid) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf 'Xray 配置测试失败；旧配置未改变。' ;; en) printf 'Xray configuration test failed; the old configuration was unchanged.' ;; esac ;;
     transaction.pending) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '存在待处理的恢复目录，拒绝覆盖：%s。' "$1" ;; en) printf 'pending recovery directory must be resolved before updating: %s.' "$1" ;; esac ;;
     transaction.restore) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法恢复旧配置和状态；恢复备份保留在 %s。' "$1" ;; en) printf 'could not restore the previous config and state; recovery copies retained at %s.' "$1" ;; esac ;;
+    transaction.prepare) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法在 %s 中准备更新的恢复副本；当前安装未被修改。' "$1" ;; en) printf 'could not prepare the update recovery copies in %s; the installation was not changed.' "$1" ;; esac ;;
+    transaction.publish) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法发布新配置：%s。' "$1" ;; en) printf 'could not publish the new configuration: %s.' "$1" ;; esac ;;
+    transaction.rolledback) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '更新已回滚，已恢复原来的配置和状态。' ;; en) printf 'the update was rolled back; the previous configuration and state were restored.' ;; esac ;;
     transaction.cleanup) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '新配置已提交，但无法删除旧事务备份：%s；下次操作将继续清理。' "$1" ;; en) printf 'the new configuration was committed, but old transaction backups could not be removed: %s; the next operation will retry cleanup.' "$1" ;; esac ;;
     config.external) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '配置文件已被外部修改；拒绝继续。' ;; en) printf 'the configuration was changed externally; refusing to continue.' ;; esac ;;
     config.unreadable) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法读取或校验配置文件：%s。' "$1" ;; en) printf 'the configuration file could not be read or validated: %s.' "$1" ;; esac ;;
     service.start) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf 'Xray 服务启动失败。' ;; en) printf 'the Xray service failed to start.' ;; esac ;;
+    service.unit) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法写入服务定义：%s。' "$1" ;; en) printf 'could not write the service definition: %s.' "$1" ;; esac ;;
+    service.reload) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '服务管理器无法重新加载服务定义。' ;; en) printf 'the service manager could not reload the service definitions.' ;; esac ;;
+    service.enable) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '无法设置 Xray 服务开机启动。' ;; en) printf 'could not enable the Xray service at boot.' ;; esac ;;
+    service.disable) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '无法取消 Xray 服务开机启动。' ;; en) printf 'could not disable the Xray service at boot.' ;; esac ;;
     service.stop) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '无法确认 Xray 服务已停止。' ;; en) printf 'could not verify that the Xray service stopped.' ;; esac ;;
     service.inactive) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '无法确认 Xray 服务正在运行。' ;; en) printf 'could not verify that the Xray service is running.' ;; esac ;;
     service.listen) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf 'Xray 未在端口 %s 上监听。' "$1" ;; en) printf 'Xray is not listening on port %s.' "$1" ;; esac ;;
     service.ready) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf 'Xray 正在端口 %s 上监听。' "$1" ;; en) printf 'Xray is listening on port %s.' "$1" ;; esac ;;
     service.unverified) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法验证端口 %s 的监听状态。' "$1" ;; en) printf 'the listen state of port %s could not be verified.' "$1" ;; esac ;;
+    service.dataplane) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '端口 %s 上的认证代理流量验证失败。' "$1" ;; en) printf 'authenticated proxy traffic could not be verified on port %s.' "$1" ;; esac ;;
     account.exists) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '账户或组 %s 已存在；拒绝采用外部身份。' "$1" ;; en) printf 'account or group %s already exists; refusing to adopt an external identity.' "$1" ;; esac ;;
     account.failed) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法创建服务账户：%s。' "$1" ;; en) printf 'could not create the service account: %s.' "$1" ;; esac ;;
     account.identity) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '服务账户身份已改变；拒绝删除。' ;; en) printf 'the service account identity changed; refusing to delete it.' ;; esac ;;
     lock.busy) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '另一个管理操作正在运行。' ;; en) printf 'another management operation is already running.' ;; esac ;;
     state.missing) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '没有已安装的 %s。' "$1" ;; en) printf 'no %s installation was found.' "$1" ;; esac ;;
     state.invalid) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf 'state 文件无效：%s。拒绝删除或覆盖资源。' "$1" ;; en) printf 'invalid state file: %s. Refusing to delete or overwrite resources.' "$1" ;; esac ;;
+    state.write) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法写入 state 文件：%s。' "$1" ;; en) printf 'could not write the state file: %s.' "$1" ;; esac ;;
     state.unsupported) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf 'state 架构不受支持：%s。已保留资源。' "$1" ;; en) printf 'unsupported state schema: %s. Resources were preserved.' "$1" ;; esac ;;
     status.state.running) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '运行中' ;; en) printf 'running' ;; esac ;;
     status.state.stopped) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '已停止' ;; en) printf 'stopped' ;; esac ;;
@@ -277,6 +287,8 @@ s5_msg() {
     uninstall.file) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法删除自有文件：%s。' "$1" ;; en) printf 'could not remove owned file: %s' "$1" ;; esac ;;
     uninstall.notdir) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '自有路径不是目录：%s。' "$1" ;; en) printf 'owned path is not a directory: %s' "$1" ;; esac ;;
     uninstall.nonempty) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '拒绝删除非空自有目录：%s。' "$1" ;; en) printf 'refusing non-empty owned directory: %s' "$1" ;; esac ;;
+    uninstall.progress) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法记录卸载进度：%s。' "$1" ;; en) printf 'could not record uninstall progress: %s.' "$1" ;; esac ;;
+    uninstall.identity) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '无法记录已安装路径的身份；未删除任何内容。' ;; en) printf 'could not record the identity of the installed paths; nothing was removed.' ;; esac ;;
     uninstall.directory) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法删除自有目录：%s。' "$1" ;; en) printf 'could not remove owned directory: %s' "$1" ;; esac ;;
     usage.unknown) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '未知命令：%s。' "$1" ;; en) printf 'unknown command: %s.' "$1" ;; esac ;;
     extra) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '命令不接受额外参数：%s。' "$1" ;; en) printf 'the command does not accept extra arguments: %s.' "$1" ;; esac ;;
@@ -1313,7 +1325,14 @@ s5_fetch_binary() {
         }
     fi
     s5_accept_size "$1" size "$S5_ASSET_SIZE" || { rm -f "$1" 2>/dev/null || true; return 1; }
-    [ "$(s5_sha256 "$1")" = "$S5_ASSET_SHA256" ] || {
+    # A digest tool that cannot run says nothing about the bytes; reporting it
+    # as a SHA mismatch sent the operator after a corrupt download.
+    _sfb_sha=$(s5_sha256 "$1") || {
+        s5_msg_err digest.candidate "$S5_ASSET_NAME"
+        rm -f "$1" 2>/dev/null || true
+        return 1
+    }
+    [ "$_sfb_sha" = "$S5_ASSET_SHA256" ] || {
         s5_msg_err asset.invalid sha256
         rm -f "$1" 2>/dev/null || true
         return 1
@@ -1334,11 +1353,12 @@ s5_xray_version_command() { "$1" version; }
 
 s5_verify_binary_candidate() {
     s5_accept_size "$1" binary-size "$S5_ASSET_SIZE" || return 1
-    [ "$(s5_sha256 "$1")" = "$S5_ASSET_SHA256" ] || {
+    _svbc_sha=$(s5_sha256 "$1") || { s5_msg_err digest.candidate "$S5_ASSET_NAME"; return 1; }
+    [ "$_svbc_sha" = "$S5_ASSET_SHA256" ] || {
         s5_msg_err asset.invalid binary-sha256
         return 1
     }
-    _svbc_file=$(s5_file_type "$1" 2>/dev/null) || return 1
+    _svbc_file=$(s5_file_type "$1" 2>/dev/null) || { s5_msg_err asset.invalid filetype; return 1; }
     case "$S5_ARCHNAME:$_svbc_file" in
     amd64:*'ELF 64-bit LSB executable, x86-64'*) ;;
     arm64:*'ELF 64-bit LSB executable, ARM aarch64'*) ;;
@@ -1347,8 +1367,9 @@ s5_verify_binary_candidate() {
     case "$_svbc_file" in
     *'dynamically linked'* | *'interpreter '*) s5_msg_err asset.invalid linkage; return 1 ;;
     esac
-    chmod 0700 "$1" || return 1
-    _svbc_version=$(s5_xray_version_command "$1" 2>/dev/null) || return 1
+    chmod 0700 "$1" || { s5_msg_err asset.invalid permission; return 1; }
+    # A noexec mount or a missing loader fails here, before any version text.
+    _svbc_version=$(s5_xray_version_command "$1" 2>/dev/null) || { s5_msg_err asset.invalid exec; return 1; }
     _svbc_first=${_svbc_version%%
 *}
     case "$_svbc_first" in
@@ -1568,7 +1589,7 @@ s5_account_remove() {
         case $? in
         0)
             if ! s5_account_tool delete-group; then
-                [ "$S5_OS_FAMILY" = alpine ] || s5_msg_warn account.remove.group "$S5_SERVICE_GROUP"
+                s5_msg_warn account.remove.group "$S5_SERVICE_GROUP"
                 return 1
             fi
             ;;
@@ -2251,17 +2272,21 @@ s5_verify_dataplane() {
             _svd=$?
         fi
     else
-        _svpf=$(mktemp "${S5_ROOTDIR:-/var/tmp}/.s5pass.XXXXXX") || return 1
+        _svpf=$(mktemp "${S5_ROOTDIR:-/var/tmp}/.s5pass.XXXXXX") || { s5_msg_err service.dataplane "$S5_PORT"; return 1; }
         # Restart has no workdir, so signal cleanup must track this credential file explicitly.
         S5_VERIFY_TEMP=$_svpf
-        chmod 0600 "$_svpf" || { rm -f "$_svpf"; S5_VERIFY_TEMP=''; return 1; }
-        printf '%s\n%s\n' "$S5_USERNAME" "$S5_PASSWORD" >"$_svpf" || { rm -f "$_svpf"; S5_VERIFY_TEMP=''; return 1; }
-        s5_verify_protocols "$S5_PORT" "$_svpf"
-        _svd=$?
+        if chmod 0600 "$_svpf" && printf '%s\n%s\n' "$S5_USERNAME" "$S5_PASSWORD" >"$_svpf"; then
+            s5_verify_protocols "$S5_PORT" "$_svpf"
+            _svd=$?
+        else
+            _svd=1
+        fi
         rm -f "$_svpf"
         S5_VERIFY_TEMP=''
     fi
-    [ "$_svd" -eq 0 ] || { s5_msg_err service.unverified "$S5_PORT"; return 1; }
+    # The listener was already proven; saying "could not be verified" here sent
+    # the operator after the port instead of the traffic check that failed.
+    [ "$_svd" -eq 0 ] || { s5_msg_err service.dataplane "$S5_PORT"; return 1; }
     return 0
 }
 
@@ -2358,8 +2383,11 @@ s5_listener_state() {
         # own pid in the pidfile, so child_pid is already the listener owner.
         # Xray spawns a logger child per output stream, which makes any walk
         # below child_pid ambiguous.
-        _slpid=$(cat "$S5_OPENRC_OPTION_DIR/child_pid" 2>/dev/null) || return 1
-        case "$_slpid" in '' | *[!0-9]* | 0) return 1 ;; esac
+        # Absent means no supervised child, so nothing of ours listens. A file
+        # that exists but cannot be read or holds no pid proves nothing either
+        # way, and systemd reports that case as unobservable too.
+        [ -e "$S5_OPENRC_OPTION_DIR/child_pid" ] || [ -L "$S5_OPENRC_OPTION_DIR/child_pid" ] || return 1
+        _slpid=$(cat "$S5_OPENRC_OPTION_DIR/child_pid" 2>/dev/null) || return 2
     else
         _slpid=$(systemctl show "$S5_PROJECT.service" -p MainPID --value 2>/dev/null) || return 2
     fi
@@ -2401,13 +2429,17 @@ EOF
 s5_wait_listening() {
     _swlp=$1
     _swli=0
+    _swllast=1
     while [ "$_swli" -lt 30 ]; do
         s5_listener_state "$_swlp"
-        case $? in 0) return 0 ;; 1) ;; 2) [ "$S5_INIT" = openrc ] || return 2 ;; *) return 2 ;; esac
+        _swllast=$?
+        case "$_swllast" in 0) return 0 ;; 1) ;; 2) [ "$S5_INIT" = openrc ] || return 2 ;; *) return 2 ;; esac
         _swli=$((_swli + 1))
         sleep 1
     done
-    return 1
+    # The last observation decides the diagnosis: an OpenRC listener that never
+    # became observable is unverified, not proven absent.
+    return "$_swllast"
 }
 
 s5_transaction_file_contract() {
@@ -2889,10 +2921,13 @@ s5_update_rollback() {
         return 1
     fi
     if [ -f "$S5_TXNDIR/old.xray" ] && [ ! -L "$S5_TXNDIR/old.xray" ]; then
-        _sur_tmp=$(mktemp "$S5_PREFIX/.xray.XXXXXX") || return 1
-        chmod 0755 "$_sur_tmp" || { rm -f "$_sur_tmp"; return 1; }
-        cat "$S5_TXNDIR/old.xray" >"$_sur_tmp" || { rm -f "$_sur_tmp"; return 1; }
-        mv -f "$_sur_tmp" "$S5_BIN" || { rm -f "$_sur_tmp"; return 1; }
+        _sur_tmp=$(mktemp "$S5_PREFIX/.xray.XXXXXX") || { s5_msg_err transaction.restore "$S5_TXNDIR"; return 1; }
+        if ! chmod 0755 "$_sur_tmp" || ! cat "$S5_TXNDIR/old.xray" >"$_sur_tmp" ||
+            ! mv -f "$_sur_tmp" "$S5_BIN"; then
+            rm -f "$_sur_tmp"
+            s5_msg_err transaction.restore "$S5_TXNDIR"
+            return 1
+        fi
     fi
     S5_SERVICE_STARTED=0
     if [ "$S5_SERVICE_TOUCHED" = 1 ]; then
@@ -2908,6 +2943,33 @@ ROLLED_BACK
     S5_BINARY_REPLACED=0
     S5_SERVICE_TOUCHED=0
     s5_cleanup_transaction
+}
+
+# s5_update_abort [key [args]]: the failure tail after publication began. Name
+# the failure (a step that already reported its own reason passes no key), roll
+# back, and say whether the previous installation came back, so an update never
+# fails without a word. A failed rollback reports transaction.restore itself.
+s5_update_abort() {
+    [ "$#" -eq 0 ] || s5_msg_err "$@"
+    s5_update_rollback "$S5_TXNDIR/old.config.json" "$S5_TXNDIR/old.state" || return 1
+    s5_msg_err transaction.rolledback
+    return 1
+}
+
+# Copies the recovery pair, and the OpenRC service script, before anything live
+# changes, so every failure in here leaves the installation as it was.
+s5_update_backup() {
+    mkdir -m 0700 "$S5_TXNDIR" || return 1
+    S5_CREATED_TRANSACTION=1
+    cp "$S5_CFG" "$S5_TXNDIR/old.config.json" || return 1
+    cp "$S5_STATE" "$S5_TXNDIR/old.state" || return 1
+    chmod 0600 "$S5_TXNDIR/old.config.json" "$S5_TXNDIR/old.state" || return 1
+    if [ "$S5_INIT" = openrc ]; then
+        cp "$S5_SERVICE_ARTIFACT" "$S5_TXNDIR/old.unit" || return 1
+        if [ "${S5_SKIP_OWNERSHIP:-0}" != 1 ]; then chown root:root "$S5_TXNDIR/old.unit" || return 1; fi
+        chmod 0600 "$S5_TXNDIR/old.unit" || return 1
+    fi
+    return 0
 }
 
 s5_install_new() {
@@ -2939,12 +3001,12 @@ s5_install_new() {
     _sinc=$(s5_write_config_candidate) || return 1
     mv -f "$_sinc" "$S5_CFG" || return 1
     S5_CREATED_CFG=1
-    s5_write_unit || return 1
+    s5_write_unit || { s5_msg_err service.unit "$S5_SERVICE_ARTIFACT"; return 1; }
     S5_CREATED_UNIT=1
     s5_record_digest service-artifact "$S5_SERVICE_ARTIFACT" || return 1
     S5_UNIT_SHA256=$S5_RECORDED_DIGEST
-    s5_svc reload || return 1
-    s5_svc enable || return 1
+    s5_svc reload || { s5_msg_err service.reload; return 1; }
+    s5_svc enable || { s5_msg_err service.enable; return 1; }
     S5_UNIT_ENABLED=1
     # A failed start or a signal can still leave a managed process running.
     S5_SERVICE_STARTED=1
@@ -2956,7 +3018,7 @@ s5_install_new() {
     s5_verify_dataplane || return 1
     s5_record_digest config "$S5_CFG" || return 1
     S5_CONFIG_SHA256=$S5_RECORDED_DIGEST
-    s5_state_write || return 1
+    s5_state_write || { s5_msg_err state.write "$S5_STATE"; return 1; }
     S5_INSTALL_COMPLETE=1
     return 0
 }
@@ -2999,28 +3061,21 @@ s5_install_update() {
     s5_prompt_port || return 1
     s5_prompt_username || return 1
     s5_prompt_password || return 1
-    mkdir -m 0700 "$S5_TXNDIR" || return 1
-    S5_CREATED_TRANSACTION=1
+    s5_update_backup || { s5_msg_err transaction.prepare "$S5_TXNDIR"; return 1; }
     _sioldcfg=$S5_TXNDIR/old.config.json
     _sioldstate=$S5_TXNDIR/old.state
     _sioldbin=$S5_TXNDIR/old.xray
-    _sioldunit=$S5_TXNDIR/old.unit
-    cp "$S5_CFG" "$_sioldcfg" || return 1
-    cp "$S5_STATE" "$_sioldstate" || return 1
-    chmod 0600 "$_sioldcfg" "$_sioldstate" || return 1
-    if [ "$S5_INIT" = openrc ]; then
-        cp "$S5_SERVICE_ARTIFACT" "$_sioldunit" || return 1
-        if [ "${S5_SKIP_OWNERSHIP:-0}" != 1 ]; then chown root:root "$_sioldunit" || return 1; fi
-        chmod 0600 "$_sioldunit" || return 1
-    fi
     if [ "$S5_UPDATE_NEEDS_BINARY" = 1 ]; then
         # The rollback copy is as large as the engine itself, and it is written
         # before anything is replaced, so a filesystem without room for it is named
         # here rather than while a live installation is half updated.
         s5_require_update_space "$S5_INSTALLED_BINARY_SIZE" || return 1
-        cp "$S5_BIN" "$_sioldbin" || return 1
-        if [ "${S5_SKIP_OWNERSHIP:-0}" != 1 ]; then chown root:root "$_sioldbin" || return 1; fi
-        chmod 0600 "$_sioldbin" || return 1
+        if ! cp "$S5_BIN" "$_sioldbin" ||
+            { [ "${S5_SKIP_OWNERSHIP:-0}" != 1 ] && ! chown root:root "$_sioldbin"; } ||
+            ! chmod 0600 "$_sioldbin"; then
+            s5_msg_err transaction.prepare "$S5_TXNDIR"
+            return 1
+        fi
         S5_CREATED_BIN=0
         S5_BINARY_REPLACED=1
         s5_download_engine || return 1
@@ -3031,7 +3086,7 @@ s5_install_update() {
         s5_binary_ready || { s5_msg_err asset.invalid binary; return 1; }
     fi
     _siinc=$(s5_write_config_candidate) || return 1
-    s5_atomic_write "$S5_TXN_STOPPING" root:root 0600 <<STOPPING || { rm -f "$_siinc"; return 1; }
+    s5_atomic_write "$S5_TXN_STOPPING" root:root 0600 <<STOPPING || { s5_msg_err transaction.prepare "$S5_TXNDIR"; rm -f "$_siinc"; return 1; }
 stopping
 STOPPING
     S5_SERVICE_TOUCHED=1
@@ -3050,6 +3105,7 @@ STOPPING
     if ! mv -f "$_siinc" "$S5_CFG"; then
         S5_CONFIG_REPLACED=0
         rm -f "$_siinc"
+        s5_msg_err transaction.publish "$S5_CFG"
         s5_restore_transaction "$_sioldcfg" "$_sioldstate" || true
         s5_svc start || true
         return 1
@@ -3058,42 +3114,28 @@ STOPPING
         s5_atomic_write "$S5_TXN_UNIT_REPLACING" root:root 0600 <<UNIT_REPLACING || {
 unit-replacing
 UNIT_REPLACING
-            s5_update_rollback "$_sioldcfg" "$_sioldstate"
+            s5_update_abort transaction.prepare "$S5_TXNDIR"
             return 1
         }
-        if ! s5_write_unit || ! s5_record_digest service-artifact "$S5_SERVICE_ARTIFACT"; then
-            s5_update_rollback "$_sioldcfg" "$_sioldstate"
-            return 1
-        fi
+        s5_write_unit || { s5_update_abort service.unit "$S5_SERVICE_ARTIFACT"; return 1; }
+        s5_record_digest service-artifact "$S5_SERVICE_ARTIFACT" || { s5_update_abort; return 1; }
         S5_UNIT_SHA256=$S5_RECORDED_DIGEST
-        s5_svc reload || {
-            s5_update_rollback "$_sioldcfg" "$_sioldstate"
-            return 1
-        }
+        s5_svc reload || { s5_update_abort service.reload; return 1; }
     fi
-    if ! s5_svc start; then
-        s5_update_rollback "$_sioldcfg" "$_sioldstate"
-        return 1
-    fi
+    s5_svc start || { s5_update_abort service.start; return 1; }
     S5_SERVICE_STARTED=1
-    if ! s5_wait_listening "$S5_PORT"; then
-        s5_update_rollback "$_sioldcfg" "$_sioldstate"
-        s5_msg_err service.listen "$S5_PORT"
-        return 1
-    fi
-    s5_verify_dataplane || {
-        s5_update_rollback "$_sioldcfg" "$_sioldstate"
-        return 1
-    }
-    if ! s5_record_digest config "$S5_CFG"; then
-        s5_update_rollback "$_sioldcfg" "$_sioldstate"
-        return 1
-    fi
+    # The same three-way diagnosis as a fresh install: an unobservable listener
+    # is not reported as a proven-absent one.
+    s5_wait_listening "$S5_PORT"
+    case $? in
+    0) ;;
+    1) s5_update_abort service.listen "$S5_PORT"; return 1 ;;
+    *) s5_update_abort service.unverified "$S5_PORT"; return 1 ;;
+    esac
+    s5_verify_dataplane || { s5_update_abort; return 1; }
+    s5_record_digest config "$S5_CFG" || { s5_update_abort; return 1; }
     S5_CONFIG_SHA256=$S5_RECORDED_DIGEST
-    if ! s5_state_write; then
-        s5_update_rollback "$_sioldcfg" "$_sioldstate"
-        return 1
-    fi
+    s5_state_write || { s5_update_abort state.write "$S5_STATE"; return 1; }
     # The marker switches recovery from rollback-required to delete-only. Write it
     # before deleting either half of the old recovery pair.
     s5_atomic_write "$S5_TXN_COMMITTED" root:root 0600 <<COMMITTED || return 1
@@ -3677,7 +3719,10 @@ s5_uninstall_preflight() {
 
 s5_uninstall_checkpoint() {
     S5_UNINSTALL_PHASE=$1
-    s5_uninstall_recovery_write "$S5_UNINSTALL_PHASE" || return 1
+    s5_uninstall_recovery_write "$S5_UNINSTALL_PHASE" || {
+        s5_msg_err uninstall.progress "$S5_UNINSTALL_STATE"
+        return 1
+    }
     # One private seam covers ordinary failure and signal injection in tests.
     if [ -n "${S5_UNINSTALL_INJECT:-}" ]; then
         "$S5_UNINSTALL_INJECT" "$S5_UNINSTALL_PHASE"
@@ -3686,7 +3731,9 @@ s5_uninstall_checkpoint() {
 
 s5_uninstall_remove_accounts() {
     # At resume, one half may already be absent. The still-present half must match
-    # recorded identity before deletion; lookup errors remain fail closed.
+    # recorded identity before deletion; lookup errors remain fail closed. Returns
+    # 2 once a deletion tool has refused and said so: the identity was verified
+    # just before, so reporting it as changed would contradict that warning.
     s5_getent_state passwd "$S5_SERVICE_USER"
     _sura_user=$?
     s5_getent_state group "$S5_SERVICE_GROUP"
@@ -3699,14 +3746,14 @@ s5_uninstall_remove_accounts() {
         _sura_uid=$(id -u "$S5_SERVICE_USER" 2>/dev/null) || return 1
         _sura_gid=$(id -g "$S5_SERVICE_USER" 2>/dev/null) || return 1
         [ "$_sura_uid" = "$S5_ACCOUNT_UID" ] && [ "$_sura_gid" = "$S5_ACCOUNT_GID" ] || return 1
-        s5_account_tool delete-user || { s5_msg_warn account.remove.user "$S5_SERVICE_USER"; return 1; }
+        s5_account_tool delete-user || { s5_msg_warn account.remove.user "$S5_SERVICE_USER"; return 2; }
     fi
     s5_getent_state group "$S5_SERVICE_GROUP"
     case $? in
     0)
         _sura_gid=$(getent group "$S5_SERVICE_GROUP" 2>/dev/null | awk -F: 'NR==1 {print $3}') || return 1
         [ "$_sura_gid" = "$S5_ACCOUNT_GID" ] || return 1
-        s5_account_tool delete-group || { s5_msg_warn account.remove.group "$S5_SERVICE_GROUP"; return 1; } ;;
+        s5_account_tool delete-group || { s5_msg_warn account.remove.group "$S5_SERVICE_GROUP"; return 2; } ;;
     1) ;;
     *) return 1 ;;
     esac
@@ -3728,7 +3775,7 @@ s5_uninstall_run() {
             s5_wait_stopped || { s5_msg_err service.stop; return 1; }
             s5_uninstall_checkpoint stopped || return 1 ;;
         stopped)
-            s5_svc disable || return 1
+            s5_svc disable || { s5_msg_err service.disable; return 1; }
             s5_uninstall_checkpoint disabled || return 1 ;;
         disabled)
             s5_remove_owned_file "$S5_SERVICE_ARTIFACT" || return 1
@@ -3740,10 +3787,11 @@ s5_uninstall_run() {
             s5_remove_owned_file "$S5_BIN" || return 1
             s5_uninstall_checkpoint binary-removed || return 1 ;;
         binary-removed)
-            s5_svc reload || return 1
+            s5_svc reload || { s5_msg_err service.reload; return 1; }
             s5_uninstall_checkpoint manager-reloaded || return 1 ;;
         manager-reloaded)
-            s5_uninstall_remove_accounts || { s5_msg_err account.identity; return 1; }
+            s5_uninstall_remove_accounts
+            case $? in 0) ;; 2) return 1 ;; *) s5_msg_err account.identity; return 1 ;; esac
             s5_uninstall_checkpoint account-removed || return 1 ;;
         account-removed)
             s5_remove_owned_file "$S5_STATE" || return 1
@@ -3759,7 +3807,10 @@ s5_uninstall_run() {
             # record exists; after it, the final marker exists; after marker
             # removal, the namespace is already absent.
             if [ -f "$S5_UNINSTALL_STATE" ] && [ ! -L "$S5_UNINSTALL_STATE" ]; then
-                [ ! -e "$S5_UNINSTALL_FINAL" ] && [ ! -L "$S5_UNINSTALL_FINAL" ] || return 1
+                if [ -e "$S5_UNINSTALL_FINAL" ] || [ -L "$S5_UNINSTALL_FINAL" ]; then
+                    s5_msg_err uninstall.residue "$S5_UNINSTALL_FINAL"
+                    return 1
+                fi
                 mv "$S5_UNINSTALL_STATE" "$S5_UNINSTALL_FINAL" || return 1
             fi
             if [ -n "${S5_UNINSTALL_INJECT:-}" ]; then
@@ -3787,10 +3838,10 @@ s5_cmd_uninstall() {
     s5_lock_acquire || return 1
     s5_trap_lock_only
     if [ -f "$S5_UNINSTALL_FINAL" ] && [ ! -L "$S5_UNINSTALL_FINAL" ]; then
-        s5_uninstall_recovery_load "$S5_UNINSTALL_FINAL" || { s5_fail_locked; return 1; }
+        s5_uninstall_recovery_load "$S5_UNINSTALL_FINAL" || { s5_fail_locked state.invalid "$S5_UNINSTALL_FINAL"; return 1; }
         s5_uninstall_verify_recovery || { s5_fail_locked uninstall.residue "$S5_UNINSTALL_FINAL"; return 1; }
     elif [ -f "$S5_UNINSTALL_STATE" ] && [ ! -L "$S5_UNINSTALL_STATE" ]; then
-        s5_uninstall_recovery_load "$S5_UNINSTALL_STATE" || { s5_fail_locked; return 1; }
+        s5_uninstall_recovery_load "$S5_UNINSTALL_STATE" || { s5_fail_locked state.invalid "$S5_UNINSTALL_STATE"; return 1; }
         s5_uninstall_verify_recovery || { s5_fail_locked uninstall.residue "$S5_UNINSTALL_STATE"; return 1; }
     else
         s5_open_managed_state uninstall
@@ -3809,7 +3860,7 @@ s5_cmd_uninstall() {
         s5_confirm uninstall s5_lock_release || return 1
         s5_uninstall_preflight || { s5_fail_locked; return 1; }
         s5_account_identity || { s5_fail_locked account.identity; return 1; }
-        s5_uninstall_capture_identities || { s5_fail_locked; return 1; }
+        s5_uninstall_capture_identities || { s5_fail_locked uninstall.identity; return 1; }
         S5_UNINSTALL_PHASE=prepared
         s5_uninstall_checkpoint prepared || { s5_fail_locked; return 1; }
     fi

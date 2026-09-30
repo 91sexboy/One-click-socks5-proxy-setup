@@ -217,6 +217,18 @@ assert_ne "OpenRC listener refuses a supervisor-owned endpoint" 0 "$T_STATUS"
 rm -f "$S5_OPENRC_OPTION_DIR/child_pid"
 t_run s5_listener_state
 assert_eq "OpenRC missing child_pid reports absent" 1 "$T_STATUS"
+# A child_pid that exists but yields no pid proves nothing about the listener:
+# unreadable (a directory makes cat fail even for root), empty, or not a pid.
+mkdir "$S5_OPENRC_OPTION_DIR/child_pid"
+t_run s5_listener_state
+assert_eq "OpenRC unreadable child_pid is unobservable" 2 "$T_STATUS"
+rmdir "$S5_OPENRC_OPTION_DIR/child_pid"
+for _child_pid in '' abc 0; do
+    printf '%s\n' "$_child_pid" >"$S5_OPENRC_OPTION_DIR/child_pid"
+    t_run s5_listener_state
+    assert_eq "OpenRC child_pid [$_child_pid] is unobservable" 2 "$T_STATUS"
+done
+rm -f "$S5_OPENRC_OPTION_DIR/child_pid"
 
 # A failed init-script write must not report success. The OpenRC arm ended in
 # `return $?` after an assignment, and an assignment always succeeds, so the

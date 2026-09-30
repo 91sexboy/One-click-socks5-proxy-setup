@@ -376,7 +376,7 @@ s5t_txn_run() {
                 "$S5_TEST_ROOT/bin/systemctl" "$@"
             fi
         }
-        if [ "$_txn_fault" = restart ]; then s5_verify_dataplane() { return 1; }; fi
+        if [ "$_txn_fault" = restart ]; then S5_PROTOCOL_VERIFY=false; fi
         ;;
     wait) s5_wait_stopped() { s5t_txn_fault; } ;;
     publish)
@@ -392,7 +392,8 @@ s5t_txn_run() {
             fi
         }
         ;;
-    dataplane) s5_verify_dataplane() { s5t_txn_fault; } ;;
+    # Inject below s5_verify_dataplane so its own diagnosis stays production.
+    dataplane) S5_PROTOCOL_VERIFY=s5t_txn_fault ;;
     state) s5_state_write() { s5t_txn_fault; } ;;
     *) return 2 ;;
     esac
@@ -415,6 +416,30 @@ s5t_txn_case() {
         "$(cat "$S5_TEST_ROOT/txn.fault" 2>/dev/null)"
     assert_not_contains "$_txn_fault never retries after losing lock ownership" unowned \
         "$(cat "$S5_TEST_ROOT/txn.fault" 2>/dev/null)"
+    # A nonzero update must say why. The fault doubles print nothing, so any
+    # error line here is the production diagnosis.
+    _txn_log=$(cat "$S5_TEST_ROOT/txn.log")
+    case "$_txn_fault" in
+    mkdir|copy-config|copy-state|chmod)
+        _txn_said='could not prepare the update recovery copies' ;;
+    stop|wait) _txn_said='could not verify that the Xray service stopped' ;;
+    publish) _txn_said='could not publish the new configuration' ;;
+    start) _txn_said='the Xray service failed to start' ;;
+    dataplane) _txn_said='authenticated proxy traffic could not be verified' ;;
+    state) _txn_said='could not write the state file' ;;
+    restart) _txn_said='authenticated proxy traffic could not be verified' ;;
+    esac
+    assert_contains "$_txn_fault names its failure" "[x] $_txn_said" "$_txn_log"
+    case "$_txn_fault" in
+    start|dataplane|state)
+        assert_contains "$_txn_fault reports the completed rollback" \
+            '[x] the update was rolled back' "$_txn_log" ;;
+    restart)
+        assert_contains "a failed rollback restart is named" \
+            '[x] the Xray service failed to start' "$_txn_log"
+        assert_not_contains "a failed rollback is never reported as completed" \
+            'the update was rolled back' "$_txn_log" ;;
+    esac
     assert_eq "$_txn_fault preserves config" "$_txn_cfg" "$(t_sha256 "$S5_CFG")"
     assert_eq "$_txn_fault preserves state" "$_txn_state" "$(t_sha256 "$S5_STATE")"
     assert_mode "$_txn_fault leaves private config permissions" 640 "$S5_CFG"
@@ -476,19 +501,33 @@ test_rollback_exit() {
 }
 
 test_uninstall_messages() {
-    for _message_fault in account file; do
+    for _message_fault in account file disable reload progress identity recovery; do
         for _message_lang in en zh; do
             t_xray_fixture 23456
             t_xray_install
             S5_LANG=$_message_lang
             s5_precheck() { return 0; }
             printf 'y\n' >"$S5_TEST_ROOT/answers.uninstall"
+            if [ "$_message_fault" = recovery ]; then
+                printf 'phase\tbogus\n' >"$S5_UNINSTALL_STATE"
+                chmod 0600 "$S5_UNINSTALL_STATE"
+            fi
             T_OUT=$( (
                 userdel() { return 1; }
                 rm() {
                     if [ "$_message_fault" = file ] && [ "$*" = "-f $S5_SERVICE_ARTIFACT" ]; then return 1; fi
                     command rm "$@"
                 }
+                systemctl() {
+                    case "$_message_fault:${1:-}" in
+                    disable:disable | reload:daemon-reload) return 1 ;;
+                    esac
+                    "$S5_TEST_ROOT/bin/systemctl" "$@"
+                }
+                case "$_message_fault" in
+                progress) s5_uninstall_recovery_write() { return 1; } ;;
+                identity) s5_uninstall_capture_identities() { return 1; } ;;
+                esac
                 s5_cmd_uninstall <"$S5_TEST_ROOT/answers.uninstall"
             ) 2>&1) && T_STATUS=0 || T_STATUS=$?
             assert_ne "uninstall reports $_message_fault failure in $S5_LANG" 0 "$T_STATUS"
@@ -497,8 +536,24 @@ test_uninstall_messages() {
             zh:account) _message_expected='[!] 无法删除服务账户：xray-socks5。' ;;
             en:file) _message_expected="[!] could not remove owned file: $S5_SERVICE_ARTIFACT" ;;
             zh:file) _message_expected="[!] 无法删除自有文件：$S5_SERVICE_ARTIFACT。" ;;
+            en:disable) _message_expected='[x] could not disable the Xray service at boot.' ;;
+            zh:disable) _message_expected='[x] 无法取消 Xray 服务开机启动。' ;;
+            en:reload) _message_expected='[x] the service manager could not reload the service definitions.' ;;
+            zh:reload) _message_expected='[x] 服务管理器无法重新加载服务定义。' ;;
+            en:progress) _message_expected="[x] could not record uninstall progress: $S5_UNINSTALL_STATE." ;;
+            zh:progress) _message_expected="[x] 无法记录卸载进度：$S5_UNINSTALL_STATE。" ;;
+            en:identity) _message_expected='[x] could not record the identity of the installed paths; nothing was removed.' ;;
+            zh:identity) _message_expected='[x] 无法记录已安装路径的身份；未删除任何内容。' ;;
+            en:recovery) _message_expected="[x] invalid state file: $S5_UNINSTALL_STATE." ;;
+            zh:recovery) _message_expected="[x] state 文件无效：$S5_UNINSTALL_STATE。" ;;
             esac
             assert_contains "uninstall translates $_message_fault failure in $S5_LANG" "$_message_expected" "$T_OUT"
+            # A refused deletion tool follows a verified identity; restating it
+            # as a changed identity contradicted the warning just printed.
+            assert_not_contains "uninstall does not contradict its $_message_fault diagnosis" \
+                'the service account identity changed' "$T_OUT"
+            assert_not_contains "uninstall does not contradict its $_message_fault diagnosis (zh)" \
+                '服务账户身份已改变' "$T_OUT"
             assert_file_absent "failed uninstall releases the operation lock" "$S5_LOCKDIR"
         done
     done
@@ -759,6 +814,53 @@ test_older_release_operations() {
     assert_eq "older release uninstall succeeds through the uninstall interface" 0 "$T_STATUS"
     assert_file_absent "older release uninstall removes the namespace" "$S5_STATEDIR"
     assert_file_absent "older release uninstall removes the binary" "$S5_BIN"
+}
+
+# An update whose listener stays unobservable is diagnosed as unverified, the
+# same three-way split a fresh install makes, never as a proven-absent port.
+test_update_listener_unverified() {
+    t_xray_fixture 23999
+    t_xray_install
+    T_OUT=$( (
+        s5_precheck() { return 0; }
+        s5_wait_listening() { return 2; }
+        s5_prompt_port() { S5_PORT=24100; return 0; }
+        s5_cmd_install
+    ) 2>&1) && T_STATUS=0 || T_STATUS=$?
+    assert_ne "an unobservable listener fails the update" 0 "$T_STATUS"
+    assert_contains "an unobservable listener is reported unverified" \
+        '[x] the listen state of port 24100 could not be verified.' "$T_OUT"
+    assert_not_contains "an unobservable listener is not reported absent" 'is not listening' "$T_OUT"
+    assert_contains "the unverified update reports its rollback" '[x] the update was rolled back' "$T_OUT"
+    assert_eq "the old listener is back" 23999 "$(cat "$S5_TEST_ROOT/svc_active")"
+    t_xray_assert_healthy
+}
+
+# Restoring the old executable is part of rollback; a failed copy used to end
+# the command with no word. It must name the retained recovery copies instead.
+test_rollback_binary_restore_failure() {
+    t_xray_fixture 23999
+    t_xray_install
+    s5t_make_older_state
+    T_OUT=$( (
+        s5_precheck() { return 0; }
+        s5_prompt_port() { S5_PORT=24200; return 0; }
+        S5_PROTOCOL_VERIFY=false
+        mv() {
+            _rbr_last=''
+            for _rbr_arg do _rbr_last=$_rbr_arg; done
+            if [ "$_rbr_last" = "$S5_BIN" ]; then return 1; fi
+            command mv "$@"
+        }
+        s5_cmd_install
+    ) 2>&1) && T_STATUS=0 || T_STATUS=$?
+    assert_ne "a failed binary restore fails the update" 0 "$T_STATUS"
+    assert_contains "a failed binary restore names the retained recovery copies" \
+        "[x] could not restore the previous config and state; recovery copies retained at $S5_TXNDIR." "$T_OUT"
+    assert_not_contains "a failed binary restore is never reported rolled back" 'the update was rolled back' "$T_OUT"
+    assert_file_exists "the old executable stays in the transaction" "$S5_TXNDIR/old.xray"
+    assert_file_absent "the failed restore leaves no binary temporary" \
+        "$(find "$S5_PREFIX" -name '.xray.*' | head -n 1)"
 }
 
 test_older_release_update() {
@@ -1385,6 +1487,67 @@ RCUPDATE
     t_xray_assert_healthy
 }
 
+# OpenRC updates replace the service script inside the transaction. A failed
+# intent marker or script write rolls back and says both what failed and that
+# the previous installation came back.
+s5t_openrc_update_fault() {
+    case "$1" in
+    marker)
+        mktemp() {
+            if [ "${1:-}" = "$S5_TXNDIR/.s5tmp.XXXXXX" ] && [ -f "$S5_TXN_STOPPING" ] &&
+                [ ! -e "$S5_TEST_ROOT/marker-injected" ]; then
+                : >"$S5_TEST_ROOT/marker-injected"
+                return 1
+            fi
+            command mktemp "$@"
+        }
+        ;;
+    unit) s5_write_unit() { return 1; } ;;
+    esac
+    s5_prompt_port() { S5_PORT=24300; return 0; }
+    s5_cmd_install
+}
+
+test_openrc_update_messages() {
+    for _oum_fault in marker unit; do
+        t_xray_fixture 23456
+        S5_INIT=openrc
+        S5_OS_FAMILY=alpine
+        s5_select_service_artifact
+        t_stub rc-service <<'RCSERVICE'
+#!/bin/sh
+case "$2" in
+start|restart)
+    port=$(sed -n 's/^[[:space:]]*"port":[[:space:]]*\([0-9][0-9]*\),*/\1/p' \
+        "$S5_STUB_CFG" | head -n 1)
+    printf '%s\n' "$port" >"$S5_TEST_ROOT/svc_active"
+    ;;
+stop) rm -f "$S5_TEST_ROOT/svc_active" ;;
+status) [ -f "$S5_TEST_ROOT/svc_active" ] && exit 0 || exit 3 ;;
+esac
+exit 0
+RCSERVICE
+        t_stub rc-update <<'RCUPDATE'
+#!/bin/sh
+exit 0
+RCUPDATE
+        t_xray_install
+        s5_precheck() { return 0; }
+        T_OUT=$( ( s5t_openrc_update_fault "$_oum_fault" ) 2>&1) && T_STATUS=0 || T_STATUS=$?
+        assert_ne "OpenRC $_oum_fault failure aborts the update" 0 "$T_STATUS"
+        case "$_oum_fault" in
+        marker) _oum_said="could not prepare the update recovery copies in $S5_TXNDIR" ;;
+        unit) _oum_said="could not write the service definition: $S5_SERVICE_ARTIFACT." ;;
+        esac
+        assert_contains "OpenRC $_oum_fault failure names itself" "[x] $_oum_said" "$T_OUT"
+        assert_contains "OpenRC $_oum_fault failure reports its rollback" \
+            '[x] the update was rolled back' "$T_OUT"
+        assert_eq "OpenRC $_oum_fault rollback restores the listener" 23456 \
+            "$(cat "$S5_TEST_ROOT/svc_active")"
+        assert_file_absent "OpenRC $_oum_fault rollback leaves no transaction" "$S5_TXNDIR"
+    done
+}
+
 test_openrc_unit_migration_rollback() {
     t_xray_fixture 23456
     S5_INIT=openrc
@@ -1542,7 +1705,7 @@ RCUPDATE
     t_xray_assert_healthy
 }
 
-SCENARIOS='rollback_cleanup_interruption_recovery openrc_committed_unit_cleanup_recovery openrc_unit_migration openrc_unit_migration_rollback openrc_unit_transaction_recovery openrc_logging_warning uninstall_confirmation uninstall_messages family update owned_port rejected_candidate listener_failure rejected_command publish_signal config_symlink uninstall_leftovers uninstall_residue verifier_cleanup txn_mkdir_failure txn_copy_failure txn_chmod_failure stop_failure wait_stopped_failure publication_failure new_start_failure dataplane_failure state_write_failure rollback_restart_failure restore_failure uninstall_unknown rollback_exit uninstall_group_residue uninstall_resume uninstall_signal_resume uninstall_resume_drift uninstall_phase_gap_resume uninstall_final_window older_release_operations older_release_update binary_ready_gate older_release_download_failure transaction_contract_drift unit_replacing_requires_stopping_marker rollback_backup_drift uninstall_directory_drift transaction_all_commands transaction_unknown_residue sha256_binary_update_failure sha256_config_update_failure update_commit_cleanup_failure existing_stage_failure existing_stage_cleanup_failure existing_stage_cleanup_restore_failure'
+SCENARIOS='openrc_update_messages update_listener_unverified rollback_binary_restore_failure rollback_cleanup_interruption_recovery openrc_committed_unit_cleanup_recovery openrc_unit_migration openrc_unit_migration_rollback openrc_unit_transaction_recovery openrc_logging_warning uninstall_confirmation uninstall_messages family update owned_port rejected_candidate listener_failure rejected_command publish_signal config_symlink uninstall_leftovers uninstall_residue verifier_cleanup txn_mkdir_failure txn_copy_failure txn_chmod_failure stop_failure wait_stopped_failure publication_failure new_start_failure dataplane_failure state_write_failure rollback_restart_failure restore_failure uninstall_unknown rollback_exit uninstall_group_residue uninstall_resume uninstall_signal_resume uninstall_resume_drift uninstall_phase_gap_resume uninstall_final_window older_release_operations older_release_update binary_ready_gate older_release_download_failure transaction_contract_drift unit_replacing_requires_stopping_marker rollback_backup_drift uninstall_directory_drift transaction_all_commands transaction_unknown_residue sha256_binary_update_failure sha256_config_update_failure update_commit_cleanup_failure existing_stage_failure existing_stage_cleanup_failure existing_stage_cleanup_restore_failure'
 if [ "$#" -eq 0 ]; then
     # Expand the fixed scenario words into the default argument list.
     # shellcheck disable=SC2086
