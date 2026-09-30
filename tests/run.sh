@@ -33,7 +33,11 @@ for f in "$UNIT_DIR"/*.sh; do
     files=$((files + 1))
 
     # Each test file runs in its own process with a clean environment so that one
-    # file's S5_* variables cannot leak into the next.
+    # file's S5_* variables cannot leak into the next. Two kinds are cleared:
+    # the test seams production refuses outside test mode, and the operator
+    # overrides production honours on purpose (listen port, card address and
+    # port). The overrides stay legitimate in production, but a maintainer who
+    # exported one for a real install must not see it rewrite test expectations.
     # $SHELL_UNDER_TEST is unquoted on purpose: S5_TEST_SHELL can be a
     # multi-word command such as `busybox sh`, which must split into words.
     # shellcheck disable=SC2086
@@ -41,6 +45,7 @@ for f in "$UNIT_DIR"/*.sh; do
         -u S5_ASSUME_ROOT -u S5_SKIP_OWNERSHIP -u S5_PORT_PROBE \
         -u S5_LISTENER_PROBE -u S5_TEST_ASSET_PATH -u S5_TEST_ADDR_PATH \
         -u S5_OSRELEASE -u S5_LISTEN -u S5_PROTOCOL_VERIFY -u S5_UNINSTALL_INJECT \
+        -u S5_LISTEN_PORT -u S5_SERVER_IPV4 -u S5_SERVER_PORT \
         S5_SRC="$ROOT/socks5.sh" S5_REPO_ROOT="$ROOT" \
         $SHELL_UNDER_TEST "$f" 2>&1); then
         st=0

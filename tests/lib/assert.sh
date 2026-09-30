@@ -149,7 +149,12 @@ t_mktestroot() {
     : >"$S5_TEST_ROOT/.s5-test-root"
     S5_TEST_MODE=1
     export S5_TEST_ROOT S5_TEST_MODE
-    trap 't_cleanup_root' EXIT HUP INT TERM
+    # A signal cleans up and then ends the test with the conventional status;
+    # a trap that only cleaned up let the file continue against a deleted root.
+    trap 't_cleanup_root' EXIT
+    trap 't_cleanup_root; trap - EXIT; exit 129' HUP
+    trap 't_cleanup_root; trap - EXIT; exit 130' INT
+    trap 't_cleanup_root; trap - EXIT; exit 143' TERM
 }
 
 t_cleanup_root() {
