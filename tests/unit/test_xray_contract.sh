@@ -11,19 +11,58 @@ import re
 import sys
 
 source, runner = (Path(path).read_text() for path in sys.argv[1:])
-reads = set(re.findall(r'\$\{?(S5_[A-Z0-9_]+)', source))
-initialized = set(re.findall(r'^\s*(S5_[A-Z0-9_]+)=', source, re.M))
-guard = source.split('s5_guard_environment() {', 1)[1].split('\n}', 1)[0]
-guarded = set(re.findall(r'\$\{?(S5_[A-Z0-9_]+)', guard))
-expected = (reads - initialized - {'S5_LISTEN_PORT', 'S5_SERVER_IPV4', 'S5_SERVER_PORT'}) | guarded
-actual = set(re.findall(r'-u (S5_[A-Z0-9_]+)', runner))
-if actual != expected:
-    raise AssertionError('runner test environment mismatch: missing=' +
-                         ','.join(sorted(expected - actual)) + ' extra=' +
-                         ','.join(sorted(actual - expected)))
+
+
+def mismatch(source, runner):
+    # Every S5_* the script reads without assigning it first comes from the
+    # environment, test seam or operator override alike, so the runner clears
+    # all of them. No name is exempt: an exemption is where a leak hides.
+    reads = set(re.findall(r'\$\{?(S5_[A-Z0-9_]+)', source))
+    initialized = set(re.findall(r'^\s*(S5_[A-Z0-9_]+)=', source, re.M))
+    guard = source.split('s5_guard_environment() {', 1)[1].split('\n}', 1)[0]
+    guarded = set(re.findall(r'\$\{?(S5_[A-Z0-9_]+)', guard))
+    expected = (reads - initialized) | guarded
+    actual = set(re.findall(r'-u (S5_[A-Z0-9_]+)', runner))
+    if actual != expected:
+        return ('missing=' + ','.join(sorted(expected - actual)) +
+                ' extra=' + ','.join(sorted(actual - expected)))
+    return ''
+
+
+problem = mismatch(source, runner)
+if problem:
+    raise AssertionError('runner test environment mismatch: ' + problem)
+# Controls: a new production override read, and a dropped runner entry, must
+# both be caught, or the oracle above proves nothing.
+if mismatch(source + '\nx=${S5_FAKE_OVERRIDE:-}\n', runner) != 'missing=S5_FAKE_OVERRIDE extra=':
+    raise AssertionError('a new production override read was not caught')
+if mismatch(source, runner.replace('-u S5_SERVER_PORT ', '')) != 'missing=S5_SERVER_PORT extra=':
+    raise AssertionError('a dropped runner entry was not caught')
 PY
 assert_eq "runner clears exactly the production test environment" 0 "$T_STATUS"
 if [ "$T_STATUS" -ne 0 ]; then printf '%s\n' "$T_OUT" >&2; fi
+# The same guarantee observed end to end: a maintainer's exported overrides do
+# not reach a test file that asserts listen ports and card contents.
+# shellcheck disable=SC2086
+t_run env S5_LISTEN_PORT=1 S5_SERVER_IPV4=198.51.100.7 S5_SERVER_PORT=443 \
+    S5_TEST_SHELL="${S5_TEST_SHELL:-sh}" sh "$ROOT/tests/run.sh" test_xray_show
+assert_eq "exported operator overrides do not change test results" 0 "$T_STATUS"
+if [ "$T_STATUS" -ne 0 ]; then printf '%s\n' "$T_OUT" >&2; fi
+
+# A test interrupted by a signal cleans its root and stops; it used to clean up
+# and then keep running assertions against the deleted root.
+cat >"$S5_TEST_ROOT/interrupted.sh" <<'INTERRUPTED'
+. "$S5_REPO_ROOT/tests/lib/assert.sh"
+t_mktestroot
+printf '%s\n' "$S5_TEST_ROOT" >"$1"
+kill -TERM $$
+printf 'continued after TERM\n'
+INTERRUPTED
+# shellcheck disable=SC2086
+t_run env -u S5_TEST_ROOT ${S5_TEST_SHELL:-sh} "$S5_TEST_ROOT/interrupted.sh" "$S5_TEST_ROOT/interrupted.root"
+assert_eq "a test killed by TERM exits with the signal status" 143 "$T_STATUS"
+assert_not_contains "a test killed by TERM stops running" 'continued after TERM' "$T_OUT"
+assert_file_absent "a test killed by TERM removes its root" "$(cat "$S5_TEST_ROOT/interrupted.root")"
 t_source_production ''
 
 S5_LANG=en

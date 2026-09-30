@@ -6,11 +6,48 @@ S5T_NAME=test_xray_public_checkout
 ROOT=${S5_REPO_ROOT}
 t_mktestroot
 
+# t_public_snapshot <root> <dest>: copy the tracked public paths only. A recursive
+# copy of the directories also carried untracked files -- bytecode caches,
+# scratch notes -- into the checkout that is supposed to prove nothing local is
+# needed. Working-tree contents are copied, so uncommitted edits are tested.
+# The copy is Python because BusyBox's cp has no --parents under every shell.
+t_public_snapshot() {
+    python3 - "$1" "$2" <<'PY_SNAPSHOT'
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+source, target = (Path(path) for path in sys.argv[1:])
+listed = subprocess.run(
+    ['git', '-C', str(source), 'ls-files', '-z', '--', 'tests', '.github', 'docs',
+     'socks5.sh', 'README.md', 'README.zh-CN.md', 'LICENSE',
+     'THIRD_PARTY_NOTICES.md', '.gitignore'],
+    check=True, stdout=subprocess.PIPE).stdout.split(b'\0')
+paths = [name.decode() for name in listed if name]
+if not paths:
+    raise SystemExit('no tracked public files')
+target.mkdir()
+for name in paths:
+    (target / name).parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source / name, target / name)
+PY_SNAPSHOT
+}
+
+# The snapshot itself must exclude an untracked file planted beside tracked ones.
+_psrepo=$S5_TEST_ROOT/planted
+mkdir -p "$_psrepo/tests/unit" || exit 1
+git -C "$_psrepo" init -q || exit 1
+printf 'tracked\n' >"$_psrepo/tests/unit/tracked.sh"
+printf 'planted\n' >"$_psrepo/tests/unit/untracked.sh"
+git -C "$_psrepo" add tests/unit/tracked.sh || exit 1
+t_run t_public_snapshot "$_psrepo" "$S5_TEST_ROOT/planted-public"
+assert_eq "a snapshot of tracked files succeeds" 0 "$T_STATUS"
+assert_file_exists "the snapshot keeps a tracked file" "$S5_TEST_ROOT/planted-public/tests/unit/tracked.sh"
+assert_file_absent "the snapshot drops an untracked file" "$S5_TEST_ROOT/planted-public/tests/unit/untracked.sh"
+
 snapshot="$S5_TEST_ROOT/public"
-mkdir "$snapshot" || exit 1
-cp -R "$ROOT/tests" "$ROOT/.github" "$ROOT/docs" "$snapshot/" || exit 1
-cp "$ROOT/socks5.sh" "$ROOT/README.md" "$ROOT/README.zh-CN.md" \
-    "$ROOT/LICENSE" "$ROOT/THIRD_PARTY_NOTICES.md" "$ROOT/.gitignore" "$snapshot/" || exit 1
+t_public_snapshot "$ROOT" "$snapshot" || exit 1
 git -C "$snapshot" init -q || exit 1
 git -C "$snapshot" add . || exit 1
 set -- "$snapshot"/tests/unit/*.sh
