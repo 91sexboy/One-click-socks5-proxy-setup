@@ -42,6 +42,8 @@ assert_contains "the short-reading copy dropped the exact read" 'while False:' \
 cp "$ROOT/tests/protocol/probe_selftest.py" "$ROOT/tests/protocol/selftest_support.py" "$_tpdir/"
 t_run python3 "$_tpdir/probe_selftest.py"
 assert_ne "a short-reading probe fails the self-test" 0 "$T_STATUS"
+assert_contains "a short-reading probe fails the split-read check itself" \
+    'not ok - a split no-auth acceptance is not read as a rejection' "$T_OUT"
 
 # CI-01/03/04: these execute the real transport and launcher paths using only
 # loopback sockets and temporary fixtures; no Xray download or root is needed.

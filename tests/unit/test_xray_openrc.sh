@@ -233,15 +233,17 @@ rm -f "$S5_OPENRC_OPTION_DIR/child_pid"
 # A failed init-script write must not report success. The OpenRC arm ended in
 # `return $?` after an assignment, and an assignment always succeeds, so the
 # caller recorded S5_CREATED_UNIT for a file that was never created and then ran
-# sha256sum on a missing path. This case comes last: it leaves s5_atomic_write
-# stubbed for the remainder of the file.
-s5_atomic_write() { return 1; }
-t_run s5_write_unit
+# sha256sum on a missing path. The failing writer is scoped to a subshell, so
+# the cases after this one keep the real s5_atomic_write.
+s5t_failing_unit_write() (
+    S5_INIT=$1
+    s5_atomic_write() { return 1; }
+    s5_write_unit
+)
+t_run s5t_failing_unit_write openrc
 assert_ne "a failed OpenRC artifact write is a failure" 0 "$T_STATUS"
-S5_INIT=systemd
-t_run s5_write_unit
+t_run s5t_failing_unit_write systemd
 assert_ne "a failed systemd unit write is a failure" 0 "$T_STATUS"
-S5_INIT=openrc
 
 # Each service verb dispatches to exactly one backend command. Record what
 # rc-service and rc-update receive so a verb cannot be mapped to the wrong action

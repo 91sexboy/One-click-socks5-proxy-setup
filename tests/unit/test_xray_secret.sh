@@ -238,16 +238,34 @@ s5t_runner_capture --diagnose
 assert_eq "standalone diagnostics return failure" 1 "$_runstatus"
 s5t_runner_no_secret "standalone diagnostics are redacted" "$_runstderr"
 
-# Record every external redactor invocation, without putting credentials in its
+# Record every external text-tool invocation, without putting credentials in its
 # argv. This catches a future -v secret=... or grep "$secret" implementation.
-_realawk=$(command -v awk)
-printf '#!/bin/sh\nprintf "%%s\\n" "$@" >>"%s/argv"\nexec "%s" "$@"\n' \
-    "$_rundir" "$_realawk" >"$_rundir/bin/awk"
-chmod 0755 "$_rundir/bin/awk"
+# awk alone was shimmed, so a secret handed to grep or sed went unseen.
+for _shim_tool in awk grep sed tr base64; do
+    # Resolved through /bin/sh: under busybox sh "command -v" names the applet,
+    # and a shim that execs a bare name finds itself on PATH forever.
+    _shim_real=$(/bin/sh -c 'command -v "$1"' sh "$_shim_tool") || continue
+    case "$_shim_real" in /*) ;; *) continue ;; esac
+    printf '#!/bin/sh\nprintf "%%s\\n" "$@" >>"%s/argv"\nexec "%s" "$@"\n' \
+        "$_rundir" "$_shim_real" >"$_rundir/bin/$_shim_tool"
+    chmod 0755 "$_rundir/bin/$_shim_tool"
+done
+# Positive control: a tool call that does carry the secret is observed.
+: >"$_rundir/argv"
+PATH="$_rundir/bin:$PATH" /bin/sh -c 'grep -q "$1" /dev/null' sh "$SECRET" || true
+case "$(cat "$_rundir/argv")" in
+*"$SECRET"*) t_ok ;;
+*) t_bad "the argv shim observes a secret passed to grep" ;;
+esac
+: >"$_rundir/argv"
+# /bin/sh by path on purpose: BusyBox runs its applets, a bare "sh" included,
+# without a PATH lookup, so under busybox sh the shims saw nothing and this
+# check passed vacuously.
 _s5t_saved_shell=${S5_TEST_SHELL:-sh}
-S5_TEST_SHELL='sh'
+S5_TEST_SHELL=/bin/sh
 s5t_runner_capture
 S5_TEST_SHELL=$_s5t_saved_shell
+assert_ne "the runner's text tools were observed" '' "$(cat "$_rundir/argv")"
 s5t_runner_no_secret "redaction commands keep credentials out of argv" "$(cat "$_rundir/argv")"
 # Error diagnostics are filtered too, even when shell redirection cannot open
 # the answers file. Credentials are never used as a command argument.

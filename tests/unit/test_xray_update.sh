@@ -1215,7 +1215,6 @@ test_sha256_binary_update_failure() {
     t_xray_state_schema1
     _sbu_old_bin=$(t_sha256 "$S5_BIN")
     _sbu_old_cfg=$(t_sha256 "$S5_CFG")
-    _sbu_old_state=$(t_sha256 "$S5_STATE")
     awk -F '\t' '
         BEGIN { OFS="\t" }
         $1 == "release" { $2="v25.1.1" }

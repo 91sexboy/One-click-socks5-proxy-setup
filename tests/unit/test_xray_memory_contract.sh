@@ -51,7 +51,9 @@ assert_contains "holder credential checks use the fail-closed shared helper" \
 assert_not_contains "memory does not duplicate the fixture password" 'CISecret123x' "$memory_text"
 assert_not_contains "workflow does not duplicate the fixture password" \
     'CISecret123x' "$(cat "$ROOT/.github/workflows/ci.yml")"
-t_run env GITHUB_ACTIONS= sh "$ROOT/.github/scripts/memory-report.sh"
+# Split a configured multiword shell such as busybox sh.
+# shellcheck disable=SC2086
+t_run env GITHUB_ACTIONS= ${S5_TEST_SHELL:-sh} "$ROOT/.github/scripts/memory-report.sh"
 assert_eq "memory orchestration refuses outside GitHub Actions" 1 "$T_STATUS"
 assert_contains "memory refusal explains the execution restriction" \
     'restricted to GitHub Actions' "$T_OUT"

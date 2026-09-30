@@ -136,11 +136,13 @@ def gate_result(fault=None):
                    "mixed_denied_control=ok", "mixed_denied_destination=ok", "mixed_denied_hostname=ok",
                    "mixed_refusals=ok",
                    "mixed_longlived=ok", "mixed_concurrency_1=ok", "mixed_concurrency_32=ok",
-                   "mixed_concurrency_128=ok"]
+                   "mixed_concurrency_128=ok", "mixed_protocol=ok"]
         if fault == "marker":
             markers.remove("mixed_concurrency_128=ok")
         if fault == "http-marker":
             markers.remove("mixed_http_connect=ok")
+        if fault == "protocol-marker":
+            markers.remove("mixed_protocol=ok")
         stats = {"tunnels": 161, "client_frames": 805, "control_tunnels": 0, "control_frames": 0}
         probe = os.path.join(scratch, "probe.py")
         with open(probe, "w", encoding="ascii") as handle:
@@ -271,7 +273,7 @@ class ConcurrencyTests(TapTestCase):
 
     def test_gate_evidence(self):
         self.check("gate accepts matching independent cohort observations", gate_result() == 0)
-        for fault in ("peak", "frame_min", "members", "marker", "http-marker"):
+        for fault in ("peak", "frame_min", "members", "marker", "http-marker", "protocol-marker"):
             self.check("gate rejects wrong cohort %s despite matching totals" % fault, gate_result(fault) != 0)
 
 

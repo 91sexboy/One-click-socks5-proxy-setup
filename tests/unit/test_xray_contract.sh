@@ -125,7 +125,6 @@ assert_eq "the generated random port is valid" 0 "$_rpv"
 
 # Rejection sampling is tested with deterministic od bytes: rejected values must
 # not bias output, accepted endpoints remain in range, and retries are bounded.
-_od_real=$(command -v od)
 od() { printf '255 0 2\n'; }
 assert_eq "random strings discard the uneven byte tail" ac "$(s5_random_string 2 abc)"
 _od_values=$S5_TEST_ROOT/od-values
@@ -317,7 +316,6 @@ S5_CONFIG_SHA256=$(t_sha256 "$S5_CFG")
 S5_ARCHNAME=amd64
 printf '#!/bin/sh\nexit 0\n' >"$S5_BIN"
 chmod 0755 "$S5_BIN"
-t_use_asset_fixture() { :; }
 S5_ASSET_NAME=xray-v26.3.27-linux-amd64
 S5_ASSET_SIZE=$(wc -c <"$S5_BIN" | tr -d '[:space:]')
 S5_ASSET_SHA256=$(t_sha256 "$S5_BIN")
@@ -487,11 +485,10 @@ s5_precheck status >/dev/null 2>&1
 
 # Raw target installation has no archive tool capability gate. Install/update
 # still require the absolute transport and ELF classifier; status does not.
-_pcinstall=$(s5_precheck install 2>&1) && _pcis=0 || _pcis=$?
+_pcinstall=$(s5_precheck install 2>&1)
 assert_eq "install has no unzip capability probe" 0     "$(printf '%s' "$_pcinstall" | grep -c 'unzip with -Z' || true)"
 _pcstat=$(s5_precheck status 2>&1) && _pcss=0 || _pcss=$?
 assert_eq "status remains independent of raw transport tools" 0 "$_pcss"
-unset UNZIP UNZIPOPT ZIPINFO ZIPINFOOPT
 
 # SPEC 5 runs the service through the platform's native manager, so install and
 # update must require that manager up front like every other command does. The
@@ -544,7 +541,6 @@ for _init_case in systemd:debian-12 openrc:alpine-3.20; do
     done
 done
 S5_OSRELEASE="$ROOT/tests/fixtures/os-release/debian-12"
-unset -f unzip
 
 # Redirected prompts cannot rely on terminal echo to supply their line breaks.
 _prompt_output=$S5_TEST_ROOT/prompt.out

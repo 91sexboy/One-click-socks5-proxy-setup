@@ -44,6 +44,8 @@ assert_contains "the unlocked copy dropped the lock" 'if True:' \
 cp "$ROOT/tests/protocol/target_selftest.py" "$ROOT/tests/protocol/selftest_support.py" "$_ttdir/"
 t_run python3 "$_ttdir/target_selftest.py"
 assert_ne "an unlocked frame writer fails the self-test" 0 "$T_STATUS"
+assert_contains "an unlocked frame writer splices the stream" \
+    'not ok - the stream carries no spliced frame' "$T_OUT"
 
 # Nor does the metrics write prove anything unless a copy without its lock fails.
 # This mutation targets the 4-space `with COUNT_LOCK:` in write_metrics; the
