@@ -243,6 +243,75 @@ assert_contains "a busy foreign override is named" \
 rm -f "$S5_TEST_ROOT/occupied"
 unset S5_LISTEN_PORT
 
+# Length boundaries on both sides of every bound, through the prompt that
+# writes a credential and through the validator that reads one back from an
+# installed config. A prompt that refuses re-asks, so each rejected value is
+# followed by a known good one and the result shows which was taken.
+s5t_repeat() { _rep_out=''; _rep_i=0; while [ "$_rep_i" -lt "$2" ]; do _rep_out=$_rep_out$1; _rep_i=$((_rep_i + 1)); done; printf '%s' "$_rep_out"; }
+S5_LANG=en
+for _len_case in 2:1 3:0 32:0 33:1; do
+    _len=${_len_case%%:*}
+    _len_refused=${_len_case#*:}
+    _len_value=$(s5t_repeat a "$_len")
+    S5_USERNAME=''
+    printf '%s\nfallback\n' "$_len_value" >"$S5_TEST_ROOT/len.answers"
+    s5_prompt_username <"$S5_TEST_ROOT/len.answers" >/dev/null 2>"$S5_TEST_ROOT/len.out"
+    if [ "$_len_refused" = 1 ]; then
+        assert_eq "a $_len-character username is refused at the prompt" fallback "$S5_USERNAME"
+        assert_contains "a $_len-character username names the rule" \
+            'username must be 3-32 letters or digits' "$(cat "$S5_TEST_ROOT/len.out")"
+        if s5_valid_stored_username "$_len_value"; then t_bad "a stored $_len-character username is refused"; else t_ok; fi
+    else
+        assert_eq "a $_len-character username is accepted at the prompt" "$_len_value" "$S5_USERNAME"
+        if s5_valid_stored_username "$_len_value"; then t_ok; else t_bad "a stored $_len-character username is accepted"; fi
+    fi
+done
+for _len_case in 11:1 12:0 128:0 129:1; do
+    _len=${_len_case%%:*}
+    _len_refused=${_len_case#*:}
+    _len_value=$(s5t_repeat a "$_len")
+    S5_PASSWORD=''
+    printf '%s\nFallback12345\n' "$_len_value" >"$S5_TEST_ROOT/len.answers"
+    s5_prompt_password <"$S5_TEST_ROOT/len.answers" >/dev/null 2>"$S5_TEST_ROOT/len.out"
+    if [ "$_len_refused" = 1 ]; then
+        assert_eq "a $_len-character password is refused at the prompt" Fallback12345 "$S5_PASSWORD"
+        assert_contains "a $_len-character password names the rule" \
+            'password must be 12-128 letters or digits' "$(cat "$S5_TEST_ROOT/len.out")"
+        if s5_valid_stored_password "$_len_value"; then t_bad "a stored $_len-character password is refused"; else t_ok; fi
+    else
+        assert_eq "a $_len-character password is accepted at the prompt" "$_len_value" "$S5_PASSWORD"
+        if s5_valid_stored_password "$_len_value"; then t_ok; else t_bad "a stored $_len-character password is accepted"; fi
+    fi
+done
+S5_USERNAME=''
+S5_PASSWORD=''
+
+# The listening-port bounds, typed and through S5_LISTEN_PORT alike.
+for _port_case in 1023:1 1024:0 65535:0 65536:1; do
+    _port=${_port_case%%:*}
+    _port_refused=${_port_case#*:}
+    for _port_source in typed override; do
+        S5_PORT=''
+        if [ "$_port_source" = typed ]; then
+            unset S5_LISTEN_PORT
+            printf '%s\n23456\n' "$_port" >"$S5_TEST_ROOT/port.answers"
+        else
+            S5_LISTEN_PORT=$_port
+            printf '\n23456\n' >"$S5_TEST_ROOT/port.answers"
+        fi
+        s5_prompt_port <"$S5_TEST_ROOT/port.answers" >/dev/null 2>"$S5_TEST_ROOT/port.out"
+        if [ "$_port_refused" = 1 ]; then
+            assert_eq "$_port_source port $_port is refused" 23456 "$S5_PORT"
+            assert_contains "$_port_source port $_port names the rule" \
+                'port must be a decimal number from 1024 to 65535' "$(cat "$S5_TEST_ROOT/port.out")"
+        else
+            assert_eq "$_port_source port $_port is accepted" "$_port" "$S5_PORT"
+        fi
+    done
+done
+unset S5_LISTEN_PORT
+S5_PORT=''
+
 # The other two prompts now share the port's blank-answer contract: on update a
 # blank answer keeps the current value, while the empty fresh-install state still
 # generates. The password question names the action but never the value it keeps.

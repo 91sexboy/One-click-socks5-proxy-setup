@@ -165,6 +165,42 @@ for _sc_lang in en zh; do
         "$S5_TEST_ROOT/status-lock"
 done
 
+# A crashed child whose port is still held: the two observations stay
+# independent, so status names the crash and the listener it still sees.
+s5t_openrc_crashed_listening() (
+    S5_LANG=en
+    S5_PORT=23456
+    S5_USERNAME=alice
+    S5_INSTALLED_RELEASE=v26.3.27
+    printf '32\n' >"$S5_TEST_ROOT/statuscode"
+    s5_open_locked() { return 0; }
+    s5_listener_state() { return 0; }
+    s5_lock_release() { return 0; }
+    s5_cmd_status
+)
+t_run s5t_openrc_crashed_listening
+assert_ne "a crashed child with a live listener still fails status" 0 "$T_STATUS"
+assert_contains "status names the crash beside a live listener" 'service: crashed;' "$T_OUT"
+assert_contains "status still reports the live listener" 'Xray is listening on port 23456.' "$T_OUT"
+
+# Command-level uninstall must refuse while OpenRC reports the child crashed:
+# the supervisor still manages the service, so nothing proves it stopped.
+s5t_openrc_crashed_uninstall() (
+    S5_LANG=en
+    sleep() { :; }
+    printf '32\n' >"$S5_TEST_ROOT/statuscode"
+    S5_UNINSTALL_PHASE=prepared
+    s5_uninstall_checkpoint() { printf '%s\n' "$1" >>"$S5_TEST_ROOT/uninstall-phases"; }
+    s5_cleanup_own_temps() { return 0; }
+    s5_cleanup_transaction() { return 0; }
+    s5_uninstall_run
+)
+: >"$S5_TEST_ROOT/uninstall-phases"
+t_run s5t_openrc_crashed_uninstall
+assert_ne "uninstall refuses a crashed OpenRC service" 0 "$T_STATUS"
+assert_contains "the refusal says the service did not stop" 'could not verify that the Xray service stopped' "$T_OUT"
+assert_eq "a crashed service never reaches the stopped phase" '' "$(cat "$S5_TEST_ROOT/uninstall-phases")"
+
 # s5_wait_stopped may only report success on a state that proves the process is
 # gone. sleep is stubbed because the real wait is fifteen one-second polls.
 sleep() { :; }

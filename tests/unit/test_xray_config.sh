@@ -77,6 +77,16 @@ golden_unit=$(cat "${S5_REPO_ROOT}/tests/golden/xray-socks5.service")
 rendered_unit=$(sed "s|$S5_TEST_ROOT||g" "$S5_SERVICE_ARTIFACT")
 assert_eq "rendered unit matches the golden unit" "$golden_unit" "$rendered_unit"
 
+# The OpenRC script is pinned byte for byte too: its respawn budget (two
+# restarts in 60 seconds) and logger routing are service policy, not layout.
+S5_INIT=openrc
+s5_write_unit >/dev/null 2>&1
+golden_openrc=$(cat "${S5_REPO_ROOT}/tests/golden/xray-socks5.openrc")
+rendered_openrc=$(sed "s|$S5_TEST_ROOT||g" "$S5_SERVICE_ARTIFACT")
+assert_eq "rendered OpenRC script matches the golden script" "$golden_openrc" "$rendered_openrc"
+S5_INIT=systemd
+s5_select_service_artifact
+
 # status, show, restart, uninstall and update all recover the account from the
 # published config, so what the renderer writes has to be readable back.
 s5_config_render >"$S5_CFG"
