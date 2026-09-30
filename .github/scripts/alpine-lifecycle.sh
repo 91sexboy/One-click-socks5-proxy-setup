@@ -150,6 +150,65 @@ test "$new_pid" -gt 0
 lifecycle_wait_until 45 1 listener_recovered || true
 ss -H -ltnp | grep -q "pid=$new_pid,"
 test "$(( $(date +%s) - crash_window_started ))" -lt 60
+
+# SPEC 5: a third death inside the same period spends the respawn budget. On
+# every tested Alpine release supervise-daemon then gives up and OpenRC records
+# the service as stopped (status 3), not crashed, so socks5.sh status reports
+# it stopped without failing, and restart starts it again.
+crash_pid=$new_pid
+kill -9 "$crash_pid"
+rc_status=0
+openrc_state_is() {
+  rc_status=0
+  rc-service xray-socks5 status >/dev/null 2>&1 || rc_status=$?
+  test "$rc_status" = "$1"
+}
+lifecycle_wait_until 20 1 openrc_state_is 3 || true
+if ! openrc_state_is 3; then
+  printf 'a spent respawn budget left rc-service status %s, expected 3\n' "$rc_status" >&2
+  exit 1
+fi
+test "$(( $(date +%s) - crash_window_started ))" -lt 60
+sh .github/scripts/run-socks5.sh status \
+  "$work/answers.empty" "$work/spent-status.log" "$work/pass.update" "$work/pass"
+grep -qF 'service: stopped; port: 23456;' "$work/spent-status.log"
+sh .github/scripts/run-socks5.sh restart \
+  "$work/answers.empty" "$work/spent-restart.log" "$work/pass.update" "$work/pass"
+rc-service xray-socks5 status
+printf 'openrc: spent-budget-stopped-ok\n'
+
+# A supervisor killed outright leaves its child record behind, which
+# supervise-daemon's status reports as unsupervised (64); crashed (32) is the
+# same loss after that record was cleared. Kill the supervisor, then its child,
+# so nothing of ours is left: status must name the state and fail, and
+# socks5.sh restart must recover what OpenRC's own restart cannot stop.
+supervisor_pid=$(cat /run/xray-socks5.pid)
+crash_pid=$(cat /run/openrc/options/xray-socks5/child_pid)
+test "$supervisor_pid" -gt 0
+test "$crash_pid" -gt 0
+kill -9 "$supervisor_pid"
+kill -9 "$crash_pid"
+lifecycle_wait_until 20 1 openrc_state_is 64 || true
+if ! openrc_state_is 64; then
+  printf 'a dead supervisor left rc-service status %s, expected 64\n' "$rc_status" >&2
+  exit 1
+fi
+crashed_status=0
+sh .github/scripts/run-socks5.sh status \
+  "$work/answers.empty" "$work/crashed-status.log" "$work/pass.update" "$work/pass" ||
+  crashed_status=$?
+lifecycle_assert_exited_status "$crashed_status" "$work/crashed-status.log" unsupervised 23456
+grep -qxF 'Xray is not listening on port 23456.' "$work/crashed-status.log"
+test ! -e /run/xray-socks5.lock
+printf 'openrc: unsupervised-status-ok\n'
+sh .github/scripts/run-socks5.sh restart \
+  "$work/answers.empty" "$work/crashed-restart.log" "$work/pass.update" "$work/pass"
+rc-service xray-socks5 status
+restarted_pid=$(cat /run/openrc/options/xray-socks5/child_pid)
+test "$restarted_pid" -gt 0
+test "$restarted_pid" != "$crash_pid"
+ss -H -ltnp | grep -q "pid=$restarted_pid,"
+printf 'openrc: unsupervised-restart-ok\n'
 cp /etc/xray-socks5/config.json "$work/good.json"
 printf "{broken\n" >/etc/xray-socks5/config.json
 # First prove the real pinned Xray classifies this exact configuration as exit

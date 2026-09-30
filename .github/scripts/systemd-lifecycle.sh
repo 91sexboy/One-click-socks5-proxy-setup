@@ -103,11 +103,7 @@ test "$(systemctl is-active xray-socks5.service || true)" = failed
 failed_status=0
 sudo sh .github/scripts/run-socks5.sh status \
   "$work/answers.empty" "$work/failed-status.log" "$work/pass" || failed_status=$?
-if [ "$failed_status" -eq 0 ]; then
-  printf 'status returned 0 for a failed unit\n' >&2
-  exit 1
-fi
-sudo grep -qF 'service: failed; port: 23456;' "$work/failed-status.log"
+lifecycle_assert_exited_status "$failed_status" "$work/failed-status.log" failed 23456 sudo
 # A failed unit has no MainPID, which the listener probe reports as
 # unobservable; either non-ready line is correct, a ready one is not.
 sudo grep -qxE 'Xray is not listening on port 23456\.|the listen state of port 23456 could not be verified\.' \

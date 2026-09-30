@@ -262,6 +262,7 @@ s5_msg() {
     status.state.stopped) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '已停止' ;; en) printf 'stopped' ;; esac ;;
     status.state.crashed) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '已崩溃' ;; en) printf 'crashed' ;; esac ;;
     status.state.failed) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '已失败' ;; en) printf 'failed' ;; esac ;;
+    status.state.unsupervised) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '失去守护' ;; en) printf 'unsupervised' ;; esac ;;
     status.state.unverified) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '未验证' ;; en) printf 'unverified' ;; esac ;;
     status.heading) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf 'Xray mixed 代理状态：' ;; en) printf 'Xray mixed proxy status:' ;; esac ;;
     status.line) [ "$#" -eq 3 ] || return 1; case "$S5_LANG" in zh) printf '服务：%s；端口：%s；账户：%s；协议：mixed（SOCKS5 + HTTP）；认证：密码；UDP：关闭' "$1" "$2" "$3" ;; en) printf 'service: %s; port: %s; username: %s; protocol: mixed (SOCKS5 + HTTP); auth: password; UDP: disabled' "$1" "$2" "$3" ;; esac ;;
@@ -2344,8 +2345,11 @@ s5_service_state() {
         # error; treating either as stopped let uninstall delete everything from
         # under a live proxy. 32 positively reports a crashed child but the
         # supervisor is still managed, so it is distinct for status while every
-        # destructive stop boundary continues to fail closed on it.
-        case $? in 0 | 8) return 0 ;; 3) return 1 ;; 32) return 3 ;; *) return 2 ;; esac
+        # destructive stop boundary continues to fail closed on it. 64 is
+        # supervise-daemon's "unsupervised": the supervisor is gone but its
+        # child record remains, so the child may still run with nothing
+        # watching it. Native Alpine reports this for a killed supervisor.
+        case $? in 0 | 8) return 0 ;; 3) return 1 ;; 32) return 3 ;; 64) return 5 ;; *) return 2 ;; esac
         ;;
     *)
         # is-active exits 3 for every state that is not active, so only its word
@@ -3319,6 +3323,7 @@ s5_probe_states() {
     1) S5_SERVICE_STATE_KEY=status.state.stopped; S5_SERVICE_RC=0 ;;
     3) S5_SERVICE_STATE_KEY=status.state.crashed; S5_SERVICE_RC=1 ;;
     4) S5_SERVICE_STATE_KEY=status.state.failed; S5_SERVICE_RC=1 ;;
+    5) S5_SERVICE_STATE_KEY=status.state.unsupervised; S5_SERVICE_RC=1 ;;
     *) S5_SERVICE_STATE_KEY=status.state.unverified; S5_SERVICE_RC=0 ;;
     esac
     s5_listener_state
@@ -3518,10 +3523,38 @@ s5_cmd_show() {
     return "$S5_SERVICE_RC"
 }
 
+# A supervised child still alive after its supervisor died: OpenRC's crashed
+# state does not say whether one is, so child_pid is asked directly.
+s5_openrc_child_alive() {
+    _soca_pid=$(cat "$S5_OPENRC_OPTION_DIR/child_pid" 2>/dev/null) || return 1
+    case "$_soca_pid" in '' | *[!0-9]* | 0) return 1 ;; esac
+    kill -0 "$_soca_pid" 2>/dev/null
+}
+
+# OpenRC reports crashed (3 here) or unsupervised (5) when the supervisor is
+# gone while the service is still marked started. Its restart then has no
+# supervisor to stop and fails, so the service stays that way until the record
+# is reset. That reset (zap) is sound only when no supervised child survives: a
+# live child could still hold the port, so it stays fail closed. Every other
+# state restarts normally.
+s5_restart_service() {
+    if [ "$S5_INIT" = openrc ]; then
+        s5_service_state
+        _srsvc_state=$?
+        if [ "$_srsvc_state" -eq 3 ] || [ "$_srsvc_state" -eq 5 ]; then
+            s5_openrc_child_alive && return 1
+            rc-service "$S5_PROJECT" zap >/dev/null 2>&1 || return 1
+            s5_svc start
+            return $?
+        fi
+    fi
+    s5_svc restart
+}
+
 s5_cmd_restart() {
     s5_open_locked restart || return 1
     s5_config_test "$S5_CFG" || { s5_fail_locked config.invalid.installed; return 1; }
-    s5_svc restart || { s5_fail_locked service.start; return 1; }
+    s5_restart_service || { s5_fail_locked service.start; return 1; }
     s5_wait_listening "$S5_PORT"
     _scr_status=$?
     if [ "$_scr_status" -eq 0 ]; then

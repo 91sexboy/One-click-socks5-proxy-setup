@@ -101,6 +101,19 @@ clean line' "$(cat "$S5_TEST_ROOT/redacted.log")"
 t_run lifecycle_redaction_file "$S5_TEST_ROOT/redact.pat" "$S5_TEST_ROOT/empty.pass"
 assert_ne "an incomplete credential file writes no patterns" 0 "$T_STATUS"
 
+# The exited-service assertion is the gate's control: a zero status must fail
+# it even when the log names the state, and so must a log that does not.
+printf 'service: crashed; port: 23456; username: u; protocol: mixed (SOCKS5 + HTTP); auth: password; UDP: disabled\n' \
+    >"$S5_TEST_ROOT/crashed.log"
+t_run lifecycle_assert_exited_status 1 "$S5_TEST_ROOT/crashed.log" crashed 23456
+assert_eq "a nonzero crashed status passes" 0 "$T_STATUS"
+t_run lifecycle_assert_exited_status 0 "$S5_TEST_ROOT/crashed.log" crashed 23456
+assert_ne "a zero status for a crashed service fails the gate" 0 "$T_STATUS"
+assert_contains "the zero status is named" 'status returned 0 for a crashed service' "$T_OUT"
+sed 's/service: crashed;/service: running;/' "$S5_TEST_ROOT/crashed.log" >"$S5_TEST_ROOT/running.log"
+t_run lifecycle_assert_exited_status 1 "$S5_TEST_ROOT/running.log" crashed 23456
+assert_ne "a status that does not name the crash fails the gate" 0 "$T_STATUS"
+
 # The shared ready-status assertion needs the port's ready line and the
 # protocol summary, not the heading's word "mixed".
 printf 'Xray mixed proxy status:\nservice: running; port: 23456; username: u; protocol: mixed (SOCKS5 + HTTP); auth: password; UDP: disabled\nXray is listening on port 23456.\n' \

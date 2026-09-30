@@ -182,3 +182,23 @@ lifecycle_assert_ready_status() {
         return 1
     fi
 }
+
+# lifecycle_assert_exited_status <status> <log> <state> <port> [prefix...]: a
+# status run against a service the manager reports exited (OpenRC crashed,
+# systemd failed) must return nonzero and name that state for the port. A zero
+# exit here is exactly the false health this check exists to catch.
+lifecycle_assert_exited_status() {
+    _laes_status=$1
+    _laes_log=$2
+    _laes_state=$3
+    _laes_port=$4
+    shift 4
+    if [ "$_laes_status" -eq 0 ]; then
+        printf 'status returned 0 for a %s service\n' "$_laes_state" >&2
+        return 1
+    fi
+    if ! "$@" grep -qF "service: $_laes_state; port: $_laes_port;" "$_laes_log"; then
+        printf 'status did not name the %s service\n' "$_laes_state" >&2
+        return 1
+    fi
+}
