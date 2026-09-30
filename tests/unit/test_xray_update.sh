@@ -889,14 +889,14 @@ test_older_release_update() {
         _oru_downloaded=1
         cp "$S5_TEST_ROOT/asset-xray" "$S5_BIN"
         chmod 0755 "$S5_BIN"
-        S5_BINARY_SHA256=$S5_ASSET_BINARY_SHA256
+        S5_BINARY_SHA256=$S5_ASSET_SHA256
     }
     s5_prompt_port() { S5_PORT=23999; return 0; }
     s5_install_update
     assert_eq "older release updates successfully" 0 "$?"
     assert_eq "older release update downloads the current candidate" 1 "$_oru_downloaded"
     assert_eq "updated state records current release" "$S5_XRAY_VERSION" "$(t_state_get release)"
-    assert_eq "updated binary matches current candidate" "$S5_ASSET_BINARY_SHA256" "$(t_sha256 "$S5_BIN")"
+    assert_eq "updated binary matches current candidate" "$S5_ASSET_SHA256" "$(t_sha256 "$S5_BIN")"
     t_xray_assert_healthy
 }
 

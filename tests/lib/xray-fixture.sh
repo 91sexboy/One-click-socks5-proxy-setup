@@ -25,8 +25,6 @@ t_use_asset_fixture() {
         S5_ASSET_NAME=xray-v26.3.27-linux-amd64
         S5_ASSET_SIZE=${S5T_SIZE_OVERRIDE:-$S5T_BIN_SIZE}
         S5_ASSET_SHA256=${S5T_SHA_OVERRIDE:-$S5T_BIN_SHA256}
-        S5_ASSET_BINARY_SIZE=$S5_ASSET_SIZE
-        S5_ASSET_BINARY_SHA256=$S5_ASSET_SHA256
     }
 }
 
@@ -71,7 +69,7 @@ XRAY_FIXTURE
             cp "$S5_TEST_ROOT/asset-xray" "$S5_BIN" || return 1
             chmod 0755 "$S5_BIN" || return 1
             S5_CREATED_BIN=1
-            S5_BINARY_SHA256=$S5_ASSET_BINARY_SHA256
+            S5_BINARY_SHA256=$S5_ASSET_SHA256
         }
     fi
     s5_config_test() {

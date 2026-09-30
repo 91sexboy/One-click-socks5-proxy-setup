@@ -64,8 +64,6 @@ S5_ACCOUNT_GID=''
 S5_ASSET_NAME=''
 S5_ASSET_SIZE=''
 S5_ASSET_SHA256=''
-S5_ASSET_BINARY_SIZE=''
-S5_ASSET_BINARY_SHA256=''
 S5_INSTALLED_SCHEMA=''
 S5_INSTALLED_RELEASE=''
 S5_INSTALLED_COMMIT=''
@@ -938,11 +936,8 @@ s5_asset_select() {
         ;;
     *) return 1 ;;
     esac
-    # Raw distribution performs no transformation: downloaded and installed
-    # identity are the same bytes. These aliases keep the installed-binary seams
-    # explicit while state schema 2 records and enforces their equality.
-    S5_ASSET_BINARY_SIZE=$S5_ASSET_SIZE
-    S5_ASSET_BINARY_SHA256=$S5_ASSET_SHA256
+    # Raw distribution performs no transformation, so these are also the
+    # installed executable's size and digest; state schema 2 records both.
 }
 
 s5_mkdir_parents() {
@@ -1309,7 +1304,7 @@ s5_fetch_binary() {
         _sfb_curl=$?
         if [ "$_sfb_curl" -ne 0 ]; then
             if [ "$_sfb_curl" -eq 23 ]; then
-                _sfb_size=$(s5_bytecount "$1" 2>/dev/null || printf 0)
+                _sfb_size=$(s5_bytecount "$1" 2>/dev/null)
                 case "$_sfb_size" in '' | *[!0-9]*) _sfb_size=0 ;; esac
                 s5_msg_err disk.write "$1" "$_sfb_size" "$S5_ASSET_SIZE"
             else
@@ -1318,12 +1313,9 @@ s5_fetch_binary() {
             rm -f "$1" 2>/dev/null || true
             return 1
         fi
-        [ "$(s5_bytecount "$1")" -le "$((S5_ASSET_SIZE + 1))" ] || {
-            s5_msg_err asset.invalid size
-            rm -f "$1" 2>/dev/null || true
-            return 1
-        }
     fi
+    # One size gate for every source. An endpoint that ignored --max-filesize
+    # and sent more is reported here with both byte counts, as ADR-0006 asks.
     s5_accept_size "$1" size "$S5_ASSET_SIZE" || { rm -f "$1" 2>/dev/null || true; return 1; }
     # A digest tool that cannot run says nothing about the bytes; reporting it
     # as a SHA mismatch sent the operator after a corrupt download.
@@ -1351,13 +1343,10 @@ s5_file_type() (
 # bypassing the preceding byte and ELF gates.
 s5_xray_version_command() { "$1" version; }
 
+# The executable gates. Exact size and SHA-256 were proven by s5_fetch_binary
+# on this same private file a moment ago, so they are not repeated here: the
+# repeat hashed 35 MB twice and made its own two refusal reasons unreachable.
 s5_verify_binary_candidate() {
-    s5_accept_size "$1" binary-size "$S5_ASSET_SIZE" || return 1
-    _svbc_sha=$(s5_sha256 "$1") || { s5_msg_err digest.candidate "$S5_ASSET_NAME"; return 1; }
-    [ "$_svbc_sha" = "$S5_ASSET_SHA256" ] || {
-        s5_msg_err asset.invalid binary-sha256
-        return 1
-    }
     _svbc_file=$(s5_file_type "$1" 2>/dev/null) || { s5_msg_err asset.invalid filetype; return 1; }
     case "$S5_ARCHNAME:$_svbc_file" in
     amd64:*'ELF 64-bit LSB executable, x86-64'*) ;;
@@ -1481,9 +1470,13 @@ s5_download_engine() {
     return 0
 }
 
+# A configuration-only update hashes the installed executable three times, and
+# each one closes a different window: the state load before the prompts, this
+# re-check after them and before the healthy service is stopped, and the state
+# writer's check before it records the digest. None of them is a repeat.
 s5_binary_ready() {
     [ -x "$S5_BIN" ] && [ ! -L "$S5_BIN" ] || return 1
-    [ "$(s5_sha256 "$S5_BIN" 2>/dev/null)" = "$S5_ASSET_BINARY_SHA256" ]
+    [ "$(s5_sha256 "$S5_BIN" 2>/dev/null)" = "$S5_ASSET_SHA256" ]
 }
 
 s5_getent_state() {
@@ -1856,8 +1849,8 @@ s5_state_write() {
         _ssw_asset=$S5_ASSET_NAME
         _ssw_size=$S5_ASSET_SIZE
         _ssw_sha=$S5_ASSET_SHA256
-        _ssw_binsize=$S5_ASSET_BINARY_SIZE
-        _ssw_binsha=$S5_ASSET_BINARY_SHA256
+        _ssw_binsize=$S5_ASSET_SIZE
+        _ssw_binsha=$S5_ASSET_SHA256
         ;;
     esac
     s5_valid_release "$_ssw_release" || return 1
@@ -2105,8 +2098,8 @@ s5_open_managed_state() {
         s5_asset_select || return 1
         if [ "$_som_installed_release" != "$S5_XRAY_VERSION" ] ||
             [ "$_som_installed_commit" != "$S5_XRAY_COMMIT" ] ||
-            [ "$_som_installed_binsize" != "$S5_ASSET_BINARY_SIZE" ] ||
-            [ "$_som_installed_binsha" != "$S5_ASSET_BINARY_SHA256" ]; then
+            [ "$_som_installed_binsize" != "$S5_ASSET_SIZE" ] ||
+            [ "$_som_installed_binsha" != "$S5_ASSET_SHA256" ]; then
             S5_UPDATE_NEEDS_BINARY=1
         fi
     fi
