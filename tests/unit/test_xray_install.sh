@@ -514,10 +514,60 @@ s5t_digest_failure_install() {
     assert_file_absent "$_sdf_target digest cleanup removes the service group" "$S5_TEST_ROOT/group-exists"
 }
 
+# Every fresh-install step that fails names itself; the operator used to see
+# a bare nonzero exit for these.
+s5t_fresh_step_fault() {
+    case "$1" in
+    unit) s5_write_unit() { return 1; } ;;
+    reload | enable)
+        systemctl() {
+            case "$_fsm_fault:${1:-}" in reload:daemon-reload | enable:enable) return 1 ;; esac
+            "$S5_TEST_ROOT/bin/systemctl" "$@"
+        }
+        ;;
+    state) s5_state_write() { return 1; } ;;
+    dataplane) S5_PROTOCOL_VERIFY=false ;;
+    esac
+    s5_install_new
+}
+
+test_fresh_step_messages() {
+    for _fsm_fault in unit reload enable state dataplane; do
+        t_xray_fixture 23456
+        T_OUT=$( ( s5t_fresh_step_fault "$_fsm_fault" ) 2>&1) && T_STATUS=0 || T_STATUS=$?
+        assert_ne "fresh $_fsm_fault failure aborts installation" 0 "$T_STATUS"
+        case "$_fsm_fault" in
+        unit) _fsm_said="could not write the service definition: $S5_SERVICE_ARTIFACT." ;;
+        reload) _fsm_said='the service manager could not reload the service definitions.' ;;
+        enable) _fsm_said='could not enable the Xray service at boot.' ;;
+        state) _fsm_said="could not write the state file: $S5_STATE." ;;
+        dataplane) _fsm_said='authenticated proxy traffic could not be verified on port 23456.' ;;
+        esac
+        assert_contains "fresh $_fsm_fault failure names itself" "[x] $_fsm_said" "$T_OUT"
+        assert_not_contains "a data-plane failure is not a listener diagnosis" \
+            'listen state of port' "$T_OUT"
+    done
+}
+
+# Alpine deletes the group with delgroup; a refusal there is warned about on
+# every backend, not only on the systemd families.
+test_alpine_group_warning() {
+    t_xray_fixture 23456
+    S5_OS_FAMILY=alpine
+    S5_CREATED_GROUP=1
+    printf '900\n' >"$S5_TEST_ROOT/group-exists"
+    : >"$S5_TEST_ROOT/fail-groupdel"
+    t_run s5_account_remove
+    assert_ne "a refused Alpine group deletion fails" 0 "$T_STATUS"
+    assert_contains "a refused Alpine group deletion is warned about" \
+        '[!] could not remove service group: xray-socks5' "$T_OUT"
+    rm -f "$S5_TEST_ROOT/fail-groupdel"
+}
+
 test_sha256_unit_failure() { s5t_digest_failure_install unit; }
 test_sha256_config_install_failure() { s5t_digest_failure_install config; }
 
-SCENARIOS='cleanup_stop_failure account_creation_failure account_lifecycle install openrc_logging_warning config_corrupt binary_corrupt unit_corrupt account_corrupt cleanup_temps openrc_runtime locks raw_command_cleanup raw_release_failure raw_candidate_failure raw_signal fresh_stage_failure_cleanup sha256_unit_failure sha256_config_install_failure'
+SCENARIOS='fresh_step_messages alpine_group_warning cleanup_stop_failure account_creation_failure account_lifecycle install openrc_logging_warning config_corrupt binary_corrupt unit_corrupt account_corrupt cleanup_temps openrc_runtime locks raw_command_cleanup raw_release_failure raw_candidate_failure raw_signal fresh_stage_failure_cleanup sha256_unit_failure sha256_config_install_failure'
 if [ "$#" -eq 0 ]; then
     # Expand the fixed scenario words into the default argument list.
     # shellcheck disable=SC2086

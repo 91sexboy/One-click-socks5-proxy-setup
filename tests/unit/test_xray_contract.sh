@@ -578,6 +578,18 @@ input.password.keep||||Password (visible while typed) [Enter = keep current]: |�
 input.password.legacy||||the current password contains characters this version no longer writes and cannot be kept; enter a new password, or press Enter to generate one.|当前密码含有本版本不再写入的字符，无法保留；请输入新密码，或回车生成随机值。
 show.nat.unnamed|212.189.21.55|59093||WARNING: 212.189.21.55 is the address this server egresses from, and this machine does not hold it. The proxy listens on port 59093. The links below work only if something upstream forwards inbound connections for that address to this machine; otherwise set S5_SERVER_IPV4 and S5_SERVER_PORT to the address and port your clients actually use.|警告：212.189.21.55 是本服务器出站流量的来源地址，本机并未持有它。代理监听在端口 59093。只有当上级把发往该地址的入站连接转发到本机时，下面的链接才可用；否则请用 S5_SERVER_IPV4 和 S5_SERVER_PORT 指定客户端真正使用的地址和端口。
 show.port.mapped|56447|59093||the links below use port 56447 while the proxy listens on port 59093. That mapping comes from S5_SERVER_PORT; the script does not create it.|下面的链接使用端口 56447，而代理监听在端口 59093。该映射来自 S5_SERVER_PORT，脚本不会创建它。
+digest.candidate|xray-v26.3.27-linux-amd64|||could not compute SHA-256 for downloaded asset: xray-v26.3.27-linux-amd64.|无法计算下载资产的 SHA-256：xray-v26.3.27-linux-amd64。
+transaction.prepare|/txn|||could not prepare the update recovery copies in /txn; the installation was not changed.|无法在 /txn 中准备更新的恢复副本；当前安装未被修改。
+transaction.publish|/cfg|||could not publish the new configuration: /cfg.|无法发布新配置：/cfg。
+transaction.rolledback||||the update was rolled back; the previous configuration and state were restored.|更新已回滚，已恢复原来的配置和状态。
+service.unit|/unit|||could not write the service definition: /unit.|无法写入服务定义：/unit。
+service.reload||||the service manager could not reload the service definitions.|服务管理器无法重新加载服务定义。
+service.enable||||could not enable the Xray service at boot.|无法设置 Xray 服务开机启动。
+service.disable||||could not disable the Xray service at boot.|无法取消 Xray 服务开机启动。
+service.dataplane|23456|||authenticated proxy traffic could not be verified on port 23456.|端口 23456 上的认证代理流量验证失败。
+state.write|/state|||could not write the state file: /state.|无法写入 state 文件：/state。
+uninstall.progress|/uninstall|||could not record uninstall progress: /uninstall.|无法记录卸载进度：/uninstall。
+uninstall.identity||||could not record the identity of the installed paths; nothing was removed.|无法记录已安装路径的身份；未删除任何内容。
 CATALOG
 
 S5_LANG=en

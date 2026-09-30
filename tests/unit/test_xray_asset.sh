@@ -131,6 +131,42 @@ assert_contains "wrong Xray version reports version" 'version' "$T_OUT"
 s5_cleanup
 assert_eq "wrong-version candidate is removed" 0 "$(t_candidate_count)"
 
+# A staging step that cannot run is named, not left as a bare nonzero status:
+# file(1) failing, a refused chmod, a candidate the kernel will not execute
+# (noexec /usr/local), and a digest tool that cannot run at all.
+for _stage_fault in filetype permission exec digest; do
+    t_raw_fixture
+    case "$_stage_fault" in
+    filetype) s5_file_type_command() { return 1; } ;;
+    permission)
+        chmod() {
+            case "$1:$2" in 0700:"$S5_PREFIX"/.xray.*) return 1 ;; esac
+            command chmod "$@"
+        }
+        ;;
+    exec) s5_xray_version_command() { return 126; } ;;
+    digest) s5_sha256_command() { return 1; } ;;
+    esac
+    t_run s5_download_engine
+    unset -f chmod
+    assert_ne "$_stage_fault staging failure is refused" 0 "$T_STATUS"
+    case "$_stage_fault" in
+    digest)
+        assert_contains "a digest tool failure names the tool, not the bytes" \
+            '[x] could not compute SHA-256 for downloaded asset: xray-v26.3.27-linux-amd64.' "$T_OUT"
+        assert_not_contains "a digest tool failure is not a SHA mismatch" \
+            'verification failed: sha256' "$T_OUT"
+        ;;
+    *)
+        assert_contains "$_stage_fault staging failure names its reason" \
+            "[x] Xray asset verification failed: $_stage_fault." "$T_OUT"
+        ;;
+    esac
+    assert_file_absent "$_stage_fault candidate is never published" "$S5_BIN"
+    s5_cleanup
+    assert_eq "$_stage_fault candidate is removed" 0 "$(t_candidate_count)"
+done
+
 # The download seam classifies curl's direct write status without parsing stderr.
 t_raw_fixture
 S5_TEST_ASSET_PATH=''
