@@ -244,6 +244,7 @@ def metrics_writer_checks(check, scratch):
     duplex_target.FRAMES = 11
     del duplex_target.FAMILIES[:]
     duplex_target.FAMILIES.extend(["ipv4", "ipv6"])
+    duplex_target.CLOSES.clear()
     count_path = os.path.join(scratch, "count")
     report_path = os.path.join(scratch, "report")
     order, errors, hung = run_paired(
@@ -268,7 +269,8 @@ def metrics_writer_checks(check, scratch):
     if problem:
         print("# %s" % problem)
     check("the report holds every counter",
-          report == {"accepted": 7, "frames": 11, "families": ["ipv4", "ipv6"], "cohorts": {}})
+          report == {"accepted": 7, "frames": 11, "families": ["ipv4", "ipv6"], "cohorts": {},
+                     "closes": {}})
     check("the count file holds the accepted count", slurp(count_path) == "7\n")
 
     # Last, and on a daemon thread: a metrics lock that is not reentrant leaves
@@ -297,7 +299,66 @@ def connection_cleanup_checks(check):
             client.close()
 
 
+def backpressure_checks(check):
+    """A client that reads in bursts leaves echoes waiting behind it.
+
+    The comparison workload sends several 64-KiB frames before it reads, so the
+    target's echo send can block for seconds. That wait is backpressure, not a
+    dead peer: the tunnel has to survive a reader that pauses well past the
+    target's one-second read poll, and the close is recorded with its reason.
+    """
+    duplex_target.CLOSES.clear()
+    server, client = socket.socketpair()
+    worker = threading.Thread(target=duplex_target.serve_connection, args=(server, None, None),
+                              daemon=True)
+    worker.start()
+    cid, nonce, frames = 77, b"NONCE-BP", 24
+    payload = bytes(range(256)) * 256
+    try:
+        client.sendall(duplex_target.frame(ord("H"), cid, 0, nonce, b"hello"))
+
+        def send_frames():
+            try:
+                for seq in range(1, frames + 1):
+                    client.sendall(duplex_target.frame(ord("C"), cid, seq, nonce, payload))
+            except OSError:
+                pass
+
+        threading.Thread(target=send_frames, daemon=True).start()
+        # No reads for 2.5 s: both socket buffers fill and the echo send blocks.
+        time.sleep(2.5)
+        client.settimeout(0.5)
+        buffered, echoes = b"", 0
+        deadline = time.monotonic() + 20
+        while echoes < frames and time.monotonic() < deadline:
+            try:
+                chunk = client.recv(1 << 20)
+            except socket.timeout:
+                continue
+            if not chunk:
+                break
+            buffered += chunk
+            while len(buffered) >= 6:
+                length = struct.unpack("!I", buffered[2:6])[0]
+                if len(buffered) < 6 + length:
+                    break
+                if buffered[6] == ord("E"):
+                    echoes += 1
+                buffered = buffered[6 + length:]
+        check("every echo survives a reader that pauses past the poll interval", echoes == frames)
+        if echoes != frames:
+            print("# %d of %d echoes arrived; closes=%s" % (echoes, frames, duplex_target.CLOSES))
+    finally:
+        client.close()
+        worker.join(10)
+        server.close()
+    check("the target records why the tunnel closed", duplex_target.CLOSES == {"client-closed": 1})
+
+
 class TargetTests(TapTestCase):
+    def test_backpressure(self):
+        backpressure_checks(self.check)
+
     def test_connection_cleanup(self):
         connection_cleanup_checks(self.check)
 

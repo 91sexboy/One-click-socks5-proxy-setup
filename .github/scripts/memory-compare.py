@@ -3,6 +3,7 @@
 
 import argparse
 import bisect
+import collections
 import copy
 import hashlib
 import importlib.util
@@ -150,6 +151,11 @@ class TransientService:
 class TunnelLoad:
     latency_bounds = tuple(0.001 * 2 ** index for index in range(16))
     payload = bytes(range(256)) * 256
+    # At most this many echoes wait unread. Eight 64-KiB frames sent before the
+    # first read left both directions blocked once proxy and kernel buffers
+    # filled -- quickly with the 4-KiB candidate and the slow reader's small
+    # receive buffer -- until a timeout broke the tunnel.
+    window = 2
 
     def __init__(self, proxy, target, credentials, count, mode):
         if count < 0 or mode not in ("held", "duplex", "slow"):
@@ -175,7 +181,7 @@ class TunnelLoad:
                 sock = connect(self.proxy, self.target, self.credentials)
                 session = {"socket": sock, "cid": 100000 + index, "nonce": xray_mixed.new_nonce(),
                            "server_seq": 0, "sequence": 1, "frames": 0, "verified_bytes": 0,
-                           "latencies": [0] * len(self.latency_bounds)}
+                           "latencies": [0] * len(self.latency_bounds), "stage": "setup"}
                 self.sessions.append(session)
                 sock.settimeout(5)
                 if self.mode == "slow":
@@ -206,9 +212,11 @@ class TunnelLoad:
     def _echo(self, session, sequence, payload):
         deadline = time.monotonic() + 5
         while True:
+            session["stage"] = "echo"
             frame = xray_mixed.read_frame(session["socket"], deadline)
             kind, ids, nonce, echoed = frame
             if kind == xray_mixed.FRAME_SERVER:
+                session["stage"] = "server-frame"
                 self._validate_server_frame(session, frame)
             elif kind == xray_mixed.FRAME_ECHO and ids == (session["cid"], sequence) and nonce == session["nonce"] and echoed == payload:
                 return
@@ -221,31 +229,48 @@ class TunnelLoad:
             self.go.wait()
             while not self.stop.is_set():
                 if self.mode == "held":
+                    session["stage"] = "server-frame"
                     self._validate_server_frame(session, xray_mixed.read_frame(session["socket"], time.monotonic() + 5))
                     continue
                 sequence = session["sequence"]
-                sent = []
+                pending = collections.deque()
                 for index in range(8):
-                    sent.append(time.monotonic())
+                    session["stage"] = "send"
+                    pending.append((sequence + index, time.monotonic()))
                     session["socket"].sendall(xray_mixed.make_frame(
                         xray_mixed.FRAME_CLIENT, session["cid"], sequence + index, session["nonce"], self.payload))
+                    if len(pending) >= self.window:
+                        self._settle(session, *pending.popleft())
                 if self.mode == "slow":
                     self.stop.wait(0.05)
-                for index, started in enumerate(sent):
-                    self._echo(session, sequence + index, self.payload)
-                    latency = time.monotonic() - started
-                    bucket = min(bisect.bisect_left(self.latency_bounds, latency), len(self.latency_bounds) - 1)
-                    session["latencies"][bucket] += 1
-                    session["verified_bytes"] += 2 * len(self.payload)
-                    session["frames"] += 1
-                session["sequence"] += len(sent)
+                while pending:
+                    self._settle(session, *pending.popleft())
+                session["sequence"] += 8
         except BaseException as error:
             if not self.stop.is_set():
-                self.errors.put(type(error).__name__)
+                # Which tunnel, doing what, and why: the type name alone could
+                # not tell a target close from a local timeout. Every message
+                # here is a fixed literal or a socket error, never payload.
+                self.errors.put("%s cid=%d stage=%s %s: %s" % (
+                    self.mode, session["cid"], session["stage"], type(error).__name__, error))
+
+    def _settle(self, session, sequence, started):
+        self._echo(session, sequence, self.payload)
+        latency = time.monotonic() - started
+        bucket = min(bisect.bisect_left(self.latency_bounds, latency), len(self.latency_bounds) - 1)
+        session["latencies"][bucket] += 1
+        session["verified_bytes"] += 2 * len(self.payload)
+        session["frames"] += 1
+
+    def failure(self):
+        try:
+            return "comparison framed tunnel failed: " + self.errors.get_nowait()
+        except queue.Empty:
+            return "comparison framed tunnel failed: a traffic worker exited"
 
     def check(self):
         if not self.errors.empty() or any(not worker.is_alive() for worker in self.threads):
-            raise RuntimeError("comparison framed tunnel failed")
+            raise RuntimeError(self.failure())
 
     def close(self):
         self.finished = time.monotonic()
@@ -266,7 +291,7 @@ class TunnelLoad:
     def __exit__(self, error_type, *_error):
         self.close()
         if error_type is None and not self.errors.empty():
-            raise RuntimeError("comparison framed tunnel failed")
+            raise RuntimeError(self.failure())
 
     def stats(self):
         if self.started is None or self.finished is None or not self.errors.empty():
