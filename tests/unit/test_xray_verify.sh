@@ -28,7 +28,7 @@ chmod 0600 "$WORK/pass"
 VERIFY_PY="$WORK/verify.py"
 awk 'index($0,"<<") && index($0,"PY"){f=1;next} $0=="PY"{f=0} f' "$SRC" >"$VERIFY_PY"
 assert_contains "the verifier python was extracted" \
-    "data-plane verification failed" "$(cat "$VERIFY_PY")"
+    "dataplane-reason=" "$(cat "$VERIFY_PY")"
 
 # A mock inbound on loopback. "close" accepts and closes without a reply, so the
 # verifier's first exact() read returns empty -> RuntimeError("closed"). "authmethod"
@@ -86,8 +86,8 @@ MOCK
 s5t_run_case close
 s5t_run_case authmethod
 
-_diag_close=$(grep 'data-plane verification failed' "$WORK/out.close" || true)
-_diag_auth=$(grep 'data-plane verification failed' "$WORK/out.authmethod" || true)
+_diag_close=$(grep 'dataplane-reason=' "$WORK/out.close" || true)
+_diag_auth=$(grep 'dataplane-reason=' "$WORK/out.authmethod" || true)
 
 assert_ne "the closed-inbound case produced a diagnostic" "" "$_diag_close"
 assert_ne "the auth-method case produced a diagnostic" "" "$_diag_auth"
@@ -207,5 +207,24 @@ for _wrapper_status in 0 17; do
     assert_file_absent "wrapper removes credentials after probing" "$_verifier_path"
     assert_eq "wrapper clears credential ownership after probing" '' "$S5_VERIFY_TEMP"
 done
+
+# The verifier's reason reaches the operator inside the catalog sentence of the
+# chosen language, never as the verifier's own English line.
+s5_verify_protocols() {
+    _verifier_path=$2
+    printf 'dataplane-reason=RuntimeError: http auth\n' >&2
+    return 1
+}
+for S5_LANG in en zh; do
+    s5_verify_dataplane >"$WORK/reason.$S5_LANG" 2>&1
+    assert_eq "a verifier reason still fails in $S5_LANG" 1 "$?"
+    case "$S5_LANG" in
+    en) _reason_said='[x] authenticated proxy traffic could not be verified on port 23456: RuntimeError: http auth.' ;;
+    zh) _reason_said='[x] 端口 23456 上的认证代理流量验证失败：RuntimeError: http auth。' ;;
+    esac
+    assert_eq "the verifier reason is one catalog line in $S5_LANG" "$_reason_said" "$(cat "$WORK/reason.$S5_LANG")"
+    assert_file_absent "the reason file is removed in $S5_LANG" "$_verifier_path.reason"
+done
+S5_LANG=en
 
 t_summary
