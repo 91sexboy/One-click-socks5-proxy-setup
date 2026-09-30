@@ -105,11 +105,9 @@ def check_installer(root, shell):
 S5_LANG=en
 S5_ARCHNAME=$2
 S5_ASSET_NAME= S5_ASSET_SIZE= S5_ASSET_SHA256=
-S5_ASSET_BINARY_SIZE= S5_ASSET_BINARY_SHA256=
 s5_asset_select || exit 1
 printf '%s\n' "$S5_XRAY_VERSION" "$S5_XRAY_COMMIT" "$S5_XRAY_DISTRIBUTION_TAG" "$S5_XRAY_BASE" \
-    "$S5_ASSET_NAME" "$S5_ASSET_SIZE" "$S5_ASSET_SHA256" \
-    "$S5_ASSET_BINARY_SIZE" "$S5_ASSET_BINARY_SHA256"
+    "$S5_ASSET_NAME" "$S5_ASSET_SIZE" "$S5_ASSET_SHA256"
 : >"$S5_TEST_ROOT/curl.calls"
 s5_curl_command() { printf '%s\n' curl-call "$@" >>"$S5_TEST_ROOT/curl.calls"; return 1; }
 _fetch_status=0
@@ -129,7 +127,7 @@ cat "$S5_TEST_ROOT/curl.calls"
                 env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 timeout=15, check=False)
             expected = [VERSION, COMMIT, DISTRIBUTION_TAG, BASE + DISTRIBUTION_TAG,
-                        raw_name, raw_size, raw_sha, raw_size, raw_sha]
+                        raw_name, raw_size, raw_sha]
             expected += ['fetch-status=1', 'curl-call', '-q', '-fsSL', '--proto', '=https',
                          '--proto-redir', '=https', '--max-time', '120', '--max-filesize',
                          str(int(raw_size) + 1), '-o', directory + '/candidate',

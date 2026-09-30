@@ -276,7 +276,7 @@ assert_ne "the historical digest is a different value from the candidate's" \
 # between, so a load that wrote the recorded digest into the candidate would
 # stand unnoticed until the next selection.
 assert_eq "loading historical state leaves the download candidate alone" \
-    "$S5T_BIN_SHA256" "$S5_ASSET_BINARY_SHA256"
+    "$S5T_BIN_SHA256" "$S5_ASSET_SHA256"
 s5_service_state() { return 1; }
 s5_listener_state() { return 1; }
 s5_lock_acquire() { S5_LOCK_HELD=1; return 0; }
@@ -287,9 +287,9 @@ assert_contains "status reports the installed historical release"     'Xray vers
 assert_not_contains "status does not substitute the current candidate release"     "Xray version: $S5_XRAY_VERSION" "$T_OUT"
 s5_asset_select
 assert_eq "current candidate selection remains on the script release" xray-v26.3.27-linux-amd64 "$S5_ASSET_NAME"
-assert_eq "selection restores the script's own candidate digest" "$S5T_BIN_SHA256" "$S5_ASSET_BINARY_SHA256"
+assert_eq "selection restores the script's own candidate digest" "$S5T_BIN_SHA256" "$S5_ASSET_SHA256"
 assert_ne "the selected candidate digest is not the historical one" \
-    "$(t_state_get binary_sha256)" "$S5_ASSET_BINARY_SHA256"
+    "$(t_state_get binary_sha256)" "$S5_ASSET_SHA256"
 # Hand the current binary back: every case below starts from the fixture's own
 # state, whose recorded digest is this one, and a stale older binary would make
 # each of them refuse for that reason instead of the one under test.
@@ -369,7 +369,7 @@ S5_ACCOUNT_GID=900
 t_run s5_state_write
 assert_ne "state writer refuses a binary digest that is not the current pin" 0 "$T_STATUS"
 assert_file_absent "wrong binary metadata writes no state" "$S5_STATE"
-S5_BINARY_SHA256=$S5_ASSET_BINARY_SHA256
+S5_BINARY_SHA256=$S5_ASSET_SHA256
 S5_ASSET_SIZE=bad
 t_run s5_state_write
 assert_ne "state writer refuses malformed archive metadata" 0 "$T_STATUS"

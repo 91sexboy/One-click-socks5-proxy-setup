@@ -24,10 +24,6 @@ assert_eq "amd64 raw size" 36577406 "$S5_ASSET_SIZE"
 assert_eq "amd64 raw digest" \
     8255dd939c34cf966cc91517b6324dd3c8d0bcf49ffac8beca049a38c46845ed \
     "$S5_ASSET_SHA256"
-assert_eq "amd64 downloaded and installed sizes are identical" \
-    "$S5_ASSET_SIZE" "$S5_ASSET_BINARY_SIZE"
-assert_eq "amd64 downloaded and installed digests are identical" \
-    "$S5_ASSET_SHA256" "$S5_ASSET_BINARY_SHA256"
 
 S5_ARCHNAME=arm64
 # shellcheck disable=SC2218
@@ -37,10 +33,6 @@ assert_eq "arm64 raw size" 34209918 "$S5_ASSET_SIZE"
 assert_eq "arm64 raw digest" \
     c2d20a7045250497083afea0d79db0672f6c89a25aaaf37c92de034d6b764b04 \
     "$S5_ASSET_SHA256"
-assert_eq "arm64 downloaded and installed sizes are identical" \
-    "$S5_ASSET_SIZE" "$S5_ASSET_BINARY_SIZE"
-assert_eq "arm64 downloaded and installed digests are identical" \
-    "$S5_ASSET_SHA256" "$S5_ASSET_BINARY_SHA256"
 
 S5_ARCHNAME=riscv64
 t_run s5_asset_select
@@ -174,6 +166,60 @@ for _stage_fault in filetype permission exec digest; do
     s5_cleanup
     assert_eq "$_stage_fault candidate is removed" 0 "$(t_candidate_count)"
 done
+
+# Acceptance hashes the candidate once, at download, and publication records it
+# once more after the rename. Verification used to hash the same private file a
+# third time. The counting seam is the production digest command.
+t_raw_fixture
+_hc_real=$(command -v sha256sum)
+s5_sha256_command() { printf '%s\n' "$1" >>"$S5_TEST_ROOT/hash.log"; "$_hc_real" "$1"; }
+t_run_here s5_download_engine
+assert_eq "counted staging succeeds" 0 "$T_STATUS"
+assert_eq "staging hashes the raw candidate once" 1 \
+    "$(grep -c "^$S5_PREFIX/\.xray\." "$S5_TEST_ROOT/hash.log")"
+assert_eq "publication records the renamed executable once" 1 \
+    "$(grep -cx "$S5_BIN" "$S5_TEST_ROOT/hash.log")"
+
+# A configuration-only update checks the installed executable at three distinct
+# moments (load, after the prompts before stopping the service, before the state
+# records it) and at no others.
+t_xray_fixture 23999
+t_xray_install
+: >"$S5_TEST_ROOT/hash.log"
+s5_sha256_command() { printf '%s\n' "$1" >>"$S5_TEST_ROOT/hash.log"; "$_hc_real" "$1"; }
+s5_prompt_port() { S5_PORT=24001; return 0; }
+t_run_here s5_install_update
+assert_eq "counted configuration-only update succeeds" 0 "$T_STATUS"
+assert_eq "a configuration-only update hashes the executable three times" 3 \
+    "$(grep -cx "$S5_BIN" "$S5_TEST_ROOT/hash.log")"
+
+# An endpoint that ignores --max-filesize and returns more than the pin is
+# reported with both byte counts (ADR-0006), not as a bare "size".
+for _os_lang in en zh; do
+    t_raw_fixture
+    S5_LANG=$_os_lang
+    unset S5_TEST_ASSET_PATH
+    s5_curl_command() {
+        while [ "$#" -gt 0 ]; do
+            if [ "$1" = -o ]; then
+                head -c "$((S5T_BIN_SIZE + 2))" /dev/zero >"$2"
+                return 0
+            fi
+            shift
+        done
+        return 2
+    }
+    t_run_here s5_download_engine
+    assert_ne "an oversized response is refused in $S5_LANG" 0 "$T_STATUS"
+    case "$S5_LANG" in
+    en) _os_said="[x] Xray asset verification failed: size is $((S5T_BIN_SIZE + 2)) bytes, expected $S5T_BIN_SIZE." ;;
+    zh) _os_said="[x] Xray 资产校验失败：size 为 $((S5T_BIN_SIZE + 2)) 字节，应为 $S5T_BIN_SIZE 字节。" ;;
+    esac
+    assert_contains "an oversized response names both byte counts in $S5_LANG" "$_os_said" "$T_OUT"
+    s5_cleanup
+    assert_eq "an oversized candidate is removed in $S5_LANG" 0 "$(t_candidate_count)"
+done
+S5_LANG=en
 
 # The download seam classifies curl's direct write status without parsing stderr.
 t_raw_fixture
