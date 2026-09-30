@@ -137,7 +137,7 @@ def rollback_exit(case, source, shell):
 t_xray_fixture
 t_xray_install
 printf 'root=%s\n' "$S5_TEST_ROOT"
-s5_precheck() { return 0; }
+s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
 s5_prompt_port() { S5_PORT=24567; }
 s5_state_write() { : >"$S5_TEST_ROOT/fail-restore"; return 1; }
 mktemp() {

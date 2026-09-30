@@ -106,7 +106,7 @@ test_rejected_command() {
     _upcfg=$(t_sha256 "$S5_CFG")
     _upstate=$(t_sha256 "$S5_STATE")
     _uprestarts=$(grep -c 'systemctl restart' "$S5_TEST_ROOT/transcript" || true)
-    s5_precheck() { return 0; }
+    s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
     printf 1 >"$S5_TEST_ROOT/cfgtest"
     s5_prompt_port() { S5_PORT=24999; return 0; }
     # The subshell fires the real EXIT trap without replacing the harness trap.
@@ -133,7 +133,7 @@ test_publish_signal() {
     # Deliver the signal after the publish rename returns, before its caller can
     # update flags. Cleanup must restore the old config against the old state.
     _winold=$(t_sha256 "$S5_CFG")
-    s5_precheck() { return 0; }
+    s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
     s5_prompt_port() { S5_PORT=24333; return 0; }
     (
         S5T_MV_FIRED=0
@@ -178,7 +178,7 @@ test_uninstall_leftovers() {
     t_xray_fixture 23999
     t_xray_install
     # An interrupted update's known private leftovers are safe to remove.
-    s5_precheck() { return 0; }
+    s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
     mkdir -p "$S5_TXNDIR"
     printf '{}\n' >"$S5_TXNDIR/old.config.json"
     printf 'engine\txray\n' >"$S5_TXNDIR/old.state"
@@ -203,7 +203,7 @@ test_uninstall_leftovers() {
 
 test_uninstall_residue() {
     t_xray_fixture 23456
-    s5_precheck() { return 0; }
+    s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
     printf 'y\n' >"$S5_TEST_ROOT/answers.uninstall"
     # A missing state is not success if namespace residue survives.
     mkdir -p "$S5_STATEDIR"
@@ -251,7 +251,7 @@ test_restore_failure() {
         _restore_cfg=$(t_sha256 "$S5_CFG")
         _restore_state=$(t_sha256 "$S5_STATE")
         (
-            s5_precheck() { return 0; }
+            s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
             s5_prompt_port() { S5_PORT=24567; }
             s5_state_write() { : >"$S5_TEST_ROOT/fail-restore"; return 1; }
             mktemp() {
@@ -279,7 +279,7 @@ test_restore_failure() {
             # The next command recovers the complete pair before asking for a
             # new update, then may proceed through the ordinary update path.
             (
-                s5_precheck() { return 0; }
+                s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
                 s5_confirm_update() { printf 'update confirmation reached\n' >>"$S5_TEST_ROOT/transcript"; }
                 s5_cmd_install
             ) >"$S5_TEST_ROOT/next-install.log" 2>&1
@@ -298,7 +298,7 @@ test_uninstall_unknown() {
         for _unknown_kind in file directory symlink; do
             t_xray_fixture 23456
             t_xray_install
-            s5_precheck() { return 0; }
+            s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
             case "$_unknown_dir" in
             config) _unknown_parent=$S5_SYSCONFDIR ;;
             state) _unknown_parent=$S5_STATEDIR ;;
@@ -347,7 +347,7 @@ s5t_txn_fault() {
 
 s5t_txn_run() {
     _txn_fault=$1
-    s5_precheck() { return 0; }
+    s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
     case "$_txn_fault" in
     mkdir)
         mkdir() {
@@ -521,7 +521,7 @@ test_uninstall_messages() {
             t_xray_fixture 23456
             t_xray_install
             S5_LANG=$_message_lang
-            s5_precheck() { return 0; }
+            s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
             printf 'y\n' >"$S5_TEST_ROOT/answers.uninstall"
             if [ "$_message_fault" = recovery ]; then
                 printf 'phase\tbogus\n' >"$S5_UNINSTALL_STATE"
@@ -578,7 +578,7 @@ test_uninstall_confirmation() {
     for _uninstall_answer in '' y Y yes YES Yes n eof prompt-failure; do
         t_xray_fixture 23456
         t_xray_install
-        s5_precheck() { return 0; }
+        s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
         if [ "$_uninstall_answer" = eof ]; then
             : >"$S5_TEST_ROOT/answers.uninstall"
         else
@@ -615,7 +615,7 @@ operation cancelled.' "$T_OUT" ;;
 
 test_uninstall_group_residue() {
     t_xray_fixture 23456
-    s5_precheck() { return 0; }
+    s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
     printf '900\n' >"$S5_TEST_ROOT/group-exists"
     printf 'y\n' >"$S5_TEST_ROOT/answers.uninstall"
     t_run s5_cmd_uninstall <"$S5_TEST_ROOT/answers.uninstall"
@@ -640,7 +640,7 @@ test_uninstall_resume() {
         binary-removed manager-reloaded account-removed state-finalizing complete; do
         t_xray_fixture 23456
         t_xray_install
-        s5_precheck() { return 0; }
+        s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
         printf 'y\n' >"$S5_TEST_ROOT/answers.uninstall"
         S5T_UNINSTALL_FAIL_PHASE=$_urp
         S5_UNINSTALL_INJECT=s5t_uninstall_injector
@@ -671,7 +671,7 @@ test_uninstall_signal_resume() {
     for _ursig in HUP INT TERM; do
         t_xray_fixture 23456
         t_xray_install
-        s5_precheck() { return 0; }
+        s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
         printf 'y\n' >"$S5_TEST_ROOT/answers.uninstall"
         S5T_UNINSTALL_SIGNAL_PHASE=disabled
         S5T_UNINSTALL_SIGNAL=$_ursig
@@ -693,7 +693,7 @@ test_uninstall_resume_drift() {
     for _urd_phase in disabled service-artifact-removed config-removed; do
         t_xray_fixture 23456
         t_xray_install
-        s5_precheck() { return 0; }
+        s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
         printf 'y\n' >"$S5_TEST_ROOT/answers.uninstall"
         S5T_UNINSTALL_FAIL_PHASE=$_urd_phase
         S5_UNINSTALL_INJECT=s5t_uninstall_injector
@@ -716,7 +716,7 @@ test_uninstall_resume_drift() {
 
     t_xray_fixture 23456
     t_xray_install
-    s5_precheck() { return 0; }
+    s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
     printf 'y\n' >"$S5_TEST_ROOT/answers.uninstall"
     S5T_UNINSTALL_FAIL_PHASE=disabled
     S5_UNINSTALL_INJECT=s5t_uninstall_injector
@@ -735,7 +735,7 @@ test_uninstall_resume_drift() {
 
     t_xray_fixture 23456
     t_xray_install
-    s5_precheck() { return 0; }
+    s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
     printf 'y\n' >"$S5_TEST_ROOT/answers.uninstall"
     S5T_UNINSTALL_FAIL_PHASE=account-removed
     S5_UNINSTALL_INJECT=s5t_uninstall_injector
@@ -755,7 +755,7 @@ test_uninstall_phase_gap_resume() {
         _ugr_resource=${_ugr_case#*:}
         t_xray_fixture 23456
         t_xray_install
-        s5_precheck() { return 0; }
+        s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
         printf 'y\n' >"$S5_TEST_ROOT/answers.uninstall"
         S5T_UNINSTALL_FAIL_PHASE=$_ugr_phase
         S5_UNINSTALL_INJECT=s5t_uninstall_injector
@@ -777,7 +777,7 @@ test_uninstall_phase_gap_resume() {
 test_uninstall_final_window() {
     t_xray_fixture 23456
     t_xray_install
-    s5_precheck() { return 0; }
+    s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
     printf 'y\n' >"$S5_TEST_ROOT/answers.uninstall"
     S5T_UNINSTALL_FAIL_PHASE=complete-moved
     S5_UNINSTALL_INJECT=s5t_uninstall_injector
@@ -818,7 +818,7 @@ test_older_release_operations() {
     t_xray_fixture 23999
     t_xray_install
     s5t_make_older_state
-    s5_precheck() { return 0; }
+    s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
     t_run s5_cmd_restart
     assert_eq "older release restart succeeds through the operate interface" 0 "$T_STATUS"
     assert_eq "older release restart keeps its installed listener" 23999 \
@@ -837,7 +837,7 @@ test_update_listener_unverified() {
     t_xray_fixture 23999
     t_xray_install
     T_OUT=$( (
-        s5_precheck() { return 0; }
+        s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
         s5_wait_listening() { return 2; }
         s5_prompt_port() { S5_PORT=24100; return 0; }
         s5_cmd_install
@@ -858,7 +858,7 @@ test_rollback_binary_restore_failure() {
     t_xray_install
     s5t_make_older_state
     T_OUT=$( (
-        s5_precheck() { return 0; }
+        s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
         s5_prompt_port() { S5_PORT=24200; return 0; }
         S5_PROTOCOL_VERIFY=false
         mv() {
@@ -896,7 +896,7 @@ s5t_recovery_signal() {
 test_readonly_recovery_signal() {
     t_xray_fixture 23999
     t_xray_install
-    s5_precheck() { return 0; }
+    s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
     _rrs_bin=$(t_sha256 "$S5_BIN")
     mkdir -m 0700 "$S5_TXNDIR"
     cp "$S5_CFG" "$S5_TXNDIR/old.config.json"
@@ -956,7 +956,7 @@ test_failed_unit_operations() {
     t_xray_install
     rm -f "$S5_TEST_ROOT/svc_active"
     : >"$S5_TEST_ROOT/svc_failed"
-    s5_precheck() { return 0; }
+    s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
     t_run s5_cmd_status
     assert_ne "status fails on a failed unit" 0 "$T_STATUS"
     assert_contains "status names the failed unit" 'service: failed;' "$T_OUT"
@@ -1179,7 +1179,7 @@ test_uninstall_directory_drift() {
         _udd_dir=${_udd_case#*:}
         t_xray_fixture 23456
         t_xray_install
-        s5_precheck() { return 0; }
+        s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
         printf 'y\n' >"$S5_TEST_ROOT/answers.uninstall"
         S5T_UNINSTALL_FAIL_PHASE=$_udd_phase
         S5_UNINSTALL_INJECT=s5t_uninstall_injector
@@ -1205,7 +1205,7 @@ test_transaction_all_commands() {
     for _tac_command in status restart uninstall; do
         t_xray_fixture 23999
         t_xray_install
-        s5_precheck() { return 0; }
+        s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
         mkdir -m 0700 "$S5_TXNDIR"
         cp "$S5_CFG" "$S5_TXNDIR/old.config.json"
         cp "$S5_STATE" "$S5_TXNDIR/old.state"
@@ -1586,7 +1586,7 @@ RCUPDATE
     t_run s5_state_load
     assert_eq "the synthesized legacy installation is valid" 0 "$T_STATUS"
 
-    s5_precheck() { return 0; }
+    s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
     t_run s5_cmd_install
     assert_eq "OpenRC in-place update migrates the service policy" 0 "$T_STATUS"
     assert_contains "updated OpenRC service permits two rapid recoveries" \
@@ -1644,7 +1644,7 @@ RCSERVICE
 exit 0
 RCUPDATE
         t_xray_install
-        s5_precheck() { return 0; }
+        s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
         T_OUT=$( ( s5t_openrc_update_fault "$_oum_fault" ) 2>&1) && T_STATUS=0 || T_STATUS=$?
         assert_ne "OpenRC $_oum_fault failure aborts the update" 0 "$T_STATUS"
         case "$_oum_fault" in
@@ -1695,7 +1695,7 @@ RCUPDATE
     _our_old_state=$(t_sha256 "$S5_STATE")
     _our_old_config=$(t_sha256 "$S5_CFG")
 
-    s5_precheck() { return 0; }
+    s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
     s5_state_write() { return 77; }
     t_run s5_cmd_install
     assert_ne "state failure aborts OpenRC service migration" 0 "$T_STATUS"
@@ -1764,7 +1764,7 @@ RCUPDATE
     assert_contains "interrupted fixture has the uncommitted new unit" \
         'respawn_max=2' "$(cat "$S5_SERVICE_ARTIFACT")"
 
-    s5_precheck() { return 0; }
+    s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
     t_run s5_cmd_status
     assert_eq "the next command recovers an interrupted unit migration" 0 "$T_STATUS"
     assert_eq "hard-crash recovery restores the exact old unit" \
@@ -1805,7 +1805,7 @@ RCSERVICE
 exit 0
 RCUPDATE
     t_xray_install
-    s5_precheck() { return 0; }
+    s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
     t_run s5_cmd_install
     assert_eq "OpenRC update succeeds without a syslog endpoint" 0 "$T_STATUS"
     assert_contains "OpenRC update warns when /dev/log is absent" '/dev/log' "$T_OUT"

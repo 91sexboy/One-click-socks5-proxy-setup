@@ -305,7 +305,7 @@ S5_PROTOCOL_VERIFY=$S5_TEST_ROOT/verifyfail
 printf '#!/bin/sh\nexit 1\n' >"$S5_PROTOCOL_VERIFY"
 chmod 0755 "$S5_PROTOCOL_VERIFY"
 s5_trap_lock_only() { return 0; }
-s5_precheck() { return 0; }
+s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
 s5_lock_acquire() { return 0; }
 s5_lock_release() { return 0; }
 s5_state_load() { return 0; }
@@ -348,7 +348,7 @@ if [ "$T_STATUS" -ne 0 ]; then printf '%s\n' "$T_OUT" >&2; fi
 . "$ROOT/tests/lib/xray-fixture.sh"
 t_xray_fixture 23456
 t_xray_install
-s5_precheck() { return 0; }
+s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
 # systemctl is-active exits 3 for every state that is not active, so the word
 # it prints decides the mapping: inactive is stopped, failed (exit 23 or a
 # spent restart budget) is failed and fails the command like OpenRC's crashed,

@@ -2817,8 +2817,19 @@ s5_install_runtime_dependencies() {
 }
 
 
+# s5_precheck <mode>: the whole check a command runs before it takes the lock.
+# It only inspects the host; install provisions packages between the two stages
+# itself (s5_cmd_install), so no other caller can inherit that side effect.
 s5_precheck() {
-    _spre_mode=${1:-install}
+    s5_precheck_host "${1:-install}" || return 1
+    s5_precheck_tools "${1:-install}"
+}
+
+# s5_precheck_host <mode>: root, a supported architecture and platform, and for
+# install and update a booted init, so a host that cannot be served is refused
+# before anything is provisioned.
+s5_precheck_host() {
+    _sph_mode=$1
     s5_is_root || { s5_msg_err root.required; return 1; }
     S5_ARCHNAME=$(s5_map_arch "$(uname -m)") || {
         s5_msg_err detect.unsupported unknown unknown unknown
@@ -2828,7 +2839,7 @@ s5_precheck() {
         s5_msg_err detect.unsupported "$S5_OS_ID" "$S5_OS_VERSION_ID" "$S5_ARCHNAME"
         return 1
     }
-    case "$S5_INIT:$_spre_mode" in
+    case "$S5_INIT:$_sph_mode" in
     systemd:install | systemd:update)
         [ -d "$S5_ROOTDIR/run/systemd/system" ] || { s5_msg_err detect.init; return 1; }
         ;;
@@ -2836,14 +2847,20 @@ s5_precheck() {
         [ -f "$S5_ROOTDIR/run/openrc/softlevel" ] || { s5_msg_err detect.init; return 1; }
         ;;
     esac
-    s5_install_runtime_dependencies "$_spre_mode" || return 1
+    return 0
+}
+
+# s5_precheck_tools <mode>: the commands the mode runs, the pinned tools by
+# absolute path, and the asset for this architecture.
+s5_precheck_tools() {
+    _spt_mode=$1
     # Only commands the script runs; tail and rc-status were required and never called.
     s5_require_commands awk sed grep tr head id getent mkdir rmdir rm mv cp cat printf stat mktemp ln sleep wc chmod || return 1
     # Every mode reads a recorded digest, so the pinned digest tool is required
     # here rather than per mode, and by absolute path: a same-named PATH wrapper
     # would otherwise decide what counts as the pinned artifact.
     [ -x /usr/bin/sha256sum ] || { s5_msg_err detect.commands sha256sum; return 1; }
-    case "$S5_INIT:$_spre_mode" in
+    case "$S5_INIT:$_spt_mode" in
     openrc:install|openrc:update)
         s5_require_commands addgroup adduser delgroup deluser rc-service rc-update logger od chown python3 ss || return 1
         ;;
@@ -2875,7 +2892,7 @@ s5_precheck() {
     esac
     # The packaged absolute paths prevent PATH wrappers from altering transport
     # or binary classification.
-    case "$_spre_mode" in
+    case "$_spt_mode" in
     install | update)
         [ -x /usr/bin/curl ] || {
             s5_msg_err detect.commands curl
@@ -3260,7 +3277,9 @@ s5_warn_openrc_logging() {
 }
 
 s5_cmd_install() {
-    s5_precheck install || return 1
+    s5_precheck_host install || return 1
+    s5_install_runtime_dependencies install || return 1
+    s5_precheck_tools install || return 1
     s5_lock_acquire || return 1
     s5_trap_rollback
     trap 's5_cleanup' EXIT

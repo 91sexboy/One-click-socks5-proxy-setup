@@ -108,7 +108,7 @@ test_openrc_logging_warning() {
     S5_INIT=openrc
     S5_OS_FAMILY=alpine
     s5_select_service_artifact
-    s5_precheck() { return 0; }
+    s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
     t_stub rc-service <<'RCSERVICE'
 #!/bin/sh
 exec "$S5_TEST_ROOT/bin/systemctl" "$2"
@@ -131,7 +131,7 @@ RCUPDATE
     S5_INIT=openrc
     S5_OS_FAMILY=alpine
     s5_select_service_artifact
-    s5_precheck() { return 0; }
+    s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
     mkdir -p "$S5_ROOTDIR/dev"
     : >"$S5_ROOTDIR/dev/log"
     t_stub rc-service <<'RCSERVICE'
@@ -148,7 +148,7 @@ RCUPDATE
         '/dev/log' "$T_OUT"
 
     t_xray_fixture 23456
-    s5_precheck() { return 0; }
+    s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
     t_run s5_cmd_install
     assert_eq "systemd install succeeds without /dev/log" 0 "$T_STATUS"
     assert_not_contains "systemd install never emits the OpenRC logging warning" \
@@ -211,7 +211,7 @@ s5t_raw_command_fixture() {
     s5_file_type_command() {
         printf '%s\n' 'ELF 64-bit LSB executable, x86-64, statically linked'
     }
-    s5_precheck() { return 0; }
+    s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
 }
 
 s5t_raw_command_run() {
@@ -384,7 +384,7 @@ delgroup xray-socks5' ;;
 }
 
 s5t_cleanup_run() {
-    s5_precheck() { return 0; }
+    s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
     sleep() { :; }
     s5_verify_dataplane() {
         : >"$S5_TEST_ROOT/verification-failed"
