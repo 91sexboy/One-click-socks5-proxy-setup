@@ -222,6 +222,7 @@ s5_msg() {
     digest.candidate) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法计算下载资产的 SHA-256：%s。' "$1" ;; en) printf 'could not compute SHA-256 for downloaded asset: %s.' "$1" ;; esac ;;
     digest.failed) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法计算已安装资源的 SHA-256：%s。' "$1" ;; en) printf 'could not compute SHA-256 for installed artifact: %s.' "$1" ;; esac ;;
     cleanup.service) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '无法确认 Xray 服务已停止；已保留安装文件和账户。' ;; en) printf 'could not verify that the Xray service stopped; installation files and account were retained.' ;; esac ;;
+    cleanup.residue) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '保留了不属于本次运行的临时文件：%s；确认不再需要后可手动删除。' "$1" ;; en) printf 'kept a temporary file this run did not create: %s; remove it manually once it is no longer needed.' "$1" ;; esac ;;
     cleanup.download) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法删除下载临时文件：%s。' "$1" ;; en) printf 'could not remove temporary download file: %s.' "$1" ;; esac ;;
     prefix.mode) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法将安装目录恢复为 0755：%s；在该权限恢复之前，服务账户无法使用本安装，后续命令也会拒绝执行。' "$1" ;; en) printf 'could not restore installation directory %s to 0755; until that mode is restored the service account cannot use this installation and later commands refuse to run.' "$1" ;; esac ;;
     config.invalid) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf 'Xray 配置测试失败；旧配置未改变。' ;; en) printf 'Xray configuration test failed; the old configuration was unchanged.' ;; esac ;;
@@ -1535,14 +1536,19 @@ s5_require_absent() {
 s5_account_create() {
     s5_require_absent passwd "$S5_SERVICE_USER" || return 1
     s5_require_absent group "$S5_SERVICE_GROUP" || return 1
-    s5_account_tool create-group || { s5_msg_err account.failed "$S5_SERVICE_GROUP"; return 1; }
+    # Each flag is armed before its tool runs. Armed after, a signal landing
+    # between a successful tool and the assignment leaked the account, and the
+    # next install refused it as a foreign identity. A flag armed for an account
+    # the tool never created is harmless: removal tolerates an absent name.
     S5_CREATED_GROUP=1
+    s5_account_tool create-group || { S5_CREATED_GROUP=0; s5_msg_err account.failed "$S5_SERVICE_GROUP"; return 1; }
+    S5_CREATED_USER=1
     if ! s5_account_tool create-user; then
+        S5_CREATED_USER=0
         s5_msg_err account.failed "$S5_SERVICE_USER"
         if s5_account_tool delete-group; then S5_CREATED_GROUP=0; fi
         return 1
     fi
-    S5_CREATED_USER=1
     S5_ACCOUNT_UID=$(id -u "$S5_SERVICE_USER" 2>/dev/null) || return 1
     S5_ACCOUNT_GID=$(id -g "$S5_SERVICE_USER" 2>/dev/null) || return 1
     return 0
@@ -1573,10 +1579,19 @@ s5_account_remove() {
         return 1
     fi
     if [ "$S5_CREATED_USER" = 1 ] || [ -n "$S5_ACCOUNT_UID" ]; then
-        s5_account_tool delete-user || {
-            s5_msg_warn account.remove.user "$S5_SERVICE_USER"
-            return 1
-        }
+        # The creation flag is armed before its tool runs, so the account it
+        # names may never have been created.
+        s5_getent_state passwd "$S5_SERVICE_USER"
+        case $? in
+        0)
+            s5_account_tool delete-user || {
+                s5_msg_warn account.remove.user "$S5_SERVICE_USER"
+                return 1
+            }
+            ;;
+        1) ;;
+        *) s5_msg_warn account.remove.user.verify "$S5_SERVICE_USER"; return 1 ;;
+        esac
         s5_getent_state passwd "$S5_SERVICE_USER"
         case $? in
         1) ;;
@@ -2089,9 +2104,16 @@ s5_open_managed_state() {
     # the command-facing state seam; callers do not reimplement schema/release rules.
     case "$1" in inspect | operate | update | uninstall) ;; *) return 1 ;; esac
     if [ -e "$S5_TXNDIR" ] || [ -L "$S5_TXNDIR" ]; then
-        if ! s5_transaction_recover; then
-            return 5
-        fi
+        # Recovery restores files, copies the old executable back and restarts
+        # the service, whichever command found the transaction. Under a
+        # lock-only trap an interrupt abandoned it half done with an untracked
+        # binary temporary; under the rollback traps cleanup resumes it. The
+        # lock-only commands get their own traps back once it is over.
+        s5_trap_rollback
+        s5_transaction_recover
+        _somr=$?
+        [ "$1" = update ] || s5_trap_lock_only
+        [ "$_somr" -eq 0 ] || return 5
     fi
     s5_state_load
     _soms=$?
@@ -2551,6 +2573,11 @@ s5_transaction_recover() {
     s5_cleanup_transaction
 }
 
+# s5_cleanup_own_temps <dir> [binaries]: remove the small private temporaries an
+# interrupted write leaves. Binary candidates (.xray.*) are removed only when
+# asked: uninstall approved them in preflight, and a prefix this run created
+# holds nothing else. Failure cleanup of an existing prefix removes only the
+# candidate it registered in S5_BINARY_TEMP and leaves any other run's.
 s5_cleanup_own_temps() {
     _scotd=$1
     [ -d "$_scotd" ] || return 0
@@ -2559,6 +2586,7 @@ s5_cleanup_own_temps() {
     # there turned each word into a literal filename that the inner glob could
     # never find -- so running from an install directory skipped the cleanup.
     for _scotp in '.s5tmp.*' '.s5new.*' '.s5state.*' '.xray.*'; do
+        [ "$_scotp" != '.xray.*' ] || [ "${2:-}" = binaries ] || continue
         for _scotf in "$_scotd"/$_scotp; do
             if [ -e "$_scotf" ] || [ -L "$_scotf" ]; then
                 rm -f "$_scotf" || return 1
@@ -2571,8 +2599,11 @@ s5_cleanup_own_temps() {
 
 s5_cleanup() {
     [ "$S5_IN_CLEANUP" = 1 ] && return 0
-    S5_IN_CLEANUP=1
+    # Ignore signals before claiming the cleanup. In the other order a signal
+    # between the two lines entered a nested cleanup that saw the flag, returned
+    # at once and exited: no rollback, and the lock left held.
     trap '' HUP INT TERM
+    S5_IN_CLEANUP=1
     _sclstatus=0
     _scldownload=0
     # Release a partial prefix-local candidate before restoring traversal to an
@@ -2600,10 +2631,14 @@ s5_cleanup() {
         S5_SERVICE_STARTED=0
         if [ "$S5_UNIT_ENABLED" = 1 ]; then
             s5_svc disable || true
-            s5_svc reload || true
             S5_UNIT_ENABLED=0
         fi
-        if [ "$S5_CREATED_UNIT" = 1 ]; then rm -f "$S5_SERVICE_ARTIFACT" 2>/dev/null || true; fi
+        if [ "$S5_CREATED_UNIT" = 1 ]; then
+            rm -f "$S5_SERVICE_ARTIFACT" 2>/dev/null || true
+            # After the removal, and whether or not enable was reached: a reload
+            # before it left the manager holding the deleted unit.
+            s5_svc reload || true
+        fi
         # supervise-daemon's pidfile and child_pid belong to whatever service is
         # running. Removing them for an installation this run never touched left a
         # healthy Alpine proxy unstoppable and unobservable: status reports no
@@ -2614,10 +2649,8 @@ s5_cleanup() {
         fi
         if [ "$S5_CREATED_CFG" = 1 ]; then rm -f "$S5_CFG" 2>/dev/null || true; fi
         if [ "$S5_CREATED_BIN" = 1 ]; then rm -f "$S5_BIN" 2>/dev/null || true; fi
-        if [ "$S5_CREATED_USER" = 1 ]; then
+        if [ "$S5_CREATED_USER" = 1 ] || [ "$S5_CREATED_GROUP" = 1 ]; then
             s5_account_remove || true
-        elif [ "$S5_CREATED_GROUP" = 1 ]; then
-            s5_account_tool delete-group || true
         fi
         # An interrupted atomic write leaves a private temporary behind; the
         # rmdir below, and uninstall later, both refuse a non-empty directory.
@@ -2634,7 +2667,15 @@ s5_cleanup() {
             # partial backup is the non-destructive cleanup.
             s5_cleanup_transaction || true
         fi
-        s5_cleanup_own_temps "$S5_PREFIX" || true
+        if [ "$S5_CREATED_PREFIX" = 1 ]; then
+            s5_cleanup_own_temps "$S5_PREFIX" binaries || true
+        else
+            s5_cleanup_own_temps "$S5_PREFIX" || true
+            for _sclresidue in "$S5_PREFIX"/.xray.*; do
+                [ -e "$_sclresidue" ] || [ -L "$_sclresidue" ] || continue
+                s5_msg_warn cleanup.residue "$_sclresidue" || true
+            done
+        fi
         if [ "$S5_CREATED_CONFDIR" = 1 ]; then rmdir "$S5_SYSCONFDIR" 2>/dev/null || true; fi
         if [ "$S5_CREATED_STATEDIR" = 1 ]; then rmdir "$S5_STATEDIR" 2>/dev/null || true; fi
         if [ "$S5_CREATED_PREFIX" = 1 ]; then
@@ -2661,9 +2702,19 @@ s5_on_signal() {
     exit "$1"
 }
 
-# The read-only and single-purpose commands hold the lock but have nothing to roll
-# back, so they unwind with the lock and the verifier's credential temporary only.
-# Without this an interrupt left both behind.
+# The signal traps of a command that can change the installation. Signal
+# handling only; install adds its own EXIT trap.
+s5_trap_rollback() {
+    trap 's5_on_signal 129' HUP
+    trap 's5_on_signal 130' INT
+    trap 's5_on_signal 143' TERM
+}
+
+# The read-only and single-purpose commands hold the lock and have nothing of
+# their own to roll back, so they unwind with the lock and the verifier's
+# credential temporary only; without this an interrupt left both behind.
+# Transaction recovery they trigger is the exception and runs under
+# s5_trap_rollback (see s5_open_managed_state).
 s5_on_signal_lock() {
     trap '' HUP INT TERM
     s5_release_verify_temp
@@ -2922,12 +2973,17 @@ s5_update_rollback() {
     fi
     if [ -f "$S5_TXNDIR/old.xray" ] && [ ! -L "$S5_TXNDIR/old.xray" ]; then
         _sur_tmp=$(mktemp "$S5_PREFIX/.xray.XXXXXX") || { s5_msg_err transaction.restore "$S5_TXNDIR"; return 1; }
+        # Registered like a download candidate, so an interrupted restore is
+        # removed by cleanup instead of left as an untracked 35 MB file.
+        S5_BINARY_TEMP=$_sur_tmp
         if ! chmod 0755 "$_sur_tmp" || ! cat "$S5_TXNDIR/old.xray" >"$_sur_tmp" ||
             ! mv -f "$_sur_tmp" "$S5_BIN"; then
             rm -f "$_sur_tmp"
+            S5_BINARY_TEMP=''
             s5_msg_err transaction.restore "$S5_TXNDIR"
             return 1
         fi
+        S5_BINARY_TEMP=''
     fi
     S5_SERVICE_STARTED=0
     if [ "$S5_SERVICE_TOUCHED" = 1 ]; then
@@ -3103,11 +3159,11 @@ STOPPING
     # service this path had already stopped: the correct recovery, not a regression.
     S5_CONFIG_REPLACED=1
     if ! mv -f "$_siinc" "$S5_CFG"; then
+        # One rollback point: restoring and restarting here, and then again
+        # in the EXIT cleanup, restarted the service twice.
         S5_CONFIG_REPLACED=0
         rm -f "$_siinc"
-        s5_msg_err transaction.publish "$S5_CFG"
-        s5_restore_transaction "$_sioldcfg" "$_sioldstate" || true
-        s5_svc start || true
+        s5_update_abort transaction.publish "$S5_CFG"
         return 1
     fi
     if [ "$S5_INIT" = openrc ]; then
@@ -3161,9 +3217,7 @@ s5_warn_openrc_logging() {
 s5_cmd_install() {
     s5_precheck install || return 1
     s5_lock_acquire || return 1
-    trap 's5_on_signal 129' HUP
-    trap 's5_on_signal 130' INT
-    trap 's5_on_signal 143' TERM
+    s5_trap_rollback
     trap 's5_cleanup' EXIT
     s5_msg_print install.start >&2
     if [ -f "$S5_STATE" ]; then
@@ -3454,7 +3508,9 @@ s5_remove_owned_file() {
 s5_remove_owned_dir() {
     _srod=$1
     [ -e "$_srod" ] || [ -L "$_srod" ] || return 0
-    [ -L "$_srod" ] || [ -d "$_srod" ] || { s5_msg_warn uninstall.notdir "$_srod"; return 1; }
+    # Refused before the emptiness glob, which would otherwise walk the target.
+    [ -L "$_srod" ] && { s5_msg_warn uninstall.symlink "$_srod"; return 1; }
+    [ -d "$_srod" ] || { s5_msg_warn uninstall.notdir "$_srod"; return 1; }
     for _sroe in "$_srod"/* "$_srod"/.[!.]* "$_srod"/..?*; do
         if [ -e "$_sroe" ] || [ -L "$_sroe" ]; then
             s5_msg_warn uninstall.nonempty "$_sroe"
@@ -3769,7 +3825,7 @@ s5_uninstall_run() {
             # them before the durable artifact phases begin.
             s5_cleanup_own_temps "$S5_SYSCONFDIR" || return 1
             s5_cleanup_own_temps "$S5_STATEDIR" || return 1
-            s5_cleanup_own_temps "$S5_PREFIX" || return 1
+            s5_cleanup_own_temps "$S5_PREFIX" binaries || return 1
             s5_cleanup_transaction || return 1
             s5_svc stop || { s5_msg_err service.stop; return 1; }
             s5_wait_stopped || { s5_msg_err service.stop; return 1; }

@@ -407,10 +407,17 @@ s5t_txn_case() {
     t_xray_install
     _txn_cfg=$(t_sha256 "$S5_CFG")
     _txn_state=$(t_sha256 "$S5_STATE")
+    _txn_starts=$(grep -cE '^systemctl (start|restart) ' "$S5_TEST_ROOT/transcript" || true)
     # The command owns its real lock and traps. Fault doubles cannot escape
     # this invocation into fixture initialization or a later scenario.
     ( s5t_txn_run "$_txn_fault" ) >"$S5_TEST_ROOT/txn.log" 2>&1
     _txn_status=$?
+    if [ "$_txn_fault" = publish ]; then
+        # The failed rename used to restore and start the service itself, and
+        # then the EXIT cleanup rolled back and restarted it again.
+        assert_eq "a failed publication starts the service exactly once" \
+            "$((_txn_starts + 1))" "$(grep -cE '^systemctl (start|restart) ' "$S5_TEST_ROOT/transcript" || true)"
+    fi
     assert_ne "$_txn_fault failure aborts command" 0 "$_txn_status"
     assert_contains "$_txn_fault reaches its fault while owning the lock" "$_txn_fault" \
         "$(cat "$S5_TEST_ROOT/txn.fault" 2>/dev/null)"
@@ -431,7 +438,7 @@ s5t_txn_case() {
     esac
     assert_contains "$_txn_fault names its failure" "[x] $_txn_said" "$_txn_log"
     case "$_txn_fault" in
-    start|dataplane|state)
+    start|dataplane|state|publish)
         assert_contains "$_txn_fault reports the completed rollback" \
             '[x] the update was rolled back' "$_txn_log" ;;
     restart)
@@ -861,6 +868,76 @@ test_rollback_binary_restore_failure() {
     assert_file_exists "the old executable stays in the transaction" "$S5_TXNDIR/old.xray"
     assert_file_absent "the failed restore leaves no binary temporary" \
         "$(find "$S5_PREFIX" -name '.xray.*' | head -n 1)"
+}
+
+# status found an interrupted binary update and began restoring it under the
+# lock-only trap. A TERM during the copy of the old executable then released
+# the lock and left an untracked binary temporary and a half-restored install.
+# Recovery now runs under the rollback traps, so cleanup resumes it.
+s5t_recovery_signal() {
+    cat() {
+        if [ "${1:-}" = "$S5_TXNDIR/old.xray" ] && [ ! -e "$S5_TEST_ROOT/recovery-signalled" ]; then
+            : >"$S5_TEST_ROOT/recovery-signalled"
+            python3 -c 'import os, signal; os.kill(os.getppid(), signal.SIGTERM)'
+        fi
+        command cat "$@"
+    }
+    s5_cmd_status
+}
+
+test_readonly_recovery_signal() {
+    t_xray_fixture 23999
+    t_xray_install
+    s5_precheck() { return 0; }
+    _rrs_bin=$(t_sha256 "$S5_BIN")
+    mkdir -m 0700 "$S5_TXNDIR"
+    cp "$S5_CFG" "$S5_TXNDIR/old.config.json"
+    cp "$S5_STATE" "$S5_TXNDIR/old.state"
+    cp "$S5_BIN" "$S5_TXNDIR/old.xray"
+    printf 'stopping\n' >"$S5_TXN_STOPPING"
+    chmod 0600 "$S5_TXNDIR"/old.* "$S5_TXN_STOPPING"
+    printf '#!/bin/sh\nprintf half-updated\\n\n' >"$S5_BIN"
+    ( s5t_recovery_signal ) >"$S5_TEST_ROOT/recovery-signal.log" 2>&1
+    _rrs_status=$?
+    assert_file_exists "the signal landed inside the recovery copy" "$S5_TEST_ROOT/recovery-signalled"
+    assert_eq "an interrupted recovery still exits with the signal status" 143 "$_rrs_status"
+    assert_eq "an interrupted recovery leaves no binary temporary" 0 \
+        "$(find "$S5_PREFIX" -name '.xray.*' | wc -l | tr -d '[:space:]')"
+    assert_eq "cleanup finished restoring the old executable" "$_rrs_bin" "$(t_sha256 "$S5_BIN")"
+    assert_file_absent "cleanup resolved the transaction" "$S5_TXNDIR"
+    assert_file_absent "an interrupted recovery releases the lock" "$S5_LOCKDIR"
+    t_xray_assert_healthy
+}
+
+# The cleanup claims itself only after it ignores signals; in the other order
+# a signal between the two statements entered a nested cleanup that returned
+# at once, skipping rollback and lock release.
+test_cleanup_entry_order() {
+    _ceo_body=$(sed -n '/^s5_cleanup() {$/,/^}$/p' "$S5_REPO_ROOT/socks5.sh")
+    _ceo_trap=$(printf '%s\n' "$_ceo_body" | grep -n "trap '' HUP INT TERM" | head -n 1 | cut -d: -f1)
+    _ceo_flag=$(printf '%s\n' "$_ceo_body" | grep -n 'S5_IN_CLEANUP=1' | head -n 1 | cut -d: -f1)
+    assert_ne "s5_cleanup ignores signals" '' "$_ceo_trap"
+    assert_ne "s5_cleanup claims itself" '' "$_ceo_flag"
+    if [ -n "$_ceo_trap" ] && [ -n "$_ceo_flag" ] && [ "$_ceo_trap" -lt "$_ceo_flag" ]; then
+        t_ok
+    else
+        t_bad "s5_cleanup must ignore signals before it sets S5_IN_CLEANUP"
+    fi
+}
+
+# An owned directory that is a symlink is refused like an owned file, before
+# the emptiness check can walk its target.
+test_owned_dir_symlink() {
+    t_xray_fixture 23999
+    mkdir -p "$S5_TEST_ROOT/elsewhere"
+    : >"$S5_TEST_ROOT/elsewhere/keep"
+    ln -s "$S5_TEST_ROOT/elsewhere" "$S5_TEST_ROOT/owned-link"
+    t_run s5_remove_owned_dir "$S5_TEST_ROOT/owned-link"
+    assert_ne "a symlinked owned directory is refused" 0 "$T_STATUS"
+    assert_contains "a symlinked owned directory is named as a symlink" \
+        "[!] refusing symlink during uninstall: $S5_TEST_ROOT/owned-link" "$T_OUT"
+    assert_not_contains "the symlink target is not inspected" 'non-empty' "$T_OUT"
+    assert_file_exists "the symlink target is untouched" "$S5_TEST_ROOT/elsewhere/keep"
 }
 
 test_older_release_update() {
@@ -1705,7 +1782,7 @@ RCUPDATE
     t_xray_assert_healthy
 }
 
-SCENARIOS='openrc_update_messages update_listener_unverified rollback_binary_restore_failure rollback_cleanup_interruption_recovery openrc_committed_unit_cleanup_recovery openrc_unit_migration openrc_unit_migration_rollback openrc_unit_transaction_recovery openrc_logging_warning uninstall_confirmation uninstall_messages family update owned_port rejected_candidate listener_failure rejected_command publish_signal config_symlink uninstall_leftovers uninstall_residue verifier_cleanup txn_mkdir_failure txn_copy_failure txn_chmod_failure stop_failure wait_stopped_failure publication_failure new_start_failure dataplane_failure state_write_failure rollback_restart_failure restore_failure uninstall_unknown rollback_exit uninstall_group_residue uninstall_resume uninstall_signal_resume uninstall_resume_drift uninstall_phase_gap_resume uninstall_final_window older_release_operations older_release_update binary_ready_gate older_release_download_failure transaction_contract_drift unit_replacing_requires_stopping_marker rollback_backup_drift uninstall_directory_drift transaction_all_commands transaction_unknown_residue sha256_binary_update_failure sha256_config_update_failure update_commit_cleanup_failure existing_stage_failure existing_stage_cleanup_failure existing_stage_cleanup_restore_failure'
+SCENARIOS='readonly_recovery_signal cleanup_entry_order owned_dir_symlink openrc_update_messages update_listener_unverified rollback_binary_restore_failure rollback_cleanup_interruption_recovery openrc_committed_unit_cleanup_recovery openrc_unit_migration openrc_unit_migration_rollback openrc_unit_transaction_recovery openrc_logging_warning uninstall_confirmation uninstall_messages family update owned_port rejected_candidate listener_failure rejected_command publish_signal config_symlink uninstall_leftovers uninstall_residue verifier_cleanup txn_mkdir_failure txn_copy_failure txn_chmod_failure stop_failure wait_stopped_failure publication_failure new_start_failure dataplane_failure state_write_failure rollback_restart_failure restore_failure uninstall_unknown rollback_exit uninstall_group_residue uninstall_resume uninstall_signal_resume uninstall_resume_drift uninstall_phase_gap_resume uninstall_final_window older_release_operations older_release_update binary_ready_gate older_release_download_failure transaction_contract_drift unit_replacing_requires_stopping_marker rollback_backup_drift uninstall_directory_drift transaction_all_commands transaction_unknown_residue sha256_binary_update_failure sha256_config_update_failure update_commit_cleanup_failure existing_stage_failure existing_stage_cleanup_failure existing_stage_cleanup_restore_failure'
 if [ "$#" -eq 0 ]; then
     # Expand the fixed scenario words into the default argument list.
     # shellcheck disable=SC2086

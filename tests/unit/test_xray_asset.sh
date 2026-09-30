@@ -68,13 +68,21 @@ t_raw_fixture() {
     }
 }
 
+# t_run captures output in a command-substitution subshell, which drops the
+# candidate registration cleanup relies on. Staging failures run here instead,
+# in the test's own shell, exactly as the command would run them.
+t_run_here() {
+    "$@" >"$S5_TEST_ROOT/run-here.out" 2>&1 && T_STATUS=0 || T_STATUS=$?
+    T_OUT=$(cat "$S5_TEST_ROOT/run-here.out")
+}
+
 t_candidate_count() {
     find "$S5_PREFIX" -maxdepth 1 -type f -name '.xray.*' 2>/dev/null |
         wc -l | tr -d '[:space:]'
 }
 
 t_raw_fixture
-t_run s5_download_engine
+t_run_here s5_download_engine
 assert_eq "valid raw candidate installs" 0 "$T_STATUS"
 assert_file_exists "raw publication creates final xray" "$S5_BIN"
 assert_mode "published xray is executable" 755 "$S5_BIN"
@@ -86,7 +94,7 @@ assert_eq "successful publication clears the tracked candidate" '' "$S5_BINARY_T
 # Exact-size and digest gates remove every refused candidate.
 t_raw_fixture
 S5T_SIZE_OVERRIDE=$((S5T_BIN_SIZE + 1))
-t_run s5_download_engine
+t_run_here s5_download_engine
 assert_ne "short raw asset is refused" 0 "$T_STATUS"
 assert_contains "short raw asset reports observed and expected bytes" \
     "is $S5T_BIN_SIZE bytes, expected $((S5T_BIN_SIZE + 1))" "$T_OUT"
@@ -96,7 +104,7 @@ assert_eq "short raw candidate is removed" 0 "$(t_candidate_count)"
 # Correct size but wrong digest is independent of the size gate.
 t_raw_fixture
 S5T_SHA_OVERRIDE=1111111111111111111111111111111111111111111111111111111111111111
-t_run s5_download_engine
+t_run_here s5_download_engine
 assert_ne "wrong raw digest is refused" 0 "$T_STATUS"
 assert_contains "wrong raw digest reports SHA-256" 'sha256' "$T_OUT"
 assert_file_absent "wrong-digest asset is never published" "$S5_BIN"
@@ -107,7 +115,7 @@ t_raw_fixture
 s5_file_type_command() {
     printf '%s\n' 'ELF 64-bit LSB executable, ARM aarch64, statically linked'
 }
-t_run s5_download_engine
+t_run_here s5_download_engine
 assert_ne "wrong ELF architecture is refused" 0 "$T_STATUS"
 assert_contains "wrong ELF architecture reports architecture" 'architecture' "$T_OUT"
 s5_cleanup
@@ -117,7 +125,7 @@ t_raw_fixture
 s5_file_type_command() {
     printf '%s\n' 'ELF 64-bit LSB executable, x86-64, dynamically linked, interpreter /lib64/ld-linux.so.2'
 }
-t_run s5_download_engine
+t_run_here s5_download_engine
 assert_ne "dynamically linked candidate is refused" 0 "$T_STATUS"
 assert_contains "dynamic candidate reports linkage" 'linkage' "$T_OUT"
 s5_cleanup
@@ -125,7 +133,7 @@ assert_eq "dynamic candidate is removed" 0 "$(t_candidate_count)"
 
 t_raw_fixture
 s5_xray_version_command() { printf '%s\n' 'Xray 99.0.0 (synthetic)'; }
-t_run s5_download_engine
+t_run_here s5_download_engine
 assert_ne "wrong Xray version is refused" 0 "$T_STATUS"
 assert_contains "wrong Xray version reports version" 'version' "$T_OUT"
 s5_cleanup
@@ -147,7 +155,7 @@ for _stage_fault in filetype permission exec digest; do
     exec) s5_xray_version_command() { return 126; } ;;
     digest) s5_sha256_command() { return 1; } ;;
     esac
-    t_run s5_download_engine
+    t_run_here s5_download_engine
     unset -f chmod
     assert_ne "$_stage_fault staging failure is refused" 0 "$T_STATUS"
     case "$_stage_fault" in
@@ -180,7 +188,7 @@ s5_curl_command() {
     head -c 64 "$S5_TEST_ROOT/asset-xray" >"$_tca_out"
     return 23
 }
-t_run s5_download_engine
+t_run_here s5_download_engine
 assert_ne "curl output write failure is refused" 0 "$T_STATUS"
 assert_contains "curl write failure reports observed and expected bytes" \
     "64 bytes written of $S5T_BIN_SIZE" "$T_OUT"
@@ -191,7 +199,7 @@ t_raw_fixture
 S5_TEST_ASSET_PATH=''
 unset S5_TEST_ASSET_PATH
 s5_curl_command() { return 28; }
-t_run s5_download_engine
+t_run_here s5_download_engine
 assert_ne "curl transport failure is refused" 0 "$T_STATUS"
 assert_contains "transport failure retains the download reason" \
     'Xray asset verification failed: download.' "$T_OUT"
@@ -211,7 +219,7 @@ s5_curl_command() {
     head -c 64 "$S5_TEST_ROOT/asset-xray" >"$_tcs_out"
     return 0
 }
-t_run s5_download_engine
+t_run_here s5_download_engine
 assert_ne "successful short response is refused" 0 "$T_STATUS"
 assert_contains "successful short response is a size failure" 'expected' "$T_OUT"
 assert_not_contains "successful short response is not storage" 'full or over quota' "$T_OUT"
@@ -256,7 +264,7 @@ printf 'existing\n' >"$S5_BIN"
 chmod 0755 "$S5_BIN"
 S5_CREATED_PREFIX=0
 s5_fetch_binary() { printf 'partial\n' >"$1"; return 1; }
-t_run s5_download_engine
+t_run_here s5_download_engine
 assert_ne "failed update staging is refused" 0 "$T_STATUS"
 assert_mode "failed update restores prefix traversal" 755 "$S5_PREFIX"
 assert_eq "failed update removes prefix candidate" 0 "$(t_candidate_count)"
@@ -325,7 +333,7 @@ mv() {
     printf '%s\n' "$S5_CREATED_BIN" >"$S5_TEST_ROOT/rename-owner"
     command mv "$@"
 }
-t_run s5_download_engine
+t_run_here s5_download_engine
 assert_eq "update raw publication succeeds" 0 "$T_STATUS"
 assert_eq "update rename never marks the binary as fresh" 0 "$(cat "$S5_TEST_ROOT/rename-owner")"
 unset -f mv
@@ -373,7 +381,7 @@ done
 # A successful oversized response is refused before any version execution.
 t_raw_fixture
 S5T_SIZE_OVERRIDE=$((S5T_BIN_SIZE - 1))
-t_run s5_download_engine
+t_run_here s5_download_engine
 assert_ne "oversized raw fixture is refused" 0 "$T_STATUS"
 assert_file_absent "oversized candidate never publishes" "$S5_BIN"
 assert_eq "oversized candidate is removed" 0 "$(t_candidate_count)"
@@ -382,7 +390,7 @@ assert_eq "oversized candidate is removed" 0 "$(t_candidate_count)"
 t_raw_fixture
 s5_xray_version_command() { : >"$S5_TEST_ROOT/version-called"; return 0; }
 S5T_SHA_OVERRIDE=1111111111111111111111111111111111111111111111111111111111111111
-t_run s5_download_engine
+t_run_here s5_download_engine
 assert_ne "unverified candidate is refused" 0 "$T_STATUS"
 assert_file_absent "digest failure never runs version" "$S5_TEST_ROOT/version-called"
 
@@ -402,7 +410,7 @@ s5_curl_command() {
     head -c 7798784 /dev/zero >"$1"
     return 23
 }
-t_run s5_download_engine
+t_run_here s5_download_engine
 assert_ne "quota-blind raw short write refuses installation" 0 "$T_STATUS"
 assert_contains "quota-blind diagnosis retains exact byte counts" \
     '7798784 bytes written of 36577406' "$T_OUT"
