@@ -43,4 +43,74 @@ assert_eq "a paused stale-lock reclaimer cannot remove a new live lock" 0 "$T_ST
 assert_contains "the interleaving reaches the lock ownership assertions" \
     'stale-lock interleaving preserves mutual exclusion' "$T_OUT"
 
+# Shell variables are global, so a function that shares a variable prefix with
+# anything it calls, directly or further down, can have its values replaced
+# mid-flight. Each function's locals carry its own "_<abbrev>" prefix; along
+# every call path no prefix may equal or extend another.
+t_run python3 - "$ROOT/socks5.sh" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+
+def functions(source):
+    found, name, body = {}, None, []
+    for line in source.split('\n'):
+        match = re.match(r'^(s5_[a-z0-9_]+)\(\) [{(]\s*(.*)$', line)
+        if name is None and match:
+            name, body = match.group(1), [match.group(2)]
+            if line.rstrip().endswith('}') and line.count('{') == line.count('}'):
+                found[name], name = '\n'.join(body), None
+        elif name is not None:
+            if line in ('}', ')'):
+                found[name], name = '\n'.join(body), None
+            else:
+                body.append(line)
+    return found
+
+
+def prefixes(body):
+    names = set(re.findall(r'(?<![\w$])(_[a-z][a-z0-9_]*)=', body))
+    names |= set(re.findall(r'\bfor (_[a-z][a-z0-9_]*) ', body))
+    for group in re.findall(r'\bread (?:-r )?((?:_[a-z][a-z0-9_]* ?)+)', body):
+        names |= set(group.split())
+    return {name.split('_')[1] for name in names if name.split('_')[1]}
+
+
+def overlaps(source):
+    found = functions(source)
+    calls = {f: {g for g in found if g != f and re.search(r'(?<![\w-])' + g + r'(?!\w)', body)}
+             for f, body in found.items()}
+    own = {f: prefixes(body) for f, body in found.items()}
+    problems = []
+    for f in found:
+        seen, stack = set(), list(calls[f])
+        while stack:
+            g = stack.pop()
+            if g in seen or g == f:
+                continue
+            seen.add(g)
+            stack.extend(calls[g])
+            for a in own[f]:
+                for b in own[g]:
+                    if a == b or a.startswith(b) or b.startswith(a):
+                        problems.append('%s (_%s) reaches %s (_%s)' % (f, a, g, b))
+    return len(found), problems
+
+
+source = Path(sys.argv[1]).read_text()
+count, problems = overlaps(source)
+if count < 100:
+    raise SystemExit('the audit found only %d functions' % count)
+if problems:
+    raise SystemExit('\n'.join(problems))
+# Control: s5_cmd_install calls s5_confirm, so giving s5_confirm the caller's
+# prefix must be caught.
+mutated = source.replace('_sconf_answer', '_sci_answer')
+if not any('s5_cmd_install (_sci) reaches s5_confirm (_sci)' in line for line in overlaps(mutated)[1]):
+    raise SystemExit('the audit missed a prefix shared along a call path')
+PY
+assert_eq "no function shares a variable prefix with anything it calls" 0 "$T_STATUS"
+if [ "$T_STATUS" -ne 0 ]; then printf '%s\n' "$T_OUT" >&2; fi
+
 t_summary
