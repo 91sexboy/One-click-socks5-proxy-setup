@@ -31,7 +31,8 @@ class TerminalProbeTests(unittest.TestCase):
         (self.work / "pass").write_text("fixture\n" + self.password + "\n")
         scripts = self.work / ".github" / "scripts"
         scripts.mkdir(parents=True)
-        shutil.copyfile(ROOT / ".github/scripts/run-socks5.sh", scripts / "run-socks5.sh")
+        for helper in ("run-socks5.sh", "lifecycle-common.sh"):
+            shutil.copyfile(ROOT / ".github/scripts" / helper, scripts / helper)
         tools = self.work / "bin"
         tools.mkdir()
         for name in ("systemctl", "journalctl", "ss"):

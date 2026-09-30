@@ -133,9 +133,9 @@ test "$restarts" = 0
 test "$(awk '$1 == "oom" {print $2}' "$cgdir/memory.events")" = 0
 test "$(awk '$1 == "oom_kill" {print $2}' "$cgdir/memory.events")" = 0
 sudo systemctl is-active --quiet xray-socks5.service
-install_secret=$(sed -n '2p' "$root/pass")
-lifecycle_no_credential_in "$root/install.log" "$install_secret" sudo
-lifecycle_no_credential_in "$root/held.log" "$install_secret"
+# Every form, not only the bare password: user:pass and its base64 as well.
+lifecycle_generation_absent "$root/install.log" "$root/pass" sudo
+lifecycle_generation_absent "$root/held.log" "$root/pass"
 sudo env GITHUB_ACTIONS=true python3 .github/scripts/memory-compare.py \
   --binary /usr/local/libexec/xray-socks5/xray \
   --config /etc/xray-socks5/config.json \

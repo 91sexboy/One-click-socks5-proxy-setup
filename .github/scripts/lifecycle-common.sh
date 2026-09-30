@@ -78,3 +78,107 @@ lifecycle_assert_logs_redacted() {
     lifecycle_generation_absent "$_lalr_work/reinstall.log" "$_lalr_work/pass" "$@" || return 1
     lifecycle_generation_absent "$_lalr_work/uninstall-reinstall.log" "$_lalr_work/pass" "$@" || return 1
 }
+
+# lifecycle_redaction_file <out> <passfile...>: write every form a log can carry
+# each credential in -- the password, user:pass, and its base64 -- to the
+# private pattern file <out>, one per line. The patterns travel only through
+# files, never argv or the environment.
+lifecycle_redaction_file() {
+    _lrf_out=$1
+    shift
+    : >"$_lrf_out" || return 1
+    for _lrf_file do
+        if [ ! -f "$_lrf_file" ] ||
+            ! awk 'NR == 2 {print} NR <= 2 && length($0) == 0 {bad = 1} END {exit (NR < 2 || bad) ? 1 : 0}' \
+                "$_lrf_file" >>"$_lrf_out" 2>/dev/null; then
+            return 1
+        fi
+        _lrf_user=$(sed -n '1p' "$_lrf_file") || return 1
+        _lrf_pass=$(sed -n '2p' "$_lrf_file") || return 1
+        _lrf_pair=$_lrf_user:$_lrf_pass
+        printf '%s\n' "$_lrf_pair" >>"$_lrf_out" || return 1
+        printf '%s' "$_lrf_pair" | base64 | tr -d '\n' >>"$_lrf_out" || return 1
+        printf '\n' >>"$_lrf_out" || return 1
+        _lrf_user=''; _lrf_pass=''; _lrf_pair=''
+    done
+}
+
+# lifecycle_redact <patternfile>: copy stdin to stdout with every pattern
+# replaced by <REDACTED>. The longest literal wins at each position, and
+# replacement markers are not filtered again, so a rotated credential that
+# extends an earlier one is hidden whole. Every CI log exit uses this one form:
+# dropping matching lines instead also dropped the evidence around a secret.
+lifecycle_redact() {
+    awk '
+        BEGIN {
+            while ((loaded = getline secret < ARGV[1]) > 0) {
+                if (secret == "") exit 2
+                secrets[++count] = secret
+            }
+            if (loaded < 0 || count < 2) exit 2
+            close(ARGV[1]); ARGV[1] = ""
+        }
+        function hide(text, result, i, at, first, width) {
+            result = ""
+            while (length(text)) {
+                first = 0; width = 0
+                for (i = 1; i <= count; i++) {
+                    at = index(text, secrets[i])
+                    if (at && (!first || at < first || (at == first && length(secrets[i]) > width))) {
+                        first = at; width = length(secrets[i])
+                    }
+                }
+                if (!first) return result text
+                result = result substr(text, 1, first - 1) "<REDACTED>"
+                text = substr(text, first + width)
+            }
+            return result
+        }
+        {print hide($0)}
+    ' "$1"
+}
+
+# lifecycle_process_clean <pid> <copydir> <passfile...>: prove no credential
+# form reaches the process's argv or environment. Each /proc file is copied
+# first, so one that cannot be read fails the check (2) instead of feeding an
+# empty stream to grep, which then "passed"; the credentials come from their
+# private files, never a command line. Returns 1 on a leak.
+lifecycle_process_clean() {
+    _lpc_pid=$1
+    _lpc_dir=$2
+    shift 2
+    for _lpc_part in cmdline environ; do
+        if ! tr '\0' '\n' <"/proc/$_lpc_pid/$_lpc_part" >"$_lpc_dir/process.$_lpc_part"; then
+            printf 'the credential check could not read /proc/%s/%s\n' "$_lpc_pid" "$_lpc_part" >&2
+            return 2
+        fi
+        # A live process always has an argv; an empty copy observed nothing.
+        if [ "$_lpc_part" = cmdline ] && [ ! -s "$_lpc_dir/process.cmdline" ]; then
+            printf 'the credential check read an empty argv for pid %s\n' "$_lpc_pid" >&2
+            return 2
+        fi
+        for _lpc_file do
+            lifecycle_generation_absent "$_lpc_dir/process.$_lpc_part" "$_lpc_file" || return 1
+        done
+    done
+    rm -f "$_lpc_dir/process.cmdline" "$_lpc_dir/process.environ"
+}
+
+# lifecycle_assert_ready_status <log> <port> [prefix...]: a healthy status is
+# informational, so output rather than a zero exit proves readiness. The
+# heading carries "mixed" on its own, which let a listener degraded to
+# service.listen or service.unverified pass: require the service.ready line for
+# the port and the protocol summary of the status line.
+lifecycle_assert_ready_status() {
+    _lars_log=$1
+    _lars_port=$2
+    shift 2
+    if ! "$@" grep -qxF "Xray is listening on port $_lars_port." "$_lars_log"; then
+        printf 'status did not report port %s ready\n' "$_lars_port" >&2
+        return 1
+    fi
+    if ! "$@" grep -qF 'protocol: mixed (SOCKS5 + HTTP); auth: password; UDP: disabled' "$_lars_log"; then
+        printf 'status lost its protocol summary\n' >&2
+        return 1
+    fi
+}

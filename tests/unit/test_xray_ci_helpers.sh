@@ -47,6 +47,71 @@ s5t_credential_denied() { return 2; }
 t_run lifecycle_no_credential_in "$S5_TEST_ROOT/clean.log" 'synthetic.[credential]~' s5t_credential_denied
 assert_ne "a failed privileged read is not a clean log" 0 "$T_STATUS"
 
+# The argv/environ check copies each /proc file before searching it: an
+# unreadable one is a failed check (2), not an empty stream that passes.
+printf 'ciuser\nCISecret123x\n' >"$S5_TEST_ROOT/proc.pass"
+chmod 0600 "$S5_TEST_ROOT/proc.pass"
+mkdir -p "$S5_TEST_ROOT/proc-copy"
+t_run lifecycle_process_clean 999999999 "$S5_TEST_ROOT/proc-copy" "$S5_TEST_ROOT/proc.pass"
+assert_eq "an unreadable process is a failed check" 2 "$T_STATUS"
+assert_contains "an unreadable process is named" 'could not read /proc/999999999/cmdline' "$T_OUT"
+sleep 30 &
+_pc_clean=$!
+# The trailing no-op keeps the shell, and its argv, from being replaced by exec.
+sh -c 'sleep 30; :' argv-leak CISecret123x &
+_pc_argv=$!
+env PC_LEAK=ciuser:CISecret123x sleep 30 &
+_pc_env=$!
+# A child read mid-exec shows an empty or transient argv; wait until each one
+# is the program it was started as.
+s5t_exec_settled() {
+    _es_i=0
+    while [ "$_es_i" -lt 50 ]; do
+        case "$(tr '\0' ' ' <"/proc/$1/cmdline" 2>/dev/null)" in *"$2"*) return 0 ;; esac
+        _es_i=$((_es_i + 1))
+        sleep 0.1
+    done
+    return 1
+}
+s5t_exec_settled "$_pc_clean" 'sleep 30'
+s5t_exec_settled "$_pc_argv" 'argv-leak CISecret123x'
+s5t_exec_settled "$_pc_env" 'sleep 30'
+t_run lifecycle_process_clean "$_pc_clean" "$S5_TEST_ROOT/proc-copy" "$S5_TEST_ROOT/proc.pass"
+assert_eq "a credential-free process passes" 0 "$T_STATUS"
+t_run lifecycle_process_clean "$_pc_argv" "$S5_TEST_ROOT/proc-copy" "$S5_TEST_ROOT/proc.pass"
+assert_eq "a password in argv is a leak" 1 "$T_STATUS"
+t_run lifecycle_process_clean "$_pc_env" "$S5_TEST_ROOT/proc-copy" "$S5_TEST_ROOT/proc.pass"
+assert_eq "a user:pass pair in the environment is a leak" 1 "$T_STATUS"
+assert_not_contains "the leak report never repeats the credential" CISecret123x "$T_OUT"
+kill "$_pc_clean" "$_pc_argv" "$_pc_env" 2>/dev/null || true
+wait "$_pc_clean" "$_pc_argv" "$_pc_env" 2>/dev/null || true
+
+# One redaction for every CI log exit: each form is replaced in place and the
+# rest of the line survives, including the base64 of user:pass.
+lifecycle_redaction_file "$S5_TEST_ROOT/redact.pat" "$S5_TEST_ROOT/proc.pass"
+assert_eq "the redaction patterns are written" 0 "$?"
+_rd_b64=$(printf '%s' 'ciuser:CISecret123x' | base64 | tr -d '\n')
+printf 'pass=CISecret123x\npair=ciuser:CISecret123x!\nauth=Basic %s\nclean line\n' "$_rd_b64" |
+    lifecycle_redact "$S5_TEST_ROOT/redact.pat" >"$S5_TEST_ROOT/redacted.log"
+assert_eq "every credential form is replaced in place" 'pass=<REDACTED>
+pair=<REDACTED>!
+auth=Basic <REDACTED>
+clean line' "$(cat "$S5_TEST_ROOT/redacted.log")"
+: >"$S5_TEST_ROOT/empty.pass"
+t_run lifecycle_redaction_file "$S5_TEST_ROOT/redact.pat" "$S5_TEST_ROOT/empty.pass"
+assert_ne "an incomplete credential file writes no patterns" 0 "$T_STATUS"
+
+# The shared ready-status assertion needs the port's ready line and the
+# protocol summary, not the heading's word "mixed".
+printf 'Xray mixed proxy status:\nservice: running; port: 23456; username: u; protocol: mixed (SOCKS5 + HTTP); auth: password; UDP: disabled\nXray is listening on port 23456.\n' \
+    >"$S5_TEST_ROOT/ready.log"
+t_run lifecycle_assert_ready_status "$S5_TEST_ROOT/ready.log" 23456
+assert_eq "a ready status passes" 0 "$T_STATUS"
+sed 's/^Xray is listening.*/the listen state of port 23456 could not be verified./' \
+    "$S5_TEST_ROOT/ready.log" >"$S5_TEST_ROOT/unverified.log"
+t_run lifecycle_assert_ready_status "$S5_TEST_ROOT/unverified.log" 23456
+assert_ne "an unverified listener fails the ready status" 0 "$T_STATUS"
+
 wait_calls=0
 wait_ready=3
 s5t_wait_predicate() { wait_calls=$((wait_calls + 1)); test "$wait_calls" -ge "$wait_ready"; }
@@ -126,14 +191,30 @@ pgrep:-u)
     exit 1 ;;
 test:-e)
     [ "${S5_CLEANUP_SHAPE:-}" = unsafe-unit ] && [ "$3" = /etc/systemd/system/xray-socks5.service ] && exit 0
+    [ "${S5_CLEANUP_SHAPE:-}" = residue ] && [ "$3" = /etc/xray-socks5 ] && exit 0
     exit 1 ;;
 test:-L) exit 1 ;;
+test:-d)
+    [ "${S5_CLEANUP_SHAPE:-}" = residue ] && [ "$3" = /etc/xray-socks5 ] && exit 0
+    exit 1 ;;
 test:-f)
     [ "${S5_CLEANUP_SHAPE:-}" = unsafe-unit ] && [ "$3" = /etc/systemd/system/xray-socks5.service ] && exit 0
+    [ "${S5_CLEANUP_SHAPE:-}" = residue ] && [ "$3" = /etc/xray-socks5/.s5new.planted ] && exit 0
     exit 1 ;;
 stat:-c)
     [ "${S5_CLEANUP_SHAPE:-}" = unsafe-unit ] && printf 'root:root 666\n' && exit 0
+    if [ "${S5_CLEANUP_SHAPE:-}" = residue ]; then
+        case "$4" in
+        /etc/xray-socks5) printf 'root:xray-socks5 750\n'; exit 0 ;;
+        /etc/xray-socks5/.s5new.planted) printf 'root:root 666\n'; exit 0 ;;
+        esac
+    fi
     exit 1 ;;
+find:/etc/xray-socks5)
+    # The private directory's residue exists only as root sees it.
+    if [ "${S5_CLEANUP_SHAPE:-}" = residue ] && [ "$8" = '.s5new.*' ]; then
+        printf '/etc/xray-socks5/.s5new.planted\n'
+    fi ;;
 getent:passwd)
     [ -f "$S5_TEST_ROOT/cleanup-user-deleted" ] && exit 2
     case "${S5_CLEANUP_ACCOUNT:-absent}" in
@@ -216,6 +297,19 @@ t_run env PATH="$S5_TEST_ROOT/bin:$PATH" S5_CLEANUP_LOAD_STATE=not-found \
     "$S5_REPO_ROOT/.github/scripts/remove-xray-namespace.sh"
 assert_ne "cleanup refuses a service unit mode drift" 0 "$T_STATUS"
 assert_not_contains "unit mode refusal precedes file deletion" 'rm -f /etc/systemd/system' \
+    "$(cat "$S5_TEST_ROOT/cleanup-calls")"
+
+# Residue in a private directory is enumerated as root; the unprivileged glob
+# saw nothing there, so an unsafe temporary passed unchecked.
+: >"$S5_TEST_ROOT/cleanup-calls"
+# shellcheck disable=SC2086
+t_run env PATH="$S5_TEST_ROOT/bin:$PATH" S5_CLEANUP_LOAD_STATE=not-found \
+    S5_CLEANUP_SHAPE=residue ${S5_TEST_SHELL:-sh} \
+    "$S5_REPO_ROOT/.github/scripts/remove-xray-namespace.sh"
+assert_ne "cleanup refuses unsafe residue in a private directory" 0 "$T_STATUS"
+assert_contains "the refusal names the planted residue" \
+    'unsafe ownership or mode on /etc/xray-socks5/.s5new.planted' "$T_OUT"
+assert_not_contains "residue refusal precedes file deletion" 'rm -rf' \
     "$(cat "$S5_TEST_ROOT/cleanup-calls")"
 
 rm -f "$S5_TEST_ROOT/cleanup-user-deleted" "$S5_TEST_ROOT/cleanup-group-deleted" \

@@ -13,6 +13,25 @@ identity_state() {
     case $? in 0) return 0 ;; 2) return 1 ;; *) return 2 ;; esac
 }
 
+# root_matches <dir> <pattern>: entries of <dir> matching <pattern>, listed as
+# root. This script runs unprivileged, and its own glob over the private 0700
+# and 0750 directories matched nothing, so their residue was never checked.
+# Installer temporaries have mktemp names, without whitespace or glob bytes.
+root_matches() {
+    exists "$1" || return 0
+    as_root find "$1" -mindepth 1 -maxdepth 1 -name "$2" -print
+}
+
+# check_matches <dir> <pattern> <type> <allowed>: path_contract every match. The
+# listing is captured first: a failed find inside a for list would not stop
+# this set -e script.
+check_matches() {
+    _cm_list=$(root_matches "$1" "$2") || return 1
+    for _cm_path in $_cm_list; do
+        path_contract "$_cm_path" "$3" "$4" || return 1
+    done
+}
+
 path_contract() {
     _pc_path=$1
     _pc_type=$2
@@ -135,27 +154,18 @@ fi
 if exists /etc/xray-socks5/config.json; then
     path_contract /etc/xray-socks5/config.json file 'root:xray-socks5 640'
 fi
-for path in /etc/xray-socks5/.s5new.*; do
-    if exists "$path"; then path_contract "$path" file 'root:xray-socks5 640'; fi
-done
-for path in /etc/xray-socks5/.s5tmp.*; do
-    if exists "$path"; then path_contract "$path" file 'root:root 600|root:xray-socks5 640'; fi
-done
+check_matches /etc/xray-socks5 '.s5new.*' file 'root:xray-socks5 640'
+check_matches /etc/xray-socks5 '.s5tmp.*' file 'root:root 600|root:xray-socks5 640'
 if exists /var/lib/xray-socks5; then
     path_contract /var/lib/xray-socks5 dir 'root:root 700'
 fi
 if exists /var/lib/xray-socks5/transaction; then
     path_contract /var/lib/xray-socks5/transaction dir 'root:root 700'
-    for path in /var/lib/xray-socks5/transaction/* /var/lib/xray-socks5/transaction/.[!.]*; do
-        if exists "$path"; then path_contract "$path" file 'root:root 600'; fi
-    done
+    check_matches /var/lib/xray-socks5/transaction '*' file 'root:root 600'
 fi
-for path in /var/lib/xray-socks5/.s5state.* /var/lib/xray-socks5/.s5tmp.*; do
-    if exists "$path"; then path_contract "$path" file 'root:root 600'; fi
-done
-for path in /usr/local/libexec/xray-socks5/.xray.*; do
-    if exists "$path"; then path_contract "$path" file 'root:root 755'; fi
-done
+check_matches /var/lib/xray-socks5 '.s5state.*' file 'root:root 600'
+check_matches /var/lib/xray-socks5 '.s5tmp.*' file 'root:root 600'
+check_matches /usr/local/libexec/xray-socks5 '.xray.*' file 'root:root 755'
 
 load_state=$(manager_load_state || printf unknown)
 case "$load_state" in

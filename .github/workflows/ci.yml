@@ -227,7 +227,10 @@ jobs:
             sleep 0.2
           done
           if ! test -s "$root/out/ready" || ! kill -0 "$engine_pid" 2>/dev/null; then
-            sed -n '2p' "$root/pass" | grep -vFf - "$root/engine.log" >&2 || true
+            # Replace, never drop: dropping every line with a secret also
+            # dropped the diagnostic the secret appeared in.
+            lifecycle_redaction_file "$root/redact.pat" "$root/pass"
+            lifecycle_redact "$root/redact.pat" <"$root/engine.log" >&2
             exit 1
           fi
           ready_port=$(cat "$root/out/ready")

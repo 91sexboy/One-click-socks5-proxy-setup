@@ -25,7 +25,9 @@ alpine_cleanup() {
   rm -rf "$work"
 }
 trap alpine_cleanup EXIT
-trap 'exit 1' HUP INT TERM
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 lifecycle_write_fixtures "$work"
 original_path=$PATH
 if [ "${ALPINE_HOSTILE_CURL:-0}" = 1 ]; then
@@ -110,13 +112,9 @@ sh .github/scripts/run-socks5.sh status \
 sh .github/scripts/run-socks5.sh restart \
   "$work/answers.empty" "$work/restart.log" "$work/pass.update" "$work/pass"
 rc-service xray-socks5 status
-# Healthy/stopped/unverified status is informational; only an explicit OpenRC
-# crash is nonzero. This healthy case still requires output evidence. The heading carries "mixed" on its own, which left a listener degraded
-# to service.listen or service.unverified passing: match the service.ready line
-# for the installed port, and the protocol summary in the status line rather than
-# the word in the heading.
-grep -qxF 'Xray is listening on port 23456.' "$work/status.log"
-grep -qF 'protocol: mixed (SOCKS5 + HTTP); auth: password; UDP: disabled' "$work/status.log"
+# Healthy, stopped and unverified status are informational; only an explicit
+# OpenRC crash is nonzero, so this healthy case needs output evidence.
+lifecycle_assert_ready_status "$work/status.log" 23456
 # SPEC 5: OpenRC recovers two rapid ordinary crashes with the listener
 # returning, while a configuration error remains bounded below. Record the
 # window so a slow runner cannot accidentally issue the second kill after the
@@ -224,14 +222,7 @@ rc-service xray-socks5 status
 sh tests/protocol/post_install_audit.sh / "$work/pass.update" openrc
 # SPEC 7: credentials reach neither argv nor the service environment.
 live_pid=$(cat /run/openrc/options/xray-socks5/child_pid)
-if tr "\0" "\n" <"/proc/$live_pid/cmdline" | grep -qE "CISecret123x|CISecret456y"; then
-  printf "credential appeared in argv\n" >&2
-  exit 1
-fi
-if tr "\0" "\n" <"/proc/$live_pid/environ" | grep -qE "CISecret123x|CISecret456y"; then
-  printf "credential appeared in the service environment\n" >&2
-  exit 1
-fi
+lifecycle_process_clean "$live_pid" "$work" "$work/pass" "$work/pass.update"
 # SPEC 6: independent SOCKS5 and HTTP verification, separate from the
 # data-plane check the installer runs itself. The target binds every
 # address so it answers at both the permitted 192.0.2.1 and the denied
@@ -272,7 +263,6 @@ if [ "${ALPINE_QUOTA_BLIND:-0}" = 1 ]; then
     >"$work/quota-blind.log" 2>&1
   grep -Eq '^TESTS [1-9][0-9]* 0$' "$work/quota-blind.log"
   grep -qxF 'SKIPS 0' "$work/quota-blind.log"
-  lifecycle_assert_logs_redacted "$work"
   lifecycle_generation_absent "$work/quota-blind.log" "$work/pass"
   lifecycle_generation_absent "$work/quota-blind.log" "$work/pass.update"
   test ! -e /usr/local/libexec/xray-socks5
