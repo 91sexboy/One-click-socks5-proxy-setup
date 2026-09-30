@@ -34,6 +34,22 @@ assert_contains "the self-test keeps concurrent temporaries apart" \
     'ok - the file holds one whole text and no splice' "$T_OUT"
 assert_not_contains "the self-test has no failing check" 'not ok' "$T_OUT"
 
+# A tunnel must outlast a reader that pauses: the socket timeout that bounded
+# the echo send closed it after one second of backpressure.
+assert_contains "the self-test keeps a paused reader's tunnel open" \
+    'ok - every echo survives a reader that pauses past the poll interval' "$T_OUT"
+_ttdir=$S5_TEST_ROOT/short-send
+mkdir -p "$_ttdir"
+sed 's/^SEND_TIMEOUT = .*$/SEND_TIMEOUT = 1.0/' \
+    "$ROOT/tests/protocol/duplex_target.py" >"$_ttdir/duplex_target.py"
+assert_contains "the short-send copy restores the one-second bound" 'SEND_TIMEOUT = 1.0' \
+    "$(cat "$_ttdir/duplex_target.py")"
+cp "$ROOT/tests/protocol/target_selftest.py" "$ROOT/tests/protocol/selftest_support.py" "$_ttdir/"
+t_run python3 "$_ttdir/target_selftest.py"
+assert_contains "a one-second send bound breaks a paused reader's tunnel" \
+    'not ok - every echo survives a reader that pauses past the poll interval' "$T_OUT"
+assert_contains "the broken tunnel is recorded as a send timeout" 'send-timeout' "$T_OUT"
+
 # A writer without the lock has to fail this test, or it proves nothing.
 _ttdir=$S5_TEST_ROOT/unlocked
 mkdir -p "$_ttdir"

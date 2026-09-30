@@ -22,6 +22,16 @@ FAMILIES = []
 # Per-hello cohort observations, independent of the probe's task/worker counts.
 # Other tunnels (including the background long-lived one) do not enter these.
 COHORTS = {}
+# Why each tunnel ended, by reason. A client that sees only "tunnel failed"
+# can then be matched to the target's side of the same close.
+CLOSES = {}
+# Reads poll STOP through select() instead of a socket timeout. The timeout
+# used to bound writes too: an echo blocked for a second behind a client that
+# reads in bursts raised socket.timeout, the handler took it for a dead peer
+# and closed the tunnel. A send may now wait out that backpressure for as long
+# as SEND_TIMEOUT, far beyond any stage of the comparison workload.
+POLL_SECONDS = 1.0
+SEND_TIMEOUT = 30.0
 
 
 def write_text(path, text):
@@ -43,7 +53,7 @@ def write_metrics(count_path, report_path):
     """
     with COUNT_LOCK:
         data = {"accepted": ACCEPTED, "frames": FRAMES, "families": list(FAMILIES),
-                "cohorts": COHORTS}
+                "cohorts": COHORTS, "closes": CLOSES}
         if count_path:
             write_text(count_path, str(ACCEPTED) + "\n")
         if report_path:
@@ -53,14 +63,13 @@ def write_metrics(count_path, report_path):
 def read_exact(sock, size):
     data = bytearray()
     while len(data) < size:
-        try:
-            chunk = sock.recv(size - len(data))
-        except socket.timeout:
+        if not select.select([sock], [], [], POLL_SECONDS)[0]:
             if STOP.is_set():
-                raise EOFError("target stopping")
+                raise EOFError("stopping")
             continue
+        chunk = sock.recv(size - len(data))
         if not chunk:
-            raise EOFError("target connection closed")
+            raise EOFError("client-closed")
         data.extend(chunk)
     return bytes(data)
 
@@ -105,9 +114,10 @@ class FrameWriter:
 
 def serve_connection(sock, count_path, report_path):
     global FRAMES
-    sock.settimeout(1.0)
+    sock.settimeout(SEND_TIMEOUT)
     cohort = None
     sender_stop = threading.Event()
+    reason = "protocol"
     try:
         first = read_exact(sock, 6)
         length = struct.unpack("!I", first[2:6])[0]
@@ -145,7 +155,8 @@ def serve_connection(sock, count_path, report_path):
                 head = read_exact(sock, 6)
                 length = struct.unpack("!I", head[2:6])[0]
                 body = read_exact(sock, length)
-            except EOFError:
+            except EOFError as error:
+                reason = str(error)
                 return
             kind, frame_cid, frame_seq, frame_nonce, frame_payload = parse_frame(head + body)
             if kind != ord("C") or frame_cid != cid or frame_nonce != nonce:
@@ -158,13 +169,21 @@ def serve_connection(sock, count_path, report_path):
                     minimum = cohort["frame_min"]
                     cohort["frame_min"] = cohort["active"] if minimum is None else min(minimum, cohort["active"])
             writer.send(frame(ord("E"), cid, frame_seq, nonce, frame_payload))
-    except (EOFError, OSError, ValueError):
-        return
+        reason = "stopping"
+    except EOFError as error:
+        reason = str(error)
+    except socket.timeout:
+        reason = "send-timeout"
+    except OSError as error:
+        reason = "socket-error:" + type(error).__name__
+    except ValueError:
+        reason = "protocol"
     finally:
         sender_stop.set()
         sock.close()
-        if cohort is not None:
-            with COUNT_LOCK:
+        with COUNT_LOCK:
+            CLOSES[reason] = CLOSES.get(reason, 0) + 1
+            if cohort is not None:
                 cohort["active"] -= 1
         # Flushed here as well as on accept so the report is readable, and final
         # for every closed tunnel, while the target is still running.
