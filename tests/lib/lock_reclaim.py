@@ -8,15 +8,52 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 sys.dont_write_bytecode = True
 
 
+class Lines:
+    """Deadline-bounded line reads from a pipe's raw descriptor.
+
+    select() sees only the kernel pipe. Reading through the buffered text
+    stream after it let two lines written together land in the userspace
+    buffer at once, and the next select() then waited for bytes already read.
+    """
+
+    def __init__(self, stream):
+        self.fd = stream.fileno()
+        self.pending = b""
+
+    def next(self, timeout):
+        deadline = time.monotonic() + timeout
+        while b"\n" not in self.pending:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not select.select([self.fd], [], [], remaining)[0]:
+                raise AssertionError("lock participant did not reach its barrier")
+            chunk = os.read(self.fd, 65536)
+            if not chunk:
+                break
+            self.pending += chunk
+        text, _, self.pending = self.pending.partition(b"\n")
+        return text.decode().strip()
+
+    def drain(self):
+        text, self.pending = self.pending, b""
+        return text.decode()
+
+
 def line(process):
-    if not select.select([process.stdout], [], [], 5)[0]:
-        raise AssertionError("lock participant did not reach its barrier")
-    return process.stdout.readline().strip()
+    if not hasattr(process, "s5_lines"):
+        process.s5_lines = Lines(process.stdout)
+    return process.s5_lines.next(5)
+
+
+def finish(process, text):
+    """communicate(), keeping any stdout line() had already buffered."""
+    out, err = process.communicate(text, timeout=5)
+    return (process.s5_lines.drain() if hasattr(process, "s5_lines") else "") + out, err
 
 
 def stop(process):
@@ -78,9 +115,9 @@ printf 'release=%s\n' "$released"
             case.assertEqual(line(first), "reclaim-ready", "first reclaimer did not pause")
             second = start("no")
             case.assertEqual(line(second), "acquire=0 held=1", "second operation did not acquire")
-            first_out, first_err = first.communicate("continue\nfinish\n", timeout=5)
+            first_out, first_err = finish(first, "continue\nfinish\n")
             case.assertIsNone(second.poll(), "lock holder exited before competing acquisition")
-            second_out, second_err = second.communicate("finish\n", timeout=5)
+            second_out, second_err = finish(second, "finish\n")
             case.assertNotIn("acquire=0 held=1", first_out, "both operations acquired while the second holder was alive")
             case.assertNotEqual(first.returncode, 0, first_err)
             case.assertTrue(second.returncode == 0 and "release=0" in second_out, second_err)
@@ -215,6 +252,18 @@ class LockTests(unittest.TestCase):
     source = Path(__file__).resolve().parents[2] / "socks5.sh"
     shell = ["sh"]
 
+    def test_two_lines_in_one_write(self):
+        # Both barriers of one write are delivered, the second without waiting.
+        process = subprocess.Popen([*self.shell, "-c", "printf 'first\\nsecond\\n'; sleep 30"],
+                                   stdout=subprocess.PIPE, text=True)
+        try:
+            started = time.monotonic()
+            self.assertEqual(line(process), "first")
+            self.assertEqual(line(process), "second")
+            self.assertLess(time.monotonic() - started, 4)
+        finally:
+            stop(process)
+
     def test_competing_reclaimers(self):
         race(self, self.source, self.shell)
 
@@ -232,7 +281,8 @@ def main():
         suite = unittest.TestSuite([LockTests("test_rollback_exit")])
         success = "rollback stops before releasing operation lock"
     elif not sys.argv[3:]:
-        suite = unittest.TestSuite([LockTests("test_competing_reclaimers"), LockTests("test_owner_controls")])
+        suite = unittest.TestSuite([LockTests("test_two_lines_in_one_write"),
+                                    LockTests("test_competing_reclaimers"), LockTests("test_owner_controls")])
         success = "stale-lock interleaving preserves mutual exclusion"
     else:
         raise SystemExit("unknown lock regression scenario")

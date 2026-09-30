@@ -70,6 +70,29 @@ class SnapshotReader:
         }
 
 
+def commands(stream, timeout):
+    """Yield command lines from the raw descriptor, each within timeout seconds.
+
+    select() sees only the kernel pipe. Reading through sys.stdin let the text
+    layer prefetch a second command sent in the same write, and the next
+    select() then timed out waiting for bytes it had already consumed.
+    """
+    fd = stream.fileno()
+    pending = b""
+    while True:
+        while b"\n" not in pending:
+            if not select.select([fd], [], [], timeout)[0]:
+                raise TimeoutError("sampler command timeout")
+            chunk = os.read(fd, 4096)
+            if not chunk:
+                if pending:
+                    yield pending.decode()
+                return
+            pending += chunk
+        line, _, pending = pending.partition(b"\n")
+        yield line.decode()
+
+
 def main():
     pid, cgroup = sys.argv[1:]
     number(pid, "PID")
@@ -79,11 +102,8 @@ def main():
     active = None
     # Never reopen the peak descriptor between reset and sample: reset state is per-fd.
     with SnapshotReader(pid, cgroup) as reader:
-        while True:
-            if not select.select([sys.stdin], [], [], 60)[0]:
-                raise TimeoutError("sampler command timeout")
-            line = sys.stdin.readline()
-            if not line or line.strip() == "quit":
+        for line in commands(sys.stdin, 60):
+            if line.strip() == "quit":
                 return
             action, label = line.split()
             if not re.fullmatch(r"[A-Za-z0-9_]+", label):

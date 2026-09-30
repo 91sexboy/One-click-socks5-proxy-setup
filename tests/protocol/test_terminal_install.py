@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Exercise the terminal probe through its CLI with isolated external commands."""
 
-import errno
 import os
 from pathlib import Path
 import secrets
@@ -92,6 +91,24 @@ class TerminalProbeTests(unittest.TestCase):
         self.assert_private(result)
 
 
+class TerminalReadTests(unittest.TestCase):
+    def test_a_child_holding_the_terminal_fails_at_the_deadline(self):
+        # The reader must not wait for EOF that never comes: a child that keeps
+        # the slave open stands in for a hung installer.
+        with PtySession() as terminal:
+            process = subprocess.Popen(["sleep", "30"], stdout=terminal.slave,
+                                       stderr=terminal.slave, start_new_session=True)
+            terminal.close_slave()
+            try:
+                started = time.monotonic()
+                with self.assertRaises(terminal_install.TerminalFailure) as raised:
+                    terminal_install.read_terminal(terminal.master, started + 1)
+                self.assertLess(time.monotonic() - started, 5)
+                self.assertIn("timed out", str(raised.exception))
+            finally:
+                kill_process_group(process)
+
+
 class ShowLivenessTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory(prefix="s5-show-liveness-test-")
@@ -138,17 +155,7 @@ s5_cmd_show
                         stderr=subprocess.PIPE, start_new_session=True,
                     )
                     terminal.close_slave()
-                    output = bytearray()
-                    while True:
-                        try:
-                            chunk = os.read(terminal.master, 65536)
-                        except OSError as error:
-                            if error.errno != errno.EIO:
-                                raise
-                            break
-                        if not chunk:
-                            break
-                        output.extend(chunk)
+                    output = terminal_install.read_terminal(terminal.master, time.monotonic() + 10)
                     _, errors = process.communicate(timeout=5)
                     self.assertEqual(process.returncode, 0)
                     rendered = bytes(output).replace(b"\r\n", b"\n").decode()
@@ -170,17 +177,7 @@ s5_cmd_show
                     stderr=subprocess.PIPE, start_new_session=True,
                 )
                 terminal.close_slave()
-                output = bytearray()
-                while True:
-                    try:
-                        chunk = os.read(terminal.master, 65536)
-                    except OSError as error:
-                        if error.errno != errno.EIO:
-                            raise
-                        break
-                    if not chunk:
-                        break
-                    output.extend(chunk)
+                output = terminal_install.read_terminal(terminal.master, time.monotonic() + 10)
                 _, errors = process.communicate(timeout=5)
                 rendered = bytes(output).replace(b"\r\n", b"\n").decode()
                 self.assertEqual(process.returncode, 1)

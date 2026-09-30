@@ -18,7 +18,7 @@ class ArityAuditTests(unittest.TestCase):
         self.scratch = tempfile.TemporaryDirectory(prefix="s5-arity-")
         self.addCleanup(self.scratch.cleanup)
         self.root = Path(self.scratch.name)
-        for directory in ("tests/protocol", ".github/scripts"):
+        for directory in ("tests/protocol", "tests/lib", ".github/scripts"):
             destination = self.root / directory
             destination.mkdir(parents=True)
             for source in (ROOT / directory).glob("*.py"):
@@ -48,6 +48,13 @@ class ArityAuditTests(unittest.TestCase):
         path.write_text("raise RuntimeError('audit imported a target')\n" + path.read_text())
         result = self.audit()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_test_library_is_audited(self):
+        # tests/lib holds the lock, release and workflow oracles; a signature
+        # drift there was invisible while the audit read only two directories.
+        self.replace("tests/lib/lock_reclaim.py",
+                     "race(self, self.source, self.shell)", "race(self, self.source)")
+        self.assert_rejected("tests/lib/lock_reclaim.py", "race")
 
     def test_memory_gate_missing_argument(self):
         self.replace(".github/scripts/memory-compare.py",

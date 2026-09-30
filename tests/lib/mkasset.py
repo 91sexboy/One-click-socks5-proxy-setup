@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 """Build deterministic Xray archive fixtures without a runnable engine."""
 
-import hashlib
 from pathlib import Path
-import struct
 import sys
 import warnings
 import zipfile
@@ -15,12 +13,8 @@ LNK = 0o120777
 DEV = 0o020666
 
 
-def stub_xray():
-    header = bytearray(64)
-    header[:7] = b"\x7fELF\x02\x01\x01"
-    struct.pack_into("<HHI", header, 16, 2, 0x3E, 1)
-    struct.pack_into("<H", header, 52, 64)
-    return bytes(header) + b"synthetic\r\ntext\nbytes\r\n"
+# The archive policy checks names, types and modes, never member bytes.
+BINARY = b"synthetic-xray\n"
 
 
 def members(case, binary):
@@ -50,18 +44,15 @@ def members(case, binary):
 
 def main():
     output = Path(sys.argv[1])
-    binary = stub_xray()
-    (output / "asset-xray").write_bytes(binary)
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", message="Duplicate name:", category=UserWarning)
         for case in sys.argv[2:]:
             with zipfile.ZipFile(output / (case + ".zip"), "w") as archive:
-                for name, data, mode in members(case, binary):
+                for name, data, mode in members(case, BINARY):
                     info = zipfile.ZipInfo(name, date_time=(2026, 1, 1, 0, 0, 0))
                     info.external_attr = mode << 16
                     info.compress_type = zipfile.ZIP_DEFLATED
                     archive.writestr(info, data)
-    print(len(binary), hashlib.sha256(binary).hexdigest())
 
 
 if __name__ == "__main__":

@@ -20,9 +20,36 @@ class TerminalFailure(Exception):
         self.output = output
 
 
+def read_terminal(master, deadline, limit=8 * 1024 * 1024):
+    """Read a PTY master until every slave holder closes it, or fail at deadline.
+
+    A bare os.read blocks for as long as any process keeps the slave open, so a
+    child that never exits used to hang the caller with no bound at all.
+    """
+    output = bytearray()
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TerminalFailure("terminal install timed out", bytes(output))
+        ready, _, _ = select.select([master], [], [], min(remaining, 1))
+        if not ready:
+            continue
+        try:
+            chunk = os.read(master, 65536)
+        except OSError as error:
+            if error.errno != errno.EIO:
+                raise
+            return bytes(output)
+        if not chunk:
+            return bytes(output)
+        output.extend(chunk)
+        if len(output) > limit:
+            raise TerminalFailure("terminal install exceeded the output limit", bytes(output))
+
+
 def capture_terminal(command, answers, timeout=600):
     process = None
-    output = bytearray()
+    output = b""
     deadline = time.monotonic() + timeout
     try:
         with PtySession() as terminal:
@@ -34,24 +61,7 @@ def capture_terminal(command, answers, timeout=600):
                     env=environment, start_new_session=True,
                 )
             terminal.close_slave()
-            while True:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise TerminalFailure("terminal install timed out")
-                ready, _, _ = select.select([terminal.master], [], [], min(remaining, 1))
-                if not ready:
-                    continue
-                try:
-                    chunk = os.read(terminal.master, 65536)
-                except OSError as error:
-                    if error.errno != errno.EIO:
-                        raise
-                    break
-                if not chunk:
-                    break
-                output.extend(chunk)
-                if len(output) > 8 * 1024 * 1024:
-                    raise TerminalFailure("terminal install exceeded the output limit")
+            output = read_terminal(terminal.master, deadline)
             try:
                 status = process.wait(timeout=max(0.1, deadline - time.monotonic()))
             except subprocess.TimeoutExpired:
@@ -60,7 +70,7 @@ def capture_terminal(command, answers, timeout=600):
                 raise TerminalFailure("terminal install exited with status %d" % status)
             return bytes(output)
     except TerminalFailure as error:
-        error.output = bytes(output)
+        error.output = error.output or bytes(output)
         raise
     finally:
         if process is not None and process.poll() is None:

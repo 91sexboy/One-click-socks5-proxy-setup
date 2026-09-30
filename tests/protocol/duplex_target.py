@@ -145,8 +145,6 @@ def serve_connection(sock, count_path, report_path):
                 head = read_exact(sock, 6)
                 length = struct.unpack("!I", head[2:6])[0]
                 body = read_exact(sock, length)
-            except socket.timeout:
-                continue
             except EOFError:
                 return
             kind, frame_cid, frame_seq, frame_nonce, frame_payload = parse_frame(head + body)
