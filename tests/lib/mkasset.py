@@ -39,6 +39,8 @@ def members(case, binary):
         return [("xray", b"/etc/passwd", LNK)] + good[1:]
     if case == "device":
         return [good[0], ("geoip.dat", b"", DEV)] + good[2:]
+    if case == "noexec":
+        return [("xray", binary, REG)] + good[1:]
     raise ValueError("unknown archive case: " + case)
 
 

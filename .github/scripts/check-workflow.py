@@ -18,7 +18,7 @@ UPLOADER = 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02'
 DOWNLOADER = 'actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093'
 ATTESTER = 'actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661'
 PINNED = re.compile(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+@[0-9a-f]{40}')
-PUBLISH_JOBS = {'prepare', 'publish'}
+PUBLISH_JOBS = {'prepare', 'assemble', 'publish'}
 # Only the publishing job may write, and only what releasing and attesting need.
 PUBLISH_WRITES = {'contents': 'write', 'id-token': 'write', 'attestations': 'write'}
 JOBS = {'lint', 'unit', 'xray-assets', 'xray-mixed', 'xray-systemd', 'openrc-integration',
@@ -178,7 +178,16 @@ def check_publish(workflow):
             'publish: only a manual dispatch may publish')
     require(workflow.get('concurrency', {}).get('cancel-in-progress') is False,
             'publish: a running publication must never be cancelled')
-    require('permissions' not in jobs['prepare'], 'prepare: build job must stay read-only')
+    for name in ('prepare', 'assemble'):
+        require('permissions' not in jobs[name], name + ': build job must stay read-only')
+    for name, job in jobs.items():
+        checkout = next(step for step in job['steps'] if step.get('uses') == CHECKOUT)
+        require(checkout.get('with', {}).get('persist-credentials') is False,
+                name + ': checkout must not persist the token')
+    for command in ('sh .github/scripts/publish-release.sh claim',
+                    'sh .github/scripts/publish-release.sh upload',
+                    'sh .github/scripts/publish-release.sh publish'):
+        entry(jobs['publish'], command)
     require(jobs['publish'].get('permissions') == PUBLISH_WRITES,
             'publish: write permissions changed')
     return len(jobs)

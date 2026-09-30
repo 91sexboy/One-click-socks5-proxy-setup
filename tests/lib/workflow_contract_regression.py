@@ -91,6 +91,13 @@ class WorkflowContractTests(unittest.TestCase):
                             'prepare: step cannot be non-blocking'),
             'build-writes': (lambda w: w['jobs']['prepare'].update({'permissions': {'contents': 'write'}}),
                              'prepare: build job must stay read-only'),
+            'assemble-writes': (lambda w: w['jobs']['assemble'].update({'permissions': {'contents': 'write'}}),
+                                'assemble: build job must stay read-only'),
+            'persisted-token': (lambda w: step(w, 'publish', 'actions/checkout').pop('with'),
+                                'publish: checkout must not persist the token'),
+            'dropped-publish': (lambda w: w['jobs']['publish']['steps'][-1].update(
+                {'run': 'echo sh .github/scripts/publish-release.sh publish'}),
+                'expected one executable entrypoint: sh .github/scripts/publish-release.sh publish'),
             'extra-write': (lambda w: w['jobs']['publish']['permissions'].update({'packages': 'write'}),
                             'publish: write permissions changed'),
             'push-trigger': (lambda w: on(w).update({'push': None}),
