@@ -36,7 +36,6 @@ SC_URL = ('https://github.com/koalaman/shellcheck/releases/download/'
           'v0.10.0/shellcheck-v0.10.0.linux.x86_64.tar.xz')
 SC_SHA = '6c881ab0698e4e6ea235245f22832860544f17ba386442fe7e9d629f8cbedf87'
 
-RAW_DISTRIBUTION_TAG = 'xray-v26.3.27-r1'
 RAW_ASSETS = {
     'amd64': ('xray-v26.3.27-linux-amd64', PINS['amd64']['binary_size'], PINS['amd64']['binary_sha']),
     'arm64': ('xray-v26.3.27-linux-arm64', PINS['arm64']['binary_size'], PINS['arm64']['binary_sha']),
@@ -264,7 +263,7 @@ def check_raw_publisher(root):
             'jq -r .target_commitish)" = "$GITHUB_SHA" ||' in workflow,
             'raw publisher: the tag and draft must belong to the exact dispatch commit and may not move')
     require(workflow.count('test "$GITHUB_REF" = refs/heads/xray-only') == 2 and
-            workflow.count('DISTRIBUTION_TAG: ' + RAW_DISTRIBUTION_TAG) == 1,
+            workflow.count('DISTRIBUTION_TAG: ' + DISTRIBUTION_TAG) == 1,
             'raw publisher: branch or tag pin differs')
     for action in ('actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09',
                    'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02',

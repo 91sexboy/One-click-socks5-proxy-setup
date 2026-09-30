@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 HELPER = ROOT / ".github/scripts/memory-sampler.py"
 
 
-def check_session(case, reset_supported=True):
+def check_session(case, reset_supported=True, batched=False):
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         (root / "memory.current").write_text("100\n")
@@ -67,6 +67,25 @@ runpy.run_path(helper, run_name="__main__")
                     return
 
         try:
+            if batched:
+                # Two commands in one write: the second must be answered without
+                # waiting out the 60-second command timeout.
+                started = __import__("time").monotonic()
+                proc.stdin.write("reset both\nsample both\n")
+                proc.stdin.flush()
+                received = ""
+                while "both_sample=ok\n" not in received:
+                    import select
+                    ready, _, _ = select.select([proc.stdout], [], [], 5)
+                    case.assertTrue(ready, "the second batched command was never answered")
+                    chunk = __import__("os").read(proc.stdout.fileno(), 65536).decode()
+                    case.assertTrue(chunk, "sampler exited before answering both commands")
+                    received += chunk
+                case.assertIn("both_reset=ok\n", received)
+                case.assertLess(__import__("time").monotonic() - started, 10)
+                proc.communicate("quit\n", timeout=5)
+                case.assertEqual(proc.returncode, 0, "batched session failed")
+                return
             if not reset_supported:
                 stdout, stderr = proc.communicate("reset low\nsample low\nquit\n", timeout=5)
                 case.assertNotEqual(proc.returncode, 0, "unsupported reset must fail")
@@ -136,6 +155,9 @@ class SamplerTests(unittest.TestCase):
     def test_unsupported_reset(self):
         check_session(self, reset_supported=False)
 
+    def test_two_commands_in_one_write(self):
+        check_session(self, batched=True)
+
 
 def main():
     global HELPER
@@ -143,7 +165,7 @@ def main():
         HELPER = Path(sys.argv[1]) / ".github/scripts/memory-sampler.py"
     result = unittest.TextTestRunner().run(unittest.defaultTestLoader.loadTestsFromTestCase(SamplerTests))
     if result.wasSuccessful():
-        print("persistent memory sampler: snapshot, high/low and unsupported-reset scenarios passed")
+        print("persistent memory sampler: snapshot, high/low, unsupported-reset and batched-command scenarios passed")
     return int(not result.wasSuccessful())
 
 

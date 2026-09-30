@@ -174,7 +174,7 @@ class Calls(ast.NodeVisitor):
 
 
 def main():
-    sources = sorted(path for directory in (ROOT / "tests/protocol", ROOT / ".github/scripts")
+    sources = sorted(path for directory in (ROOT / "tests/protocol", ROOT / "tests/lib", ROOT / ".github/scripts")
                      for path in directory.glob("*.py") if path != Path(__file__).resolve())
     trees = {path: ast.parse(path.read_text(encoding="utf-8"), filename=str(path)) for path in sources}
     tables = {path: signatures(tree, path) for path, tree in trees.items()}
