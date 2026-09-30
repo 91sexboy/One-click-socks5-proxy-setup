@@ -71,6 +71,7 @@ assert_eq "rendered config matches the golden config" \
     "$golden_config" "$(s5_config_render)"
 
 mkdir -p "$S5_UNITDIR"
+S5_INIT=systemd
 s5_write_unit >/dev/null 2>&1
 golden_unit=$(cat "${S5_REPO_ROOT}/tests/golden/xray-socks5.service")
 rendered_unit=$(sed "s|$S5_TEST_ROOT||g" "$S5_SERVICE_ARTIFACT")

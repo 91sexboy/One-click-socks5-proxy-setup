@@ -400,12 +400,18 @@ s5_osrel_get() {
 s5_ver_ge() {
     _svg_left=$1
     _svg_right=$2
+    # An absent version is not version 0.
+    [ -n "$_svg_left" ] && [ -n "$_svg_right" ] || return 2
     while [ -n "$_svg_left" ] || [ -n "$_svg_right" ]; do
         _svg_left_part=${_svg_left%%.*}
         _svg_right_part=${_svg_right%%.*}
         [ -n "$_svg_left_part" ] || _svg_left_part=0
         [ -n "$_svg_right_part" ] || _svg_right_part=0
-        case "$_svg_left_part:$_svg_right_part" in *[!0-9:]* | *::* | :* | *:) return 2 ;; esac
+        # Each field on its own: checked joined by a colon, a colon inside a
+        # field (VERSION_ID=1:0) passed as a digit separator and compared as a
+        # three-character number.
+        case "$_svg_left_part" in *[!0-9]*) return 2 ;; esac
+        case "$_svg_right_part" in *[!0-9]*) return 2 ;; esac
         _svg_left_part=${_svg_left_part#"${_svg_left_part%%[!0]*}"}
         _svg_right_part=${_svg_right_part#"${_svg_right_part%%[!0]*}"}
         [ -n "$_svg_left_part" ] || _svg_left_part=0
@@ -439,10 +445,11 @@ s5_map_arch() {
 # boundary so standalone generation cannot reuse a previous backend's path.
 s5_select_service_artifact() {
     S5_SERVICE_ARTIFACT=''
-    case "${S5_INIT:-systemd}" in
+    # No default backend: an unset S5_INIT used to become systemd silently.
+    case "$S5_INIT" in
     systemd) S5_SERVICE_ARTIFACT=$S5_UNITDIR/$S5_PROJECT.service ;;
     openrc) S5_SERVICE_ARTIFACT=$S5_INITSCRIPT ;;
-    *) return 1 ;;
+    *) s5_msg_err detect.init; return 1 ;;
     esac
 }
 
@@ -1631,7 +1638,7 @@ s5_write_config_candidate() {
 
 s5_write_unit() {
     s5_select_service_artifact || return 1
-    case "${S5_INIT:-systemd}" in
+    case "$S5_INIT" in
     openrc)
         if [ ! -d "$S5_INITSCRIPTDIR" ]; then
             s5_mkdir_parents "$S5_INITSCRIPTDIR" || return 1
@@ -2001,6 +2008,7 @@ s5_verify_installed_artifacts() {
 s5_state_load() {
     _sload_current_family=$S5_OS_FAMILY
     _sload_current_init=$S5_INIT
+    _sload_current_arch=$S5_ARCHNAME
     if [ ! -e "$S5_STATE" ] && [ ! -L "$S5_STATE" ]; then
         return 3
     fi
@@ -2069,6 +2077,12 @@ STATE_FIELDS
         [ "$S5_OS_FAMILY" = "$_sload_current_family" ] || return 1
     fi
     [ -n "$_sload_current_init" ] && [ "$_sload_current_init" = "$S5_INIT" ] || return 1
+    # Like family and init, the recorded architecture must be this host's. A
+    # state carried from another machine would otherwise select that machine's
+    # asset for an update and describe a binary this host cannot run.
+    if [ -n "$_sload_current_arch" ]; then
+        [ "$S5_ARCHNAME" = "$_sload_current_arch" ] || return 1
+    fi
     s5_backend_supported || return 1
     s5_select_service_artifact || return 1
     s5_valid_port "$S5_PORT" && s5_valid_stored_username "$S5_USERNAME" &&
@@ -2741,21 +2755,22 @@ s5_precheck() {
         ;;
     esac
     s5_install_runtime_dependencies "$_spcmode" || return 1
-    s5_require_commands awk sed grep tr tail head id getent mkdir rmdir rm mv cp cat printf stat mktemp ln sleep wc chmod || return 1
+    # Only commands the script runs; tail and rc-status were required and never called.
+    s5_require_commands awk sed grep tr head id getent mkdir rmdir rm mv cp cat printf stat mktemp ln sleep wc chmod || return 1
     # Every mode reads a recorded digest, so the pinned digest tool is required
     # here rather than per mode, and by absolute path: a same-named PATH wrapper
     # would otherwise decide what counts as the pinned artifact.
     [ -x /usr/bin/sha256sum ] || { s5_msg_err detect.commands sha256sum; return 1; }
     case "$S5_INIT:$_spcmode" in
     openrc:install|openrc:update)
-        s5_require_commands addgroup adduser delgroup deluser rc-service rc-update rc-status logger od chown python3 ss || return 1
+        s5_require_commands addgroup adduser delgroup deluser rc-service rc-update logger od chown python3 ss || return 1
         ;;
     systemd:install|systemd:update)
         s5_require_commands groupadd groupdel useradd userdel systemctl od chown python3 || return 1
         command -v ss >/dev/null 2>&1 || { s5_msg_err detect.commands ss; return 1; }
         ;;
     openrc:status)
-        s5_require_commands rc-service rc-status ss || return 1
+        s5_require_commands rc-service ss || return 1
         ;;
     systemd:status)
         s5_require_commands systemctl ss || return 1
@@ -2763,13 +2778,13 @@ s5_precheck() {
     # restart keeps python3: it re-runs the data-plane verification, which status
     # does not. status only reads service and listener state.
     openrc:restart)
-        s5_require_commands python3 rc-service rc-status ss || return 1
+        s5_require_commands python3 rc-service ss || return 1
         ;;
     systemd:restart)
         s5_require_commands python3 systemctl ss || return 1
         ;;
     openrc:uninstall)
-        s5_require_commands delgroup deluser rc-service rc-update rc-status || return 1
+        s5_require_commands delgroup deluser rc-service rc-update || return 1
         ;;
     systemd:uninstall)
         s5_require_commands groupdel userdel systemctl || return 1

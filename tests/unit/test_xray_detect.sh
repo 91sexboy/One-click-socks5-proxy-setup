@@ -87,4 +87,56 @@ for _dvcase in \
     assert_eq "version comparison $_dvleft >= $_dvright" "$_dvwant" "$T_STATUS"
 done
 
+# Malformed versions are invalid (2), never ordered. A colon inside a field used
+# to pass as a separator, so VERSION_ID=1:0 compared as a number above 22.04.
+for _dvbad in '1:0|22.04' 'a.b|3.20' '|12' '12|' '22.|22.04' '3.x|3.20'; do
+    t_run s5_ver_ge "${_dvbad%%|*}" "${_dvbad#*|}"
+    assert_eq "malformed version comparison [$_dvbad] is invalid" 2 "$T_STATUS"
+done
+S5_OSRELEASE="$S5_TEST_ROOT/colon-os-release"
+printf 'ID=ubuntu\nVERSION_ID="1:0"\n' >"$S5_OSRELEASE"
+t_run s5_detect_platform
+assert_ne "a colon-bearing VERSION_ID is not a supported Ubuntu" 0 "$T_STATUS"
+
+# There is no default backend: without S5_INIT the artifact path and the
+# service definition are refused and named, not silently systemd.
+S5_INIT=''
+t_run s5_select_service_artifact
+assert_ne "no backend selects no service artifact" 0 "$T_STATUS"
+assert_contains "no backend is reported as an init failure" \
+    'no supported service manager was found' "$T_OUT"
+t_run s5_write_unit
+assert_ne "no backend writes no service definition" 0 "$T_STATUS"
+
+# Every command precheck requires is one the script actually runs. A required
+# command nothing calls turns a host without it into a false refusal.
+t_run python3 - "$S5_REPO_ROOT/socks5.sh" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+
+def unused(source):
+    lines = source.split('\n')
+    required = set()
+    for line in lines:
+        match = re.match(r'\s*s5_require_commands (.*?)\|\|', line)
+        if match:
+            required |= set(match.group(1).split())
+    body = '\n'.join(line for line in lines
+                     if not line.lstrip().startswith('#') and 's5_require_commands' not in line)
+    return sorted(command for command in required if not re.search(
+        r'(^|[\s;|&(!{`]|\$\()' + re.escape(command) + r'(?=[\s;|&)`]|$)', body, re.M))
+
+
+source = Path(sys.argv[1]).read_text()
+if unused(source):
+    raise SystemExit('required but never run: ' + ' '.join(unused(source)))
+mutated = source.replace('s5_require_commands awk ', 's5_require_commands rc-status awk ', 1)
+if unused(mutated) != ['rc-status']:
+    raise SystemExit('the oracle missed a required command that is never run')
+PY
+assert_eq "precheck requires only commands the script runs" 0 "$T_STATUS"
+if [ "$T_STATUS" -ne 0 ]; then printf '%s\n' "$T_OUT" >&2; fi
+
 t_summary

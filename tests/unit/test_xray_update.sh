@@ -16,6 +16,14 @@ test_family() {
     S5_OS_FAMILY=debian
     t_run s5_state_load
     assert_eq "the family check does not reject the recorded family" 0 "$T_STATUS"
+    # The architecture is host identity too: a state carried from an arm64
+    # host would select that host's asset here.
+    S5_ARCHNAME=arm64
+    t_run s5_state_load
+    assert_ne "a state file from another architecture is refused" 0 "$T_STATUS"
+    S5_ARCHNAME=amd64
+    t_run s5_state_load
+    assert_eq "the architecture check accepts this host's architecture" 0 "$T_STATUS"
 }
 
 test_update() {
