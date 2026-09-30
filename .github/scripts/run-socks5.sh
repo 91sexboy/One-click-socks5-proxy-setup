@@ -15,6 +15,8 @@ LOG=${3:?usage: run-socks5.sh SUBCOMMAND ANSWERS LOG PASSFILE [PASSFILE...]}
 PASSFILE=${4:?usage: run-socks5.sh SUBCOMMAND ANSWERS LOG PASSFILE [PASSFILE...]}
 shift 4
 set -- "$PASSFILE" "$@"
+# shellcheck source=.github/scripts/lifecycle-common.sh
+. "$(dirname "$0")/lifecycle-common.sh"
 
 # Set up filtering BEFORE running anything that might publish a credential.
 # Patterns travel only through a private file, never argv or the environment.
@@ -25,52 +27,11 @@ _err=$(mktemp) || { printf 'runner: no private error file\n' >&2; exit 2; }
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
-for _credential_file do
-    if [ ! -f "$_credential_file" ] ||
-        ! awk 'NR == 2 {print} NR <= 2 && length($0) == 0 {bad = 1} END {exit (NR < 2 || bad) ? 1 : 0}' \
-            "$_credential_file" >>"$_pat" 2>/dev/null; then
-        printf 'runner: unreadable or incomplete credential file\n' >&2
-        exit 2
-    fi
-    _user=$(sed -n '1p' "$_credential_file") || exit 2
-    _pass=$(sed -n '2p' "$_credential_file") || exit 2
-    _pair=$_user:$_pass
-    printf '%s\n' "$_pair" >>"$_pat" || exit 2
-    printf '%s' "$_pair" | base64 | tr -d '\n' >>"$_pat" || exit 2
-    printf '\n' >>"$_pat" || exit 2
-    _user=''; _pass=''; _pair=''
-done
-redact() {
-    # Match the longest literal at each position, without filtering replacement
-    # markers again. A rotated credential can extend a previous one.
-    awk '
-        BEGIN {
-            while ((loaded = getline secret < ARGV[1]) > 0) {
-                if (secret == "") exit 2
-                secrets[++count] = secret
-            }
-            if (loaded < 0 || count < 2) exit 2
-            close(ARGV[1]); ARGV[1] = ""
-        }
-        function hide(text, result, i, at, first, width) {
-            result = ""
-            while (length(text)) {
-                first = 0; width = 0
-                for (i = 1; i <= count; i++) {
-                    at = index(text, secrets[i])
-                    if (at && (!first || at < first || (at == first && length(secrets[i]) > width))) {
-                        first = at; width = length(secrets[i])
-                    }
-                }
-                if (!first) return result text
-                result = result substr(text, 1, first - 1) "<REDACTED>"
-                text = substr(text, first + width)
-            }
-            return result
-        }
-        {print hide($0)}
-    ' "$_pat"
+lifecycle_redaction_file "$_pat" "$@" || {
+    printf 'runner: unreadable or incomplete credential file\n' >&2
+    exit 2
 }
+redact() { lifecycle_redact "$_pat"; }
 
 status=1
 if [ "$MODE" = run ]; then

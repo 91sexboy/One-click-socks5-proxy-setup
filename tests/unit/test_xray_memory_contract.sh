@@ -44,10 +44,10 @@ assert_eq "the memory job drives the permitted target" 1 \
 assert_eq "the memory target answers at denied addresses too" 1 \
     "$(grep -c 'duplex_target.py --host 0.0.0.0 --host6 ::' "$ROOT/.github/scripts/memory-report.sh")"
 assert_contains "memory uses shared install credentials" 'lifecycle_write_fixtures "$root"' "$memory_text"
-assert_contains "install credential checks use the fail-closed shared helper" \
-    'lifecycle_no_credential_in "$root/install.log" "$install_secret" sudo' "$memory_text"
-assert_contains "holder credential checks use the fail-closed shared helper" \
-    'lifecycle_no_credential_in "$root/held.log" "$install_secret"' "$memory_text"
+assert_contains "install credential checks cover every credential form" \
+    'lifecycle_generation_absent "$root/install.log" "$root/pass" sudo' "$memory_text"
+assert_contains "holder credential checks cover every credential form" \
+    'lifecycle_generation_absent "$root/held.log" "$root/pass"' "$memory_text"
 assert_not_contains "memory does not duplicate the fixture password" 'CISecret123x' "$memory_text"
 assert_not_contains "workflow does not duplicate the fixture password" \
     'CISecret123x' "$(cat "$ROOT/.github/workflows/ci.yml")"

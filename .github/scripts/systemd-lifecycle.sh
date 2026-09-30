@@ -121,17 +121,20 @@ sudo sh .github/scripts/run-socks5.sh status \
   "$work/answers.empty" "$work/status.log" "$work/pass.update" "$work/pass"
 printf 'lifecycle: status-ok\n'
 # This healthy systemd status is informational, so output evidence rather than
-# a zero exit alone proves the listener is ready. The heading carries "mixed" on its own, which left a listener degraded
-# to service.listen or service.unverified passing: match the service.ready line
-# for the installed port, and the protocol summary in the status line rather than
-# the word in the heading.
-sudo grep -qxF 'Xray is listening on port 23456.' "$work/status.log"
-sudo grep -qF 'protocol: mixed (SOCKS5 + HTTP); auth: password; UDP: disabled' "$work/status.log"
+# a zero exit alone proves the listener is ready.
+lifecycle_assert_ready_status "$work/status.log" 23456 sudo
 printf 'lifecycle: status-content-ok\n'
 sudo sh .github/scripts/lifecycle-update-assert.sh
 sudo systemctl is-active --quiet xray-socks5.service
 sudo sh tests/protocol/post_install_audit.sh / "$work/pass.update" systemd
 printf 'lifecycle: update-audit-ok\n'
+# SPEC 7: credentials reach neither argv nor the service environment. The
+# service runs as its own account, so only root can read its environ.
+live_pid=$(systemctl show xray-socks5.service -p MainPID --value)
+test "$live_pid" -gt 0
+sudo sh -c '. .github/scripts/lifecycle-common.sh && lifecycle_process_clean "$@"' \
+  process-clean "$live_pid" "$work" "$work/pass" "$work/pass.update"
+printf 'lifecycle: process-credentials-ok\n'
 printf 'lifecycle: uninstall-preflight\n'
 sudo systemctl is-active xray-socks5.service || true
 sudo systemctl show xray-socks5.service -p MainPID -p ExecMainStatus -p NRestarts

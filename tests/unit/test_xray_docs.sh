@@ -93,8 +93,12 @@ assert_contains "Alpine gate audits the installed namespace" \
     'post_install_audit.sh / "$work/pass.update" openrc' "$alpine_text"
 assert_contains "Alpine gate runs the independent protocol probe" \
     'sh tests/protocol/run_xray_mixed.sh' "$alpine_text"
-assert_contains "Alpine gate keeps credentials out of argv" '/proc/$live_pid/cmdline' "$alpine_text"
-assert_contains "Alpine gate keeps credentials out of the environment" '/proc/$live_pid/environ' "$alpine_text"
+assert_contains "Alpine gate checks argv and environment for credentials" \
+    'lifecycle_process_clean "$live_pid" "$work" "$work/pass" "$work/pass.update"' "$alpine_text"
+assert_contains "systemd gate checks argv and environment for credentials" \
+    'process-clean "$live_pid" "$work" "$work/pass" "$work/pass.update"' "$systemd_text"
+assert_contains "the shared credential check reads both process files" \
+    'for _lpc_part in cmdline environ; do' "$(cat "$ROOT/.github/scripts/lifecycle-common.sh")"
 assert_contains "Alpine gate snapshots packages before installation" \
     'pkgs_before_install=$(apk info | sort | sha256sum)' "$alpine_text"
 assert_contains "Alpine gate records its package-set baseline" \
