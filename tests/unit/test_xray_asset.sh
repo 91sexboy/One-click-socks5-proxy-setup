@@ -41,8 +41,6 @@ assert_ne "unsupported architecture has no raw asset" 0 "$T_STATUS"
 source=$(cat "$ROOT/socks5.sh")
 assert_not_contains "asset URL is not latest" '/releases/latest' "$source"
 assert_not_contains "asset URL has no upstream fallback" 'XTLS/Xray-core/releases/download' "$source"
-assert_contains "asset download is HTTPS-only" "--proto '=https'" "$source"
-assert_contains "asset download is bounded" '--max-filesize' "$source"
 assert_not_contains "target installer no longer invokes unzip" '/usr/bin/unzip' "$source"
 assert_not_contains "target installer no longer creates extraction FIFOs" 'mkfifo' "$source"
 assert_contains "candidate is created beside the final binary" \
@@ -220,6 +218,30 @@ for _os_lang in en zh; do
     assert_eq "an oversized candidate is removed in $S5_LANG" 0 "$(t_candidate_count)"
 done
 S5_LANG=en
+
+# Each request's own argv, told apart by its URL. The asset download and the
+# public-address lookup share s5_curl_command, so a search of the source text
+# found a flag in whichever of the two still carried it.
+t_raw_fixture
+unset S5_TEST_ASSET_PATH
+: >"$S5_TEST_ROOT/curl.argv"
+s5_curl_command() { printf '%s\n' "$*" >>"$S5_TEST_ROOT/curl.argv"; return 22; }
+# shellcheck disable=SC2218
+s5_fetch_binary "$S5_TEST_ROOT/candidate" >/dev/null 2>&1
+if [ -x /usr/bin/curl ]; then
+    s5_read_public_ipv4 >/dev/null 2>&1
+    _addr_argv=$(grep -F -- "$S5_ADDR_ENDPOINT" "$S5_TEST_ROOT/curl.argv")
+    assert_contains "the address lookup is HTTPS-only" '--proto =https' "$_addr_argv"
+    assert_contains "the address lookup is bounded to one address" '--max-filesize 17' "$_addr_argv"
+    assert_contains "the address lookup ignores proxy variables" '--noproxy *' "$_addr_argv"
+else
+    t_skip "the address lookup argv" "/usr/bin/curl is absent"
+fi
+_asset_argv=$(grep -F -- "$S5_XRAY_BASE/$S5_ASSET_NAME" "$S5_TEST_ROOT/curl.argv")
+assert_contains "the asset download is HTTPS-only" '--proto =https' "$_asset_argv"
+assert_contains "the asset download refuses non-HTTPS redirects" '--proto-redir =https' "$_asset_argv"
+assert_contains "the asset download is bounded one byte past the pin" \
+    "--max-filesize $((S5T_BIN_SIZE + 1))" "$_asset_argv"
 
 # The download seam classifies curl's direct write status without parsing stderr.
 t_raw_fixture
@@ -494,9 +516,11 @@ PY
     assert_eq "$_tsignal preserves old executable" 'old binary' "$(cat "$S5_BIN")"
 done
 
-# Absolute tool seams and MAGIC isolation still hold after removing unzip.
+# Absolute tool seams and MAGIC isolation still hold after removing unzip. The
+# fixture replaces the file(1) seam, so production is sourced again: the seams
+# under test must be production's own, not copies written into this file.
 t_raw_fixture
-s5_sha256_command() { /usr/bin/sha256sum "$1"; }
+t_source_production "$S5_REPO_ROOT/tests/fixtures/os-release/debian-12"
 mkdir "$S5_TEST_ROOT/hostile-bin"
 for _hostile in curl sha256sum file; do
     printf '#!/bin/sh\nprintf called >>"$S5_TEST_ROOT/hostile.calls"\nexit 99\n' \
@@ -514,7 +538,6 @@ t_run s5_curl_command --version
 assert_eq "curl seam bypasses PATH and functions" 0 "$T_STATUS"
 t_run s5_sha256 "$S5_TEST_ROOT/asset-xray"
 assert_eq "digest seam bypasses PATH and functions" "$S5T_BIN_SHA256" "$T_OUT"
-s5_file_type_command() { /usr/bin/file -b "$@"; }
 MAGIC=$S5_TEST_ROOT/missing-magic
 export MAGIC
 t_run s5_file_type "$S5_TEST_ROOT/asset-xray"

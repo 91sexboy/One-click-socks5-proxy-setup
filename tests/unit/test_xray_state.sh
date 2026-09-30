@@ -47,24 +47,30 @@ assert_eq "legacy systemd family defaults to Debian" debian "$S5_OS_FAMILY"
 S5_OS_FAMILY=el
 s5t_state_expect "legacy Debian state is refused on a detected EL host" 1
 
-# A previous load must never cache either metadata or integrity results.
-for _tskey in schema engine release commit asset archive_size archive_sha256 binary_size \
-    binary_sha256 protocol auth udp listen port username os arch family init \
-    account_uid account_gid config_sha256 unit_sha256 status; do
-    s5t_state_reset
-    awk -F '\t' -v key="$_tskey" '$1 != key' "$S5_TEST_ROOT/valid-state" >"$S5_STATE"
-    case "$_tskey" in
-    schema) s5t_state_expect "missing schema is recognized as legacy" 0 ;;
-    *) s5t_state_expect "missing $_tskey is refused" 1 ;;
-    esac
-    s5t_state_reset
-    awk -F '\t' -v key="$_tskey" '{ print; if ($1 == key) print }' \
-        "$S5_TEST_ROOT/valid-state" >"$S5_STATE"
-    s5t_state_expect "duplicate $_tskey is refused" 1
-    s5t_state_reset
-    s5t_state_field "$_tskey" ''
-    s5t_state_expect "empty $_tskey is refused" 1
+# A previous load must never cache either metadata or integrity results. The
+# current writer produces schema 2, so its fields are the ones a regression
+# would drop; every one is required exactly once and non-empty.
+s5t_state_v2() {
+    awk -F '\t' "$@" "$S5_TEST_ROOT/valid-state-v2" >"$S5_STATE"
+    chmod 0600 "$S5_STATE"
+    S5_OS_FAMILY=debian
+    S5_INIT=systemd
+}
+for _tskey in schema engine release commit distribution_tag asset_format asset asset_size \
+    asset_sha256 binary_size binary_sha256 protocol auth udp listen port username os arch \
+    family init account_uid account_gid config_sha256 unit_sha256 status; do
+    s5t_state_v2 -v key="$_tskey" '$1 != key'
+    s5t_state_expect "missing schema-2 $_tskey is refused" 1
+    s5t_state_v2 -v key="$_tskey" '{ print; if ($1 == key) print }'
+    s5t_state_expect "duplicate schema-2 $_tskey is refused" 1
+    s5t_state_v2 -v key="$_tskey" 'BEGIN { OFS="\t" } $1 == key { $2="" } { print }'
+    s5t_state_expect "empty schema-2 $_tskey is refused" 1
 done
+# Schema 1 stays a compatibility read only: without its discriminator it is
+# the legacy layout, which still loads.
+s5t_state_reset
+awk -F '\t' '$1 != "schema"' "$S5_TEST_ROOT/valid-state" >"$S5_STATE"
+s5t_state_expect "a schema-1 state without its discriminator loads as legacy" 0
 
 for _tsbad in unknown blank-line extra-column duplicate-key; do
     s5t_state_reset

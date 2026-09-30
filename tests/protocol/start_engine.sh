@@ -110,7 +110,7 @@ ENGINE="$WORK/xray"
 : >"$WORK/config.json" || fail 'cannot create Xray config'
 chmod 0600 "$WORK/config.json" || fail 'cannot protect Xray config'
 # This launcher stays independent of socks5.sh so a renderer defect cannot mask
-# a protocol defect. test_xray_docs.sh compares both sets of destination ranges
+# a protocol defect. test_xray_boundary.sh compares both sets of destination ranges
 # against the independent tests/fixtures/denied-destinations.txt expectation.
 cat >"$WORK/config.json" <<CONFIG
 {

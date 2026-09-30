@@ -32,5 +32,18 @@ for _dcconcurrency in 1 32 128; do
 done
 assert_contains "the probe emits concurrency completion markers" \
     'mixed_concurrency_%d=ok' "$_boundary_probe"
+# Every fixed completion marker the probe prints is one the gate requires; an
+# unrequired marker is a case that can vanish without failing the gate.
+_dcgate=$(cat "$ROOT/tests/protocol/run_xray_mixed.sh")
+while IFS= read -r _dcmarker; do
+    case "$_dcmarker" in
+    mixed_target_ipv6=ok) _dcrequired="mixed_target_ipv6=(ok|unavailable)" ;;
+    *) _dcrequired=$_dcmarker ;;
+    esac
+    assert_contains "the mixed gate requires $_dcmarker" "^$_dcrequired\$" "$_dcgate"
+done <<EOF
+$(grep -o 'print("mixed_[a-z0-9_]*=ok")' "$ROOT/tests/protocol/xray_mixed.py" |
+    sed 's/print("\(.*\)")/\1/' | sort -u)
+EOF
 
 t_summary
