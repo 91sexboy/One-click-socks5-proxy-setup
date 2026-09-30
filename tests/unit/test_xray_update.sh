@@ -940,6 +940,34 @@ test_owned_dir_symlink() {
     assert_file_exists "the symlink target is untouched" "$S5_TEST_ROOT/elsewhere/keep"
 }
 
+# A failed systemd unit (exit 23, or a spent restart budget) is reported as
+# failed, yet it proves the process is gone, so the operator can still update
+# out of it or uninstall it. It must not wedge every destructive command.
+test_failed_unit_operations() {
+    t_xray_fixture 23456
+    t_xray_install
+    rm -f "$S5_TEST_ROOT/svc_active"
+    : >"$S5_TEST_ROOT/svc_failed"
+    s5_precheck() { return 0; }
+    t_run s5_cmd_status
+    assert_ne "status fails on a failed unit" 0 "$T_STATUS"
+    assert_contains "status names the failed unit" 'service: failed;' "$T_OUT"
+    assert_file_absent "failed status releases the lock" "$S5_LOCKDIR"
+    T_OUT=$( (
+        s5_prompt_port() { S5_PORT=24400; return 0; }
+        s5_cmd_install
+    ) 2>&1) && T_STATUS=0 || T_STATUS=$?
+    assert_eq "an update recovers a failed unit" 0 "$T_STATUS"
+    assert_eq "the recovered unit listens on the new port" 24400 "$(cat "$S5_TEST_ROOT/svc_active")"
+    t_xray_assert_healthy
+    rm -f "$S5_TEST_ROOT/svc_active"
+    : >"$S5_TEST_ROOT/svc_failed"
+    printf 'y\n' >"$S5_TEST_ROOT/answers.uninstall"
+    t_run s5_cmd_uninstall <"$S5_TEST_ROOT/answers.uninstall"
+    assert_eq "a failed unit can be uninstalled" 0 "$T_STATUS"
+    assert_file_absent "uninstalling a failed unit removes its config" "$S5_CFG"
+}
+
 test_older_release_update() {
     t_xray_fixture 23999
     t_xray_install
@@ -1782,7 +1810,7 @@ RCUPDATE
     t_xray_assert_healthy
 }
 
-SCENARIOS='readonly_recovery_signal cleanup_entry_order owned_dir_symlink openrc_update_messages update_listener_unverified rollback_binary_restore_failure rollback_cleanup_interruption_recovery openrc_committed_unit_cleanup_recovery openrc_unit_migration openrc_unit_migration_rollback openrc_unit_transaction_recovery openrc_logging_warning uninstall_confirmation uninstall_messages family update owned_port rejected_candidate listener_failure rejected_command publish_signal config_symlink uninstall_leftovers uninstall_residue verifier_cleanup txn_mkdir_failure txn_copy_failure txn_chmod_failure stop_failure wait_stopped_failure publication_failure new_start_failure dataplane_failure state_write_failure rollback_restart_failure restore_failure uninstall_unknown rollback_exit uninstall_group_residue uninstall_resume uninstall_signal_resume uninstall_resume_drift uninstall_phase_gap_resume uninstall_final_window older_release_operations older_release_update binary_ready_gate older_release_download_failure transaction_contract_drift unit_replacing_requires_stopping_marker rollback_backup_drift uninstall_directory_drift transaction_all_commands transaction_unknown_residue sha256_binary_update_failure sha256_config_update_failure update_commit_cleanup_failure existing_stage_failure existing_stage_cleanup_failure existing_stage_cleanup_restore_failure'
+SCENARIOS='failed_unit_operations readonly_recovery_signal cleanup_entry_order owned_dir_symlink openrc_update_messages update_listener_unverified rollback_binary_restore_failure rollback_cleanup_interruption_recovery openrc_committed_unit_cleanup_recovery openrc_unit_migration openrc_unit_migration_rollback openrc_unit_transaction_recovery openrc_logging_warning uninstall_confirmation uninstall_messages family update owned_port rejected_candidate listener_failure rejected_command publish_signal config_symlink uninstall_leftovers uninstall_residue verifier_cleanup txn_mkdir_failure txn_copy_failure txn_chmod_failure stop_failure wait_stopped_failure publication_failure new_start_failure dataplane_failure state_write_failure rollback_restart_failure restore_failure uninstall_unknown rollback_exit uninstall_group_residue uninstall_resume uninstall_signal_resume uninstall_resume_drift uninstall_phase_gap_resume uninstall_final_window older_release_operations older_release_update binary_ready_gate older_release_download_failure transaction_contract_drift unit_replacing_requires_stopping_marker rollback_backup_drift uninstall_directory_drift transaction_all_commands transaction_unknown_residue sha256_binary_update_failure sha256_config_update_failure update_commit_cleanup_failure existing_stage_failure existing_stage_cleanup_failure existing_stage_cleanup_restore_failure'
 if [ "$#" -eq 0 ]; then
     # Expand the fixed scenario words into the default argument list.
     # shellcheck disable=SC2086

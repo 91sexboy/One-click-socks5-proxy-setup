@@ -107,7 +107,7 @@ Re-running `install` updates the managed configuration and, when the installed a
 
 The language preference is saved in `/etc/xray-socks5.lang` and survives uninstall. If it cannot be saved, the script warns that the choice applies only to the current invocation. The `language` command reports failure if saving fails.
 
-`status` and `show` both report the service state and the independently observed listener state; `show` prints them above the connection links. Either can report a stopped or unverified listener without failing as a command. If OpenRC explicitly reports a crashed child, both name that state and return nonzero while still printing the listener state, and `show` still prints the card. Read the output; a zero exit status alone does not prove proxy availability.
+`status` and `show` both report the service state and the independently observed listener state; `show` prints them above the connection links. Either can report a stopped or unverified listener without failing as a command. If the service manager positively reports that Xray exited — an OpenRC `crashed` child, or a systemd unit left `failed` by a configuration error or a spent restart budget — both name that state and return nonzero while still printing the listener state, and `show` still prints the card. A failed systemd unit can still be updated, restarted or uninstalled. Read the output; a zero exit status alone does not prove proxy availability.
 
 ## What `mixed` means
 

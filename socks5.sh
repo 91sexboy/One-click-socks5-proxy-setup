@@ -256,6 +256,7 @@ s5_msg() {
     status.state.running) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '运行中' ;; en) printf 'running' ;; esac ;;
     status.state.stopped) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '已停止' ;; en) printf 'stopped' ;; esac ;;
     status.state.crashed) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '已崩溃' ;; en) printf 'crashed' ;; esac ;;
+    status.state.failed) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '已失败' ;; en) printf 'failed' ;; esac ;;
     status.state.unverified) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '未验证' ;; en) printf 'unverified' ;; esac ;;
     status.heading) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf 'Xray mixed 代理状态：' ;; en) printf 'Xray mixed proxy status:' ;; esac ;;
     status.line) [ "$#" -eq 3 ] || return 1; case "$S5_LANG" in zh) printf '服务：%s；端口：%s；账户：%s；协议：mixed（SOCKS5 + HTTP）；认证：password；UDP：关闭' "$1" "$2" "$3" ;; en) printf 'service: %s; port: %s; username: %s; protocol: mixed (SOCKS5 + HTTP); auth: password; UDP: disabled' "$1" "$2" "$3" ;; esac ;;
@@ -2326,8 +2327,19 @@ s5_service_state() {
         case $? in 0 | 8) return 0 ;; 3) return 1 ;; 32) return 3 ;; *) return 2 ;; esac
         ;;
     *)
-        systemctl is-active "$S5_PROJECT.service" >/dev/null 2>&1
-        case $? in 0) return 0 ;; 3) return 1 ;; *) return 2 ;; esac
+        # is-active exits 3 for every state that is not active, so only its word
+        # separates a stopped unit from one that failed: exit 23, or a spent
+        # restart budget. Failed is final and its processes are gone, but it is
+        # not what the operator asked for, so it gets its own 4. activating
+        # (including a pending auto-restart), deactivating and any unrecognised
+        # word leave the state unproven.
+        _sssword=$(systemctl is-active "$S5_PROJECT.service" 2>/dev/null)
+        case "$?:$_sssword" in
+        0:*) return 0 ;;
+        3:inactive) return 1 ;;
+        3:failed) return 4 ;;
+        *) return 2 ;;
+        esac
         ;;
     esac
 }
@@ -2380,7 +2392,10 @@ s5_wait_stopped() {
     _swsi=0
     while [ "$_swsi" -lt 15 ]; do
         s5_service_state
-        case $? in 1) return 0 ;; 0 | 2) ;; *) return 2 ;; esac
+        # A failed systemd unit is as stopped as an inactive one: nothing will
+        # restart it and its processes were killed with the unit. OpenRC's
+        # crashed (3) still has a managing supervisor, so it stays fail closed.
+        case $? in 1 | 4) return 0 ;; 0 | 2) ;; *) return 2 ;; esac
         _swsi=$((_swsi + 1))
         sleep 1
     done
@@ -3068,7 +3083,7 @@ s5_install_new() {
     S5_SERVICE_STARTED=1
     s5_svc start || { s5_msg_err service.start; return 1; }
     s5_service_state; _sina=$?
-    case "$_sina" in 0) ;; 1) s5_msg_err service.start; return 1 ;; *) s5_msg_err service.inactive; return 1 ;; esac
+    case "$_sina" in 0) ;; 1 | 4) s5_msg_err service.start; return 1 ;; *) s5_msg_err service.inactive; return 1 ;; esac
     s5_wait_listening "$S5_PORT"
     case $? in 0) ;; 1) s5_msg_err service.listen "$S5_PORT"; return 1 ;; *) s5_msg_err service.unverified "$S5_PORT"; return 1 ;; esac
     s5_verify_dataplane || return 1
@@ -3268,15 +3283,16 @@ s5_open_locked() {
 }
 
 # The one place that maps the two state probes onto reported values, so status
-# and show cannot drift apart. Only OpenRC's positively reported crashed child
-# makes a read-only command fail; an unobservable listener never raises a false
-# alarm.
+# and show cannot drift apart. Only a manager that positively reports the proxy
+# exited -- OpenRC's crashed child or a failed systemd unit -- makes a read-only
+# command fail; an unobservable listener never raises a false alarm.
 s5_liveness_probe() {
     s5_service_state
     case $? in
     0) S5_LIVENESS_STATE=status.state.running; S5_LIVENESS_RC=0 ;;
     1) S5_LIVENESS_STATE=status.state.stopped; S5_LIVENESS_RC=0 ;;
     3) S5_LIVENESS_STATE=status.state.crashed; S5_LIVENESS_RC=1 ;;
+    4) S5_LIVENESS_STATE=status.state.failed; S5_LIVENESS_RC=1 ;;
     *) S5_LIVENESS_STATE=status.state.unverified; S5_LIVENESS_RC=0 ;;
     esac
     s5_listener_state
@@ -3464,7 +3480,7 @@ s5_cmd_show() {
     # liveness is reported rather than used to withhold credentials. It stays on
     # stdout because only stdout is proven to be a terminal here; sending it to
     # redirected stderr would recreate the pristine-card defect. The return code
-    # mirrors status: only a positively reported crashed child fails.
+    # mirrors status: only a positively reported exit (crashed or failed) fails.
     s5_is_root || { s5_msg_err root.required; return 1; }
     if [ ! -t 1 ]; then s5_msg_err show.terminal; return 1; fi
     s5_open_locked status || return 1
