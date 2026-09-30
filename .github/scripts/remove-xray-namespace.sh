@@ -77,7 +77,7 @@ for dir in /etc/xray-socks5 /var/lib/xray-socks5 /usr/local/libexec/xray-socks5;
         as_root test ! -L "$dir"
         case "$dir" in
         /etc/xray-socks5) allowed='config.json .s5new.* .s5tmp.*' ;;
-        /var/lib/xray-socks5) allowed='transaction .s5state.* .s5tmp.*' ;;
+        /var/lib/xray-socks5) allowed='transaction .s5tmp.*' ;;
         *) allowed='xray .xray.*' ;;
         esac
         entries=$(as_root find "$dir" -mindepth 1 -maxdepth 1 -printf '%f\n')
@@ -163,7 +163,6 @@ if exists /var/lib/xray-socks5/transaction; then
     path_contract /var/lib/xray-socks5/transaction dir 'root:root 700'
     check_matches /var/lib/xray-socks5/transaction '*' file 'root:root 600'
 fi
-check_matches /var/lib/xray-socks5 '.s5state.*' file 'root:root 600'
 check_matches /var/lib/xray-socks5 '.s5tmp.*' file 'root:root 600'
 check_matches /usr/local/libexec/xray-socks5 '.xray.*' file 'root:root 755'
 

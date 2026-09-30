@@ -87,7 +87,7 @@ s5_ipv4_is_public "$S5_PUBLIC_IPV4_CANDIDATE"
 assert_ne "an over-long octet is not a usable address" 0 "$?"
 
 # s5t_card: render into a file. t_run would capture through a command
-# substitution, and S5_CARD_KIND is set by the subject, so a subshell would lose
+# substitution, and S5_ADVERTISED_KIND is set by the subject, so a subshell would lose
 # the one value that says which branch produced the card.
 s5t_card() {
     s5_render_card >"$S5_TEST_ROOT/card" 2>&1
@@ -107,7 +107,7 @@ assert_contains "the HTTP URI uses the same host" \
     'http://alice:Secret123xyz@SERVER_IPV4:23456' "$S5T_CARD_OUT"
 assert_contains "the placeholder is called out" \
     'replace SERVER_IPV4 below' "$S5T_CARD_OUT"
-assert_eq "the placeholder kind is recorded" placeholder "$S5_CARD_KIND"
+assert_eq "the placeholder kind is recorded" placeholder "$S5_ADVERTISED_KIND"
 
 # s5t_local <ip-o-addr-output>: substitute the host's interface list. The seam
 # is a function rather than an environment variable, so it needs no entry in
@@ -133,7 +133,7 @@ assert_contains "the resolved address reaches the HTTP URI" \
     'http://alice:Secret123xyz@198.100.20.30:23456' "$S5T_CARD_OUT"
 assert_not_contains "no placeholder survives a resolved address" \
     SERVER_IPV4 "$S5T_CARD_OUT"
-assert_eq "the resolved kind is recorded" external "$S5_CARD_KIND"
+assert_eq "the resolved kind is recorded" external "$S5_ADVERTISED_KIND"
 
 # The bug this file exists to prevent: behind NAT the lookup answers with the
 # address the request egressed from, which the host does not hold and no client
@@ -145,7 +145,7 @@ s5t_local '1: lo    inet 127.0.0.1/8 scope host lo
 s5t_card
 assert_eq "a card still renders behind NAT" 0 "$S5T_CARD_STATUS"
 assert_eq "an egress address the host does not hold is recorded as nat" \
-    nat "$S5_CARD_KIND"
+    nat "$S5_ADVERTISED_KIND"
 assert_contains "the advisory names the egress address" \
     '198.100.20.30 is the address this server egresses from' "$S5T_CARD_OUT"
 assert_contains "the advisory names an address the host does hold" \
@@ -183,7 +183,7 @@ s5t_card
 assert_eq "one card enumerates local addresses once" 1 \
     "$(cat "$S5_TEST_ROOT/local-call-count")"
 assert_eq "a changing interface set keeps the original nat classification" \
-    nat "$S5_CARD_KIND"
+    nat "$S5_ADVERTISED_KIND"
 assert_contains "the NAT advisory uses the classification snapshot's hint" \
     'local address: 10.66.147.248' "$S5T_CARD_OUT"
 assert_not_contains "the NAT advisory never contradicts its classification" \
@@ -196,7 +196,7 @@ s5_local_ipv4_command() { cat "$S5_TEST_ROOT/local-addrs" 2>/dev/null; }
 s5t_local '1: lo    inet 127.0.0.1/8 scope host lo
 '
 s5t_card
-assert_eq "a host with only loopback is still nat" nat "$S5_CARD_KIND"
+assert_eq "a host with only loopback is still nat" nat "$S5_ADVERTISED_KIND"
 assert_contains "the unnamed advisory still names the egress address" \
     '198.100.20.30 is the address this server egresses from' "$S5T_CARD_OUT"
 assert_not_contains "the unnamed advisory has no empty local-address clause" \
@@ -209,7 +209,7 @@ S5T_SAVED_ROOTDIR=$S5_ROOTDIR
 S5_ROOTDIR=$S5_TEST_ROOT/no-such-root
 s5t_card
 assert_eq "an unanswerable locality probe leaves the card external" \
-    external "$S5_CARD_KIND"
+    external "$S5_ADVERTISED_KIND"
 assert_not_contains "an unanswerable locality probe adds no advisory" \
     'egresses from' "$S5T_CARD_OUT"
 S5_ROOTDIR=$S5T_SAVED_ROOTDIR
@@ -267,7 +267,7 @@ assert_contains "a configured address is used as given" \
     'socks5://alice:Secret123xyz@192.168.5.9:23456' "$S5T_CARD_OUT"
 assert_not_contains "a configured address is not called a placeholder" \
     'replace SERVER_IPV4' "$S5T_CARD_OUT"
-assert_eq "the configured kind is recorded" configured "$S5_CARD_KIND"
+assert_eq "the configured kind is recorded" configured "$S5_ADVERTISED_KIND"
 # An explicit answer describes a topology the host cannot see, so it is never
 # locality-checked. 192.168.5.9 is on no interface here, and
 # tests/protocol/terminal_install.py installs with S5_SERVER_IPV4=192.0.2.1,
@@ -280,7 +280,7 @@ s5t_card
 assert_not_contains "a non-address override never reaches the card" \
     proxy.example.com "$S5T_CARD_OUT"
 assert_eq "a non-address override is not treated as configured" \
-    placeholder "$S5_CARD_KIND"
+    placeholder "$S5_ADVERTISED_KIND"
 S5_SERVER_IPV4=''
 
 # SPEC 2: redirected output never receives the credential card. t_run captures

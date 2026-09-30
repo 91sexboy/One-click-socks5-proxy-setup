@@ -75,7 +75,7 @@ test_cleanup_temps() {
     # An interrupted atomic write leaves private temporaries behind. This command
     # owns none of the published files from the previous installation process.
     : >"$S5_SYSCONFDIR/.s5tmp.abc123"
-    : >"$S5_STATEDIR/.s5state.xyz789"
+    : >"$S5_STATEDIR/.s5tmp.xyz789"
     # A binary candidate is removed only when this run registered it. Another
     # run's .xray.* in an existing prefix is kept and named: failure cleanup
     # does not sweep files it cannot prove it created.
@@ -84,7 +84,7 @@ test_cleanup_temps() {
     S5_BINARY_TEMP=$S5_PREFIX/.xray.own222
     s5_cleanup 2>"$S5_TEST_ROOT/cleanup-temps.err"
     assert_file_absent "cleanup removes its own config temporary" "$S5_SYSCONFDIR/.s5tmp.abc123"
-    assert_file_absent "cleanup removes its own state temporary" "$S5_STATEDIR/.s5state.xyz789"
+    assert_file_absent "cleanup removes its own state temporary" "$S5_STATEDIR/.s5tmp.xyz789"
     assert_file_absent "cleanup removes its registered binary temporary" "$S5_PREFIX/.xray.own222"
     assert_file_exists "cleanup keeps another run's binary temporary" "$S5_PREFIX/.xray.qqq111"
     assert_contains "cleanup names the binary temporary it kept" \
