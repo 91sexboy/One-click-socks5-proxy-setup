@@ -376,8 +376,8 @@ for _status_word in active:0:running inactive:3:stopped failed:3:failed \
             "$_status_exit" "$T_STATUS"
         if [ "$S5_LANG" = zh ]; then
             assert_contains "Chinese status names its service state" "服务：$_status_zh；" "$T_OUT"
-            for _status_en in running stopped failed unverified; do
-                assert_not_contains "Chinese status has no English state word" "$_status_en" "$T_OUT"
+            for _status_en in running stopped failed unverified password; do
+                assert_not_contains "Chinese status has no English value" "$_status_en" "$T_OUT"
             done
             assert_contains "Chinese status still reports the listener" '端口 23456' "$T_OUT"
         else

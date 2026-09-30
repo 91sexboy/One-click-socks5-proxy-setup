@@ -224,7 +224,9 @@ s5_msg() {
     cleanup.download) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法删除下载临时文件：%s。' "$1" ;; en) printf 'could not remove temporary download file: %s.' "$1" ;; esac ;;
     prefix.mode) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法将安装目录恢复为 0755：%s；在该权限恢复之前，服务账户无法使用本安装，后续命令也会拒绝执行。' "$1" ;; en) printf 'could not restore installation directory %s to 0755; until that mode is restored the service account cannot use this installation and later commands refuse to run.' "$1" ;; esac ;;
     config.invalid) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf 'Xray 配置测试失败；旧配置未改变。' ;; en) printf 'Xray configuration test failed; the old configuration was unchanged.' ;; esac ;;
-    transaction.pending) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '存在待处理的恢复目录，拒绝覆盖：%s。' "$1" ;; en) printf 'pending recovery directory must be resolved before updating: %s.' "$1" ;; esac ;;
+    config.invalid.fresh) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf 'Xray 配置测试失败；未安装任何配置。' ;; en) printf 'Xray configuration test failed; no configuration was installed.' ;; esac ;;
+    config.invalid.installed) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '已安装的 Xray 配置未通过配置测试；服务未重启。' ;; en) printf 'the installed Xray configuration failed the configuration test; the service was not restarted.' ;; esac ;;
+    transaction.pending) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '存在无法自动恢复的待处理恢复目录，已停止操作：%s。' "$1" ;; en) printf 'a pending recovery directory could not be resolved automatically; stopping: %s.' "$1" ;; esac ;;
     transaction.restore) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法恢复旧配置和状态；恢复备份保留在 %s。' "$1" ;; en) printf 'could not restore the previous config and state; recovery copies retained at %s.' "$1" ;; esac ;;
     transaction.prepare) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法在 %s 中准备更新的恢复副本；当前安装未被修改。' "$1" ;; en) printf 'could not prepare the update recovery copies in %s; the installation was not changed.' "$1" ;; esac ;;
     transaction.publish) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法发布新配置：%s。' "$1" ;; en) printf 'could not publish the new configuration: %s.' "$1" ;; esac ;;
@@ -243,6 +245,7 @@ s5_msg() {
     service.ready) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf 'Xray 正在端口 %s 上监听。' "$1" ;; en) printf 'Xray is listening on port %s.' "$1" ;; esac ;;
     service.unverified) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法验证端口 %s 的监听状态。' "$1" ;; en) printf 'the listen state of port %s could not be verified.' "$1" ;; esac ;;
     service.dataplane) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '端口 %s 上的认证代理流量验证失败。' "$1" ;; en) printf 'authenticated proxy traffic could not be verified on port %s.' "$1" ;; esac ;;
+    service.dataplane.reason) [ "$#" -eq 2 ] || return 1; case "$S5_LANG" in zh) printf '端口 %s 上的认证代理流量验证失败：%s。' "$1" "$2" ;; en) printf 'authenticated proxy traffic could not be verified on port %s: %s.' "$1" "$2" ;; esac ;;
     account.exists) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '账户或组 %s 已存在；拒绝采用外部身份。' "$1" ;; en) printf 'account or group %s already exists; refusing to adopt an external identity.' "$1" ;; esac ;;
     account.failed) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法创建服务账户：%s。' "$1" ;; en) printf 'could not create the service account: %s.' "$1" ;; esac ;;
     account.identity) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '服务账户身份已改变；拒绝删除。' ;; en) printf 'the service account identity changed; refusing to delete it.' ;; esac ;;
@@ -257,7 +260,7 @@ s5_msg() {
     status.state.failed) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '已失败' ;; en) printf 'failed' ;; esac ;;
     status.state.unverified) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '未验证' ;; en) printf 'unverified' ;; esac ;;
     status.heading) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf 'Xray mixed 代理状态：' ;; en) printf 'Xray mixed proxy status:' ;; esac ;;
-    status.line) [ "$#" -eq 3 ] || return 1; case "$S5_LANG" in zh) printf '服务：%s；端口：%s；账户：%s；协议：mixed（SOCKS5 + HTTP）；认证：password；UDP：关闭' "$1" "$2" "$3" ;; en) printf 'service: %s; port: %s; username: %s; protocol: mixed (SOCKS5 + HTTP); auth: password; UDP: disabled' "$1" "$2" "$3" ;; esac ;;
+    status.line) [ "$#" -eq 3 ] || return 1; case "$S5_LANG" in zh) printf '服务：%s；端口：%s；账户：%s；协议：mixed（SOCKS5 + HTTP）；认证：密码；UDP：关闭' "$1" "$2" "$3" ;; en) printf 'service: %s; port: %s; username: %s; protocol: mixed (SOCKS5 + HTTP); auth: password; UDP: disabled' "$1" "$2" "$3" ;; esac ;;
     status.version) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf 'Xray 版本：%s' "$1" ;; en) printf 'Xray version: %s' "$1" ;; esac ;;
     show.terminal) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf 'show 仅在真实 TTY 中显示凭据。' ;; en) printf 'show displays credentials only on a real TTY.' ;; esac ;;
     show.service) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '服务：%s' "$1" ;; en) printf 'service: %s' "$1" ;; esac ;;
@@ -275,21 +278,21 @@ s5_msg() {
     install.confirm) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '确认安装 Xray mixed 代理？[Y/n] ' ;; en) printf 'Install the Xray mixed proxy? [Y/n] ' ;; esac ;;
     update.confirm) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '更新现有 Xray 配置？[y/N] ' ;; en) printf 'Update the existing Xray configuration? [y/N] ' ;; esac ;;
     usage) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '用法：sh socks5.sh [install|status|show|restart|uninstall|language|help]' ;; en) printf 'Usage: sh socks5.sh [install|status|show|restart|uninstall|language|help]' ;; esac ;;
-    account.remove.identity) [ "$#" -eq 2 ] || return 1; case "$S5_LANG" in zh) printf '账户身份不匹配：记录值为 %s/%s。' "$1" "$2" ;; en) printf 'account identity mismatch: recorded %s/%s' "$1" "$2" ;; esac ;;
-    account.remove.user) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法删除服务账户：%s。' "$1" ;; en) printf 'could not remove service account: %s' "$1" ;; esac ;;
-    account.remove.user.exists) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '删除后服务账户仍然存在：%s。' "$1" ;; en) printf 'service account still exists after removal: %s' "$1" ;; esac ;;
-    account.remove.user.verify) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法验证服务账户已删除：%s。' "$1" ;; en) printf 'could not verify service account removal: %s' "$1" ;; esac ;;
-    account.remove.group) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法删除服务组：%s。' "$1" ;; en) printf 'could not remove service group: %s' "$1" ;; esac ;;
-    account.remove.group.before) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '删除前无法验证服务组：%s。' "$1" ;; en) printf 'could not verify service group before removal: %s' "$1" ;; esac ;;
-    account.remove.group.exists) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '删除后服务组仍然存在：%s。' "$1" ;; en) printf 'service group still exists after removal: %s' "$1" ;; esac ;;
-    account.remove.group.verify) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法验证服务组已删除：%s。' "$1" ;; en) printf 'could not verify service group removal: %s' "$1" ;; esac ;;
-    uninstall.symlink) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '卸载时拒绝符号链接：%s。' "$1" ;; en) printf 'refusing symlink during uninstall: %s' "$1" ;; esac ;;
-    uninstall.file) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法删除自有文件：%s。' "$1" ;; en) printf 'could not remove owned file: %s' "$1" ;; esac ;;
-    uninstall.notdir) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '自有路径不是目录：%s。' "$1" ;; en) printf 'owned path is not a directory: %s' "$1" ;; esac ;;
-    uninstall.nonempty) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '拒绝删除非空自有目录：%s。' "$1" ;; en) printf 'refusing non-empty owned directory: %s' "$1" ;; esac ;;
+    account.remove.identity) [ "$#" -eq 2 ] || return 1; case "$S5_LANG" in zh) printf '账户身份不匹配：记录值为 %s/%s。' "$1" "$2" ;; en) printf 'account identity mismatch: recorded %s/%s.' "$1" "$2" ;; esac ;;
+    account.remove.user) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法删除服务账户：%s。' "$1" ;; en) printf 'could not remove service account: %s.' "$1" ;; esac ;;
+    account.remove.user.exists) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '删除后服务账户仍然存在：%s。' "$1" ;; en) printf 'service account still exists after removal: %s.' "$1" ;; esac ;;
+    account.remove.user.verify) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法验证服务账户已删除：%s。' "$1" ;; en) printf 'could not verify service account removal: %s.' "$1" ;; esac ;;
+    account.remove.group) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法删除服务组：%s。' "$1" ;; en) printf 'could not remove service group: %s.' "$1" ;; esac ;;
+    account.remove.group.before) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '删除前无法验证服务组：%s。' "$1" ;; en) printf 'could not verify service group before removal: %s.' "$1" ;; esac ;;
+    account.remove.group.exists) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '删除后服务组仍然存在：%s。' "$1" ;; en) printf 'service group still exists after removal: %s.' "$1" ;; esac ;;
+    account.remove.group.verify) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法验证服务组已删除：%s。' "$1" ;; en) printf 'could not verify service group removal: %s.' "$1" ;; esac ;;
+    uninstall.symlink) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '卸载时拒绝符号链接：%s。' "$1" ;; en) printf 'refusing symlink during uninstall: %s.' "$1" ;; esac ;;
+    uninstall.file) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法删除自有文件：%s。' "$1" ;; en) printf 'could not remove owned file: %s.' "$1" ;; esac ;;
+    uninstall.notdir) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '自有路径不是目录：%s。' "$1" ;; en) printf 'owned path is not a directory: %s.' "$1" ;; esac ;;
+    uninstall.nonempty) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '拒绝删除非空自有目录：%s。' "$1" ;; en) printf 'refusing non-empty owned directory: %s.' "$1" ;; esac ;;
     uninstall.progress) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法记录卸载进度：%s。' "$1" ;; en) printf 'could not record uninstall progress: %s.' "$1" ;; esac ;;
     uninstall.identity) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '无法记录已安装路径的身份；未删除任何内容。' ;; en) printf 'could not record the identity of the installed paths; nothing was removed.' ;; esac ;;
-    uninstall.directory) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法删除自有目录：%s。' "$1" ;; en) printf 'could not remove owned directory: %s' "$1" ;; esac ;;
+    uninstall.directory) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法删除自有目录：%s。' "$1" ;; en) printf 'could not remove owned directory: %s.' "$1" ;; esac ;;
     usage.unknown) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '未知命令：%s。' "$1" ;; en) printf 'unknown command: %s.' "$1" ;; esac ;;
     extra) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '命令不接受额外参数：%s。' "$1" ;; en) printf 'the command does not accept extra arguments: %s.' "$1" ;; esac ;;
     *) return 1 ;;
@@ -1641,7 +1644,13 @@ s5_write_config_candidate() {
         return 1
     fi
     rm -f "$_swraw" || return 1
-    s5_config_test "$_swcc" || { rm -f "$_swcc"; s5_msg_err config.invalid; return 1; }
+    # An update has a published config the rejection leaves alone; a fresh
+    # install has none, and saying the old one was unchanged misled it.
+    if ! s5_config_test "$_swcc"; then
+        rm -f "$_swcc"
+        if [ -e "$S5_CFG" ] || [ -L "$S5_CFG" ]; then s5_msg_err config.invalid; else s5_msg_err config.invalid.fresh; fi
+        return 1
+    fi
     printf '%s' "$_swcc"
 }
 
@@ -2285,9 +2294,10 @@ except Exception as exc:
     # operator cannot tell an auth failure from a boundary bypass. Every raise site
     # uses a fixed literal that never carries the credential, so naming the reason
     # costs no secrecy.
+    # A machine-readable token, not an operator sentence: the shell renders it
+    # through the catalog in the chosen language.
     reason = str(exc) or type(exc).__name__
-    raise SystemExit("data-plane verification failed: %s: %s"
-                     % (type(exc).__name__, reason))
+    raise SystemExit("dataplane-reason=%s: %s" % (type(exc).__name__, reason))
 finally:
     stop.set()
 PY
@@ -2305,18 +2315,30 @@ s5_verify_dataplane() {
         _svpf=$(mktemp "${S5_ROOTDIR:-/var/tmp}/.s5pass.XXXXXX") || { s5_msg_err service.dataplane "$S5_PORT"; return 1; }
         # Restart has no workdir, so signal cleanup must track this credential file explicitly.
         S5_VERIFY_TEMP=$_svpf
+        _svdreason=''
         if chmod 0600 "$_svpf" && printf '%s\n%s\n' "$S5_USERNAME" "$S5_PASSWORD" >"$_svpf"; then
-            s5_verify_protocols "$S5_PORT" "$_svpf"
+            # The verifier's output goes to a private file released with the
+            # credential file. Only its own reason token is shown, as data in
+            # the catalog sentence of the chosen language.
+            s5_verify_protocols "$S5_PORT" "$_svpf" >"$_svpf.reason" 2>&1
             _svd=$?
+            _svdreason=$(sed -n 's/.*dataplane-reason=//p' "$_svpf.reason" 2>/dev/null | head -n 1 | tr -cd 'A-Za-z0-9 :._-')
         else
             _svd=1
         fi
-        rm -f "$_svpf"
+        rm -f "$_svpf" "$_svpf.reason"
         S5_VERIFY_TEMP=''
     fi
     # The listener was already proven; saying "could not be verified" here sent
     # the operator after the port instead of the traffic check that failed.
-    [ "$_svd" -eq 0 ] || { s5_msg_err service.dataplane "$S5_PORT"; return 1; }
+    if [ "$_svd" -ne 0 ]; then
+        if [ -n "${_svdreason:-}" ]; then
+            s5_msg_err service.dataplane.reason "$S5_PORT" "$_svdreason"
+        else
+            s5_msg_err service.dataplane "$S5_PORT"
+        fi
+        return 1
+    fi
     return 0
 }
 
@@ -2747,7 +2769,7 @@ s5_on_signal_lock() {
 
 s5_release_verify_temp() {
     if [ -n "$S5_VERIFY_TEMP" ]; then
-        rm -f "$S5_VERIFY_TEMP" 2>/dev/null || true
+        rm -f "$S5_VERIFY_TEMP" "$S5_VERIFY_TEMP.reason" 2>/dev/null || true
         S5_VERIFY_TEMP=''
     fi
 }
@@ -3502,7 +3524,7 @@ s5_cmd_show() {
 
 s5_cmd_restart() {
     s5_open_locked restart || return 1
-    s5_config_test "$S5_CFG" || { s5_fail_locked config.invalid; return 1; }
+    s5_config_test "$S5_CFG" || { s5_fail_locked config.invalid.installed; return 1; }
     s5_svc restart || { s5_fail_locked service.start; return 1; }
     s5_wait_listening "$S5_PORT"
     _srr=$?

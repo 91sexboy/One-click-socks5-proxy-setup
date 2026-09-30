@@ -661,19 +661,19 @@ status.state.failed||||failed|已失败
 status.state.unverified||||unverified|未验证
 show.service|running|||service: running|服务：running
 openrc.logging.unavailable||||Xray stdout and stderr logging may be unavailable because /dev/log was not found; on Alpine, run rc-service syslog start and rc-update add syslog default, then run sh socks5.sh restart.|未发现 /dev/log，Xray 的标准输出和错误日志可能不可用；请在 Alpine 上运行 rc-service syslog start 和 rc-update add syslog default，然后运行 sh socks5.sh restart。
-account.remove.identity|900|901||account identity mismatch: recorded 900/901|账户身份不匹配：记录值为 900/901。
-account.remove.user|xray-socks5|||could not remove service account: xray-socks5|无法删除服务账户：xray-socks5。
-account.remove.user.exists|xray-socks5|||service account still exists after removal: xray-socks5|删除后服务账户仍然存在：xray-socks5。
-account.remove.user.verify|xray-socks5|||could not verify service account removal: xray-socks5|无法验证服务账户已删除：xray-socks5。
-account.remove.group|xray-socks5|||could not remove service group: xray-socks5|无法删除服务组：xray-socks5。
-account.remove.group.before|xray-socks5|||could not verify service group before removal: xray-socks5|删除前无法验证服务组：xray-socks5。
-account.remove.group.exists|xray-socks5|||service group still exists after removal: xray-socks5|删除后服务组仍然存在：xray-socks5。
-account.remove.group.verify|xray-socks5|||could not verify service group removal: xray-socks5|无法验证服务组已删除：xray-socks5。
-uninstall.symlink|/owned|||refusing symlink during uninstall: /owned|卸载时拒绝符号链接：/owned。
-uninstall.file|/owned|||could not remove owned file: /owned|无法删除自有文件：/owned。
-uninstall.notdir|/owned|||owned path is not a directory: /owned|自有路径不是目录：/owned。
-uninstall.nonempty|/owned|||refusing non-empty owned directory: /owned|拒绝删除非空自有目录：/owned。
-uninstall.directory|/owned|||could not remove owned directory: /owned|无法删除自有目录：/owned。
+account.remove.identity|900|901||account identity mismatch: recorded 900/901.|账户身份不匹配：记录值为 900/901。
+account.remove.user|xray-socks5|||could not remove service account: xray-socks5.|无法删除服务账户：xray-socks5。
+account.remove.user.exists|xray-socks5|||service account still exists after removal: xray-socks5.|删除后服务账户仍然存在：xray-socks5。
+account.remove.user.verify|xray-socks5|||could not verify service account removal: xray-socks5.|无法验证服务账户已删除：xray-socks5。
+account.remove.group|xray-socks5|||could not remove service group: xray-socks5.|无法删除服务组：xray-socks5。
+account.remove.group.before|xray-socks5|||could not verify service group before removal: xray-socks5.|删除前无法验证服务组：xray-socks5。
+account.remove.group.exists|xray-socks5|||service group still exists after removal: xray-socks5.|删除后服务组仍然存在：xray-socks5。
+account.remove.group.verify|xray-socks5|||could not verify service group removal: xray-socks5.|无法验证服务组已删除：xray-socks5。
+uninstall.symlink|/owned|||refusing symlink during uninstall: /owned.|卸载时拒绝符号链接：/owned。
+uninstall.file|/owned|||could not remove owned file: /owned.|无法删除自有文件：/owned。
+uninstall.notdir|/owned|||owned path is not a directory: /owned.|自有路径不是目录：/owned。
+uninstall.nonempty|/owned|||refusing non-empty owned directory: /owned.|拒绝删除非空自有目录：/owned。
+uninstall.directory|/owned|||could not remove owned directory: /owned.|无法删除自有目录：/owned。
 usage.unknown|bogus|||unknown command: bogus.|未知命令：bogus。
 show.nat|212.189.21.55|10.66.147.248|59093|WARNING: 212.189.21.55 is the address this server egresses from, and this machine does not hold it (local address: 10.66.147.248). The proxy listens on port 59093. The links below work only if something upstream forwards inbound connections for that address to this machine; otherwise set S5_SERVER_IPV4 and S5_SERVER_PORT to the address and port your clients actually use.|警告：212.189.21.55 是本服务器出站流量的来源地址，本机并未持有它（本机地址：10.66.147.248）。代理监听在端口 59093。只有当上级把发往该地址的入站连接转发到本机时，下面的链接才可用；否则请用 S5_SERVER_IPV4 和 S5_SERVER_PORT 指定客户端真正使用的地址和端口。
 input.port.keep|25000|||Port [Enter = keep current 25000]: |端口 [回车 = 保留当前的 25000]：
@@ -685,6 +685,10 @@ input.password.keep||||Password (visible while typed) [Enter = keep current]: |�
 input.password.legacy||||the current password contains characters this version no longer writes and cannot be kept; enter a new password, or press Enter to generate one.|当前密码含有本版本不再写入的字符，无法保留；请输入新密码，或回车生成随机值。
 show.nat.unnamed|212.189.21.55|59093||WARNING: 212.189.21.55 is the address this server egresses from, and this machine does not hold it. The proxy listens on port 59093. The links below work only if something upstream forwards inbound connections for that address to this machine; otherwise set S5_SERVER_IPV4 and S5_SERVER_PORT to the address and port your clients actually use.|警告：212.189.21.55 是本服务器出站流量的来源地址，本机并未持有它。代理监听在端口 59093。只有当上级把发往该地址的入站连接转发到本机时，下面的链接才可用；否则请用 S5_SERVER_IPV4 和 S5_SERVER_PORT 指定客户端真正使用的地址和端口。
 show.port.mapped|56447|59093||the links below use port 56447 while the proxy listens on port 59093. That mapping comes from S5_SERVER_PORT; the script does not create it.|下面的链接使用端口 56447，而代理监听在端口 59093。该映射来自 S5_SERVER_PORT，脚本不会创建它。
+config.invalid.fresh||||Xray configuration test failed; no configuration was installed.|Xray 配置测试失败；未安装任何配置。
+config.invalid.installed||||the installed Xray configuration failed the configuration test; the service was not restarted.|已安装的 Xray 配置未通过配置测试；服务未重启。
+service.dataplane.reason|23456|RuntimeError: http auth||authenticated proxy traffic could not be verified on port 23456: RuntimeError: http auth.|端口 23456 上的认证代理流量验证失败：RuntimeError: http auth。
+transaction.pending|/txn|||a pending recovery directory could not be resolved automatically; stopping: /txn.|存在无法自动恢复的待处理恢复目录，已停止操作：/txn。
 digest.candidate|xray-v26.3.27-linux-amd64|||could not compute SHA-256 for downloaded asset: xray-v26.3.27-linux-amd64.|无法计算下载资产的 SHA-256：xray-v26.3.27-linux-amd64。
 transaction.prepare|/txn|||could not prepare the update recovery copies in /txn; the installation was not changed.|无法在 /txn 中准备更新的恢复副本；当前安装未被修改。
 transaction.publish|/cfg|||could not publish the new configuration: /cfg.|无法发布新配置：/cfg。
@@ -699,6 +703,40 @@ uninstall.progress|/uninstall|||could not record uninstall progress: /uninstall.
 uninstall.identity||||could not record the identity of the installed paths; nothing was removed.|无法记录已安装路径的身份；未删除任何内容。
 cleanup.residue|/prefix/.xray.old|||kept a temporary file this run did not create: /prefix/.xray.old; remove it manually once it is no longer needed.|保留了不属于本次运行的临时文件：/prefix/.xray.old；确认不再需要后可手动删除。
 CATALOG
+
+# Every key ends alike in both languages: a sentence with "." has "。", an
+# ellipsis "..." has "……", and a label or prompt has neither in both. The two
+# lang.* keys are bilingual by construction and exempt.
+s5t_ending() {
+    case "$1" in
+    *...|*……) printf ellipsis ;;
+    *.|*。) printf period ;;
+    *) printf none ;;
+    esac
+}
+_punct_bad=''
+_punct_keys=0
+while read -r _punct_key _punct_arity; do
+    case "$_punct_key" in lang.*) continue ;; esac
+    set --
+    _punct_i=0
+    while [ "$_punct_i" -lt "$_punct_arity" ]; do
+        _punct_i=$((_punct_i + 1))
+        set -- "$@" "a$_punct_i"
+    done
+    S5_LANG=en
+    _punct_en=$(s5_msg "$_punct_key" "$@") || _punct_bad="$_punct_bad $_punct_key(render)"
+    S5_LANG=zh
+    _punct_zh=$(s5_msg "$_punct_key" "$@") || _punct_bad="$_punct_bad $_punct_key(render)"
+    _punct_keys=$((_punct_keys + 1))
+    if [ "$(s5t_ending "$_punct_en")" != "$(s5t_ending "$_punct_zh")" ]; then
+        _punct_bad="$_punct_bad $_punct_key"
+    fi
+done <<EOF
+$(sed -n 's/^    \([a-z][a-z.]*\)) \[ "\$#" -eq \([0-9]\) \].*/\1 \2/p' "$ROOT/socks5.sh")
+EOF
+assert_ne "the punctuation check reads the whole catalog" 0 "$_punct_keys"
+assert_eq "every key ends alike in English and Chinese" '' "$_punct_bad"
 
 S5_LANG=en
 while IFS='|' read -r _confirm_mode _confirm_answer _confirm_status; do
