@@ -66,6 +66,18 @@ for _doc in README.md README.zh-CN.md; do
             '`status` reports the installed release' "$_doctext"
         assert_contains "English update docs name pinned artifact replacement" \
             "replaces it with this script's independently verified pinned Xray release" "$_doctext"
+        assert_not_contains "English update docs no longer rotate blank credentials" \
+            'username or password generates a new value' "$_doctext"
+        assert_contains "English update docs replace on any pin difference" \
+            "differs from this script's pin" "$_doctext"
+        assert_contains "English update docs name the downgrade" \
+            'downgrades it to that revision' "$_doctext"
+        assert_contains "English status docs cover show" \
+            '`status` and `show` both report the service state' "$_doctext"
+        assert_contains "English show docs name the nonzero crashed exit" \
+            'both name that state and return nonzero' "$_doctext"
+        assert_contains "English update docs let the listen override win over keep" \
+            'a blank port answer binds the override rather than the current port' "$_doctext"
         ;;
     README.zh-CN.md)
         assert_contains "Chinese storage docs call capacity preflight advisory" \
@@ -84,6 +96,18 @@ for _doc in README.md README.zh-CN.md; do
             '`status` 报告的是已安装版本' "$_doctext"
         assert_contains "Chinese update docs name pinned artifact replacement" \
             '替换为当前脚本独立校验并固定版本的 Xray' "$_doctext"
+        assert_not_contains "Chinese update docs no longer rotate blank credentials" \
+            '账户名或密码直接回车会生成新值' "$_doctext"
+        assert_contains "Chinese update docs replace on any pin difference" \
+            '与当前脚本的 pin 不同' "$_doctext"
+        assert_contains "Chinese update docs name the downgrade" \
+            '会降级到该版本的 pin' "$_doctext"
+        assert_contains "Chinese status docs cover show" \
+            '`status` 和 `show` 都会报告服务状态' "$_doctext"
+        assert_contains "Chinese show docs name the nonzero crashed exit" \
+            '两者都会标明该状态并返回非零' "$_doctext"
+        assert_contains "Chinese update docs let the listen override win over keep" \
+            '端口留空会绑定覆盖值，而不是当前端口' "$_doctext"
         ;;
     esac
 done
@@ -192,6 +216,12 @@ print(f'memory evidence: two translations, eight rows, {mutations + 1} rejected 
 PY
 assert_eq "historical memory evidence and its rejection controls agree" 0 "$T_STATUS"
 if [ "$T_STATUS" -ne 0 ]; then printf '%s\n' "$T_OUT" >&2; fi
+
+# Every command that takes the operation lock, independent of the script's own
+# list, so an ADR that forgets one fails here.
+_adrlock=$(tr '\n' ' ' <"$ROOT/docs/adr/0004-native-init-managers-and-config-test.md")
+assert_contains "ADR-0004 names every command that takes the operation lock" \
+    'Serialize install/update/status/show/restart/uninstall with an operation lock' "$_adrlock"
 
 t_run python3 "$ROOT/tests/lib/doc_links.py" "$ROOT"
 assert_eq "all public README and ADR local links resolve" 0 "$T_STATUS"

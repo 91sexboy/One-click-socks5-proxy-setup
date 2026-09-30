@@ -18,8 +18,8 @@ restricted capabilities, read-only system paths, `RestartPreventExitStatus=23`),
 or OpenRC `supervise-daemon` with `command_user`. Validate every candidate with
 `xray run -test -c` **before** stopping a healthy service or publishing, and
 require that a configuration error (exit 23) does not enter an automatic restart
-loop on either backend. Serialize install/update/restart/uninstall with an
-operation lock, and report ready only once the configured port is observed
+loop on either backend. Serialize install/update/status/show/restart/uninstall
+with an operation lock, and report ready only once the configured port is observed
 listening. See the [systemd](../../.github/scripts/systemd-lifecycle.sh) and
 [OpenRC](../../.github/scripts/alpine-lifecycle.sh) lifecycle gates.
 

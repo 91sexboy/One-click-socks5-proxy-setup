@@ -69,7 +69,7 @@ If your host forwards one fixed external TCP port to this machine — a common L
 S5_LISTEN_PORT=56447 sh socks5.sh
 ```
 
-The override supplies only the blank answer; a typed port still wins. It passes the same `1024–65535` validation and the same in-use checks as a typed port, and an invalid or occupied value is reported and re-asked rather than silently replaced. It sets the port Xray binds, not what the card advertises. When a provider maps a different external port to it, use `S5_SERVER_PORT` separately for the card.
+The override supplies only the blank answer; a typed port still wins. It passes the same `1024–65535` validation and the same in-use checks as a typed port, and an invalid or occupied value is reported and re-asked rather than silently replaced. It sets the port Xray binds, not what the card advertises. When a provider maps a different external port to it, use `S5_SERVER_PORT` separately for the card. During an update the override also takes precedence over keeping the current port: with `S5_LISTEN_PORT` set, a blank port answer binds the override rather than the current port.
 
 After successful installation and verification, a real terminal displays both connection links automatically. Redirected output hides credentials; use `show` later from a terminal.
 
@@ -103,11 +103,11 @@ Run these from the directory containing the downloaded script. Installation and 
 
 An installation made by an older supported script release remains available to `status`, `show`, `restart`, update, and uninstall after this script's release pins change. `status` reports the installed release, not the current download candidate. Recorded metadata verifies the installed binary; an update independently verifies the current pinned download.
 
-Re-running `install` updates the managed configuration and, when the installed artifact is older, replaces it with this script's independently verified pinned Xray release. It never follows an unpinned “latest” channel. On Alpine, update also migrates the managed OpenRC service policy: two rapid ordinary crashes may be restarted inside the 60-second budget, while repeated failures remain bounded and a bad configuration must settle stopped rather than loop. On update, pressing Enter for the port keeps the verified currently owned port; pressing Enter for the username or password generates a new value. New-install confirmation defaults to yes; update and uninstall default to no.
+Re-running `install` updates the managed configuration and, when the installed artifact's recorded release, commit, size, or SHA-256 differs from this script's pin, replaces it with this script's independently verified pinned Xray release. The comparison is equality, not age: running an older script revision over a newer installation downgrades it to that revision's pin. It never follows an unpinned “latest” channel. On Alpine, update also migrates the managed OpenRC service policy: two rapid ordinary crashes may be restarted inside the 60-second budget, while repeated failures remain bounded and a bad configuration must settle stopped rather than loop. On update, pressing Enter for the port keeps the verified currently owned port (or uses `S5_LISTEN_PORT` when set), and pressing Enter for the username or password keeps its current value. New-install confirmation defaults to yes; update and uninstall default to no.
 
 The language preference is saved in `/etc/xray-socks5.lang` and survives uninstall. If it cannot be saved, the script warns that the choice applies only to the current invocation. The `language` command reports failure if saving fails.
 
-`status` can report a stopped or unverified listener without failing as a command. If OpenRC explicitly reports a crashed child, `status` names that state and returns nonzero while still printing the independently observed listener state. Read the output; a zero exit status alone does not prove proxy availability.
+`status` and `show` both report the service state and the independently observed listener state; `show` prints them above the connection links. Either can report a stopped or unverified listener without failing as a command. If OpenRC explicitly reports a crashed child, both name that state and return nonzero while still printing the listener state, and `show` still prints the card. Read the output; a zero exit status alone does not prove proxy availability.
 
 ## What `mixed` means
 
