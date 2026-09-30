@@ -78,6 +78,8 @@ for _doc in README.md README.zh-CN.md; do
             'both name that state and return nonzero' "$_doctext"
         assert_contains "English status docs name the failed systemd unit" \
             'a systemd unit left `failed`' "$_doctext"
+        assert_contains "English status docs describe a spent OpenRC budget" \
+            'A spent OpenRC respawn budget is reported as stopped' "$_doctext"
         assert_contains "English update docs let the listen override win over keep" \
             'a blank port answer binds the override rather than the current port' "$_doctext"
         ;;
@@ -110,6 +112,8 @@ for _doc in README.md README.zh-CN.md; do
             '两者都会标明该状态并返回非零' "$_doctext"
         assert_contains "Chinese status docs name the failed systemd unit" \
             '把服务单元置为失败（`failed`）' "$_doctext"
+        assert_contains "Chinese status docs describe a spent OpenRC budget" \
+            'OpenRC 的重启次数用尽时会记为已停止' "$_doctext"
         assert_contains "Chinese update docs let the listen override win over keep" \
             '端口留空会绑定覆盖值，而不是当前端口' "$_doctext"
         ;;

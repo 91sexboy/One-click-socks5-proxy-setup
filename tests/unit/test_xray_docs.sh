@@ -81,8 +81,18 @@ assert_contains "Alpine gate installs only OpenRC up front" \
     'apk add --no-cache openrc >/dev/null' "$alpine_text"
 assert_not_contains "Alpine gate does not pre-install archive tools" \
     'apk add --no-cache openrc python3' "$alpine_text"
-assert_eq "Alpine gate exercises exactly two rapid recoverable deaths" 2 \
+# Two recoverable deaths, a third that spends the respawn budget (OpenRC then
+# records stopped), and a child killed with its supervisor (unsupervised).
+assert_eq "Alpine gate kills the child for two recoveries, a spent budget and a crash" 4 \
     "$(printf '%s\n' "$alpine_text" | grep -c 'kill -9 "$crash_pid"')"
+assert_contains "Alpine gate requires a spent budget to leave OpenRC stopped" \
+    'lifecycle_wait_until 20 1 openrc_state_is 3' "$alpine_text"
+assert_contains "Alpine gate produces crashed by killing the supervisor" \
+    'kill -9 "$supervisor_pid"' "$alpine_text"
+assert_contains "Alpine gate requires a killed supervisor to be OpenRC's unsupervised" \
+    'lifecycle_wait_until 20 1 openrc_state_is 64' "$alpine_text"
+assert_contains "Alpine gate requires status to fail and name the unsupervised service" \
+    'lifecycle_assert_exited_status "$crashed_status" "$work/crashed-status.log" unsupervised 23456' "$alpine_text"
 assert_contains "Alpine gate proves the listener returns after each crash" \
     'grep -q "pid=$new_pid,"' "$alpine_text"
 assert_contains "Alpine gate keeps both deaths inside the retry period" \

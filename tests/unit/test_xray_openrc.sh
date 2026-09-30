@@ -122,7 +122,7 @@ if [ "$2" = status ]; then exit "$(cat "$S5_TEST_ROOT/statuscode")"; fi
 exit "$(cat "$S5_TEST_ROOT/actioncode")"
 RC
 printf '0\n' >"$S5_TEST_ROOT/actioncode"
-for _sacase in 0:0 8:0 3:1 16:2 1:2 32:3 4:2; do
+for _sacase in 0:0 8:0 3:1 16:2 1:2 32:3 64:5 4:2; do
     printf '%s\n' "${_sacase%%:*}" >"$S5_TEST_ROOT/statuscode"
     s5_service_state
     assert_eq "rc-service status ${_sacase%%:*} means ${_sacase#*:}" \
@@ -201,6 +201,67 @@ assert_ne "uninstall refuses a crashed OpenRC service" 0 "$T_STATUS"
 assert_contains "the refusal says the service did not stop" 'could not verify that the Xray service stopped' "$T_OUT"
 assert_eq "a crashed service never reaches the stopped phase" '' "$(cat "$S5_TEST_ROOT/uninstall-phases")"
 
+# restart on a crashed OpenRC service: the supervisor is gone, so OpenRC's own
+# restart cannot stop it. With no live child the record is zapped and the
+# service started; a live child still holding the port stays fail closed.
+mkdir -p "$S5_TEST_ROOT/crashed-bin"
+cat >"$S5_TEST_ROOT/crashed-bin/rc-service" <<'RC'
+#!/bin/sh
+printf '%s\n' "$2" >>"$S5_TEST_ROOT/crashed-calls"
+if [ "$2" = status ]; then exit "$(cat "$S5_TEST_ROOT/statuscode")"; fi
+exit 0
+RC
+chmod 0755 "$S5_TEST_ROOT/crashed-bin/rc-service"
+s5t_crashed_restart() (
+    printf '%s\n' "$1" >"$S5_TEST_ROOT/statuscode"
+    : >"$S5_TEST_ROOT/crashed-calls"
+    # Scoped to this subshell on purpose: the stub must not outlive the case.
+    # shellcheck disable=SC2030
+    PATH="$S5_TEST_ROOT/crashed-bin:$PATH"
+    s5_restart_service
+)
+mkdir -p "$S5_OPENRC_OPTION_DIR"
+rm -f "$S5_OPENRC_OPTION_DIR/child_pid"
+t_run s5t_crashed_restart 32
+assert_eq "a crashed service without a child restarts" 0 "$T_STATUS"
+assert_eq "a crashed service is zapped, then started" 'status
+zap
+start' "$(cat "$S5_TEST_ROOT/crashed-calls")"
+sleep 30 &
+_crashed_child=$!
+printf '%s\n' "$_crashed_child" >"$S5_OPENRC_OPTION_DIR/child_pid"
+t_run s5t_crashed_restart 32
+assert_ne "a crashed service with a live child is not restarted" 0 "$T_STATUS"
+assert_not_contains "a live child is never zapped past" zap "$(cat "$S5_TEST_ROOT/crashed-calls")"
+kill "$_crashed_child" 2>/dev/null || true
+wait "$_crashed_child" 2>/dev/null || true
+t_run s5t_crashed_restart 64
+assert_eq "an unsupervised service without a child restarts" 0 "$T_STATUS"
+assert_eq "an unsupervised service is zapped, then started" 'status
+zap
+start' "$(cat "$S5_TEST_ROOT/crashed-calls")"
+t_run s5t_crashed_restart 0
+assert_eq "a running service restarts normally" 'status
+restart' "$(cat "$S5_TEST_ROOT/crashed-calls")"
+rm -f "$S5_OPENRC_OPTION_DIR/child_pid"
+
+# An unsupervised service (supervisor gone, child record kept) is named, fails
+# status, and is never accepted as stopped: its child may still run.
+s5t_openrc_unsupervised_status() (
+    S5_LANG=en
+    S5_PORT=23456
+    S5_USERNAME=alice
+    S5_INSTALLED_RELEASE=v26.3.27
+    printf '64\n' >"$S5_TEST_ROOT/statuscode"
+    s5_open_locked() { return 0; }
+    s5_listener_state() { return 1; }
+    s5_lock_release() { return 0; }
+    s5_cmd_status
+)
+t_run s5t_openrc_unsupervised_status
+assert_ne "status fails when OpenRC reports the service unsupervised" 0 "$T_STATUS"
+assert_contains "status names the unsupervised service" 'service: unsupervised;' "$T_OUT"
+
 # s5_wait_stopped may only report success on a state that proves the process is
 # gone. sleep is stubbed because the real wait is fifteen one-second polls.
 sleep() { :; }
@@ -213,6 +274,9 @@ assert_ne "an inactive service does not satisfy the stop wait" 0 "$T_STATUS"
 printf '32\n' >"$S5_TEST_ROOT/statuscode"
 t_run s5_wait_stopped
 assert_ne "a crashed child does not prove its supervisor stopped" 0 "$T_STATUS"
+printf '64\n' >"$S5_TEST_ROOT/statuscode"
+t_run s5_wait_stopped
+assert_ne "an unsupervised child does not satisfy the stop wait" 0 "$T_STATUS"
 unset -f sleep
 
 # The "nonzero but already active" fallback is sound for start and wrong for

@@ -654,6 +654,7 @@ status.state.running||||running|运行中
 status.state.stopped||||stopped|已停止
 status.state.crashed||||crashed|已崩溃
 status.state.failed||||failed|已失败
+status.state.unsupervised||||unsupervised|失去守护
 status.state.unverified||||unverified|未验证
 show.service|running|||service: running|服务：running
 openrc.logging.unavailable||||Xray stdout and stderr logging may be unavailable because /dev/log was not found; on Alpine, run rc-service syslog start and rc-update add syslog default, then run sh socks5.sh restart.|未发现 /dev/log，Xray 的标准输出和错误日志可能不可用；请在 Alpine 上运行 rc-service syslog start 和 rc-update add syslog default，然后运行 sh socks5.sh restart。
