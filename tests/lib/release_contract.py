@@ -227,40 +227,45 @@ def check_asset_expectations(text):
 
 def check_raw_publisher(root):
     workflow_path = root / '.github/workflows/publish-xray-raw.yml'
+    script_path = root / '.github/scripts/publish-release.sh'
     preparer_path = root / '.github/scripts/prepare-xray-raw.py'
     notes_path = root / '.github/releases/xray-v26.3.27-r1.md'
-    require(workflow_path.is_file() and preparer_path.is_file() and notes_path.is_file(),
-            'raw publisher: required tracked files are missing')
+    require(workflow_path.is_file() and script_path.is_file() and preparer_path.is_file() and
+            notes_path.is_file(), 'raw publisher: required tracked files are missing')
     workflow = workflow_path.read_text(encoding='utf-8')
+    script = script_path.read_text(encoding='utf-8')
     preparer = preparer_path.read_text(encoding='utf-8')
     notes = notes_path.read_text(encoding='utf-8')
+    # The release API calls live in publish-release.sh; the workflow invokes it.
+    publisher = workflow + '\n' + script
     require('workflow_dispatch:' in workflow and 'push:' not in workflow and 'pull_request:' not in workflow,
             'raw publisher: must be dispatch-only')
     require('contents: read' in workflow and 'contents: write' in workflow,
             'raw publisher: permission boundary is missing')
-    require('--clobber' not in workflow and '--force' not in workflow,
+    require('--clobber' not in publisher and '--force' not in publisher,
             'raw publisher: replacement path is forbidden')
-    require(workflow.count("2>/dev/null | \\\n            jq -r '.object.sha // empty' || true") == 1 and
-            'jq -r .object.sha || true' not in workflow and
-            '--jq .object.sha 2>/dev/null || true' not in workflow,
+    require(script.count("2>/dev/null |\n        jq -r '.object.sha // empty' || true") == 1 and
+            'jq -r .object.sha || true' not in publisher and
+            '--jq .object.sha 2>/dev/null || true' not in publisher,
             'raw publisher: missing-tag lookup must not capture the gh error body')
-    require('releases/tags/$DISTRIBUTION_TAG' not in workflow and
-            workflow.count('releases?per_page=100') == 1 and
-            workflow.count('select(.tag_name==$tag)') == 1,
-            'raw publisher: draft releases must be found through the release listing')
-    require(workflow.count("jq 'length')\" -le 1 ||") == 1 and
-            'if length == 1 then .[0] else empty end' in workflow,
+    require('releases/tags/$DISTRIBUTION_TAG' not in publisher and
+            script.count('gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100"') == 1 and
+            script.count('select(.tag_name==$tag)') == 1,
+            'raw publisher: draft releases must be found through the paginated release listing')
+    require(script.count("jq 'length')\" -le 1 ||") == 1 and
+            'if length == 1 then .[0] else empty end' in script,
             'raw publisher: a tag claimed by more than one release must be refused')
-    require(workflow.count('releases/$RELEASE_ID') >= 3 and
+    require(script.count('releases/$RELEASE_ID') >= 3 and
             "printf 'RELEASE_ID=%s" in workflow and
-            'gh release upload' not in workflow,
+            'gh release upload' not in publisher,
             'raw publisher: every step after the claim must address the draft by id')
-    require('compare/$claimed...$GITHUB_SHA' not in workflow and
-            'test "$claimed" = "$GITHUB_SHA" ||' in workflow and
-            'test "$actual" = "$CLAIMED_SHA" ||' in workflow and
-            'jq -r .target_commitish)" = "$GITHUB_SHA" ||' in workflow,
+    require('compare/$claimed...$GITHUB_SHA' not in publisher and
+            'test "$claimed" = "$GITHUB_SHA" ||' in script and
+            'test "$actual" = "$GITHUB_SHA" ||' in script and
+            'jq -r .target_commitish)" = "$GITHUB_SHA" ||' in script,
             'raw publisher: the tag and draft must belong to the exact dispatch commit and may not move')
-    require(workflow.count('test "$GITHUB_REF" = refs/heads/xray-only') == 2 and
+    require(workflow.count('test "$GITHUB_REF" = refs/heads/xray-only') == 1 and
+            script.count('test "$GITHUB_REF" = refs/heads/xray-only') == 1 and
             workflow.count('DISTRIBUTION_TAG: ' + DISTRIBUTION_TAG) == 1,
             'raw publisher: branch or tag pin differs')
     for action in ('actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09',
@@ -276,12 +281,12 @@ def check_raw_publisher(root):
         for value in (pins['asset'], pins['size'], pins['sha'], pins['binary_size'], pins['binary_sha']):
             require(value in preparer, 'raw publisher ' + arch + ': source/raw pin missing ' + value)
         raw_name, raw_size, raw_sha = RAW_ASSETS[arch]
-        require(raw_name in workflow and raw_name in preparer,
+        require(raw_name in publisher and raw_name.replace(VERSION, '{VERSION}') in preparer,
                 'raw publisher ' + arch + ': raw name differs')
         require(raw_size in preparer and raw_sha in preparer,
                 'raw publisher ' + arch + ': raw identity differs')
     for name in RAW_PAYLOAD:
-        require(name in workflow and (name in preparer or name in notes),
+        require(name in script and (name.replace(VERSION, '{VERSION}') in preparer or name in notes),
                 'raw publisher: payload member missing ' + name)
     for term in ('unchanged', 'not custom builds', 'SHA256SUMS', 'PROVENANCE.json', 'LICENSE.txt'):
         require(term in notes, 'raw release notes: missing ' + term)

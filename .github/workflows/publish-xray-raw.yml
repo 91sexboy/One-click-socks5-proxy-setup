@@ -27,6 +27,8 @@ jobs:
             arch: arm64
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
       - name: Refuse non-primary dispatches
         run: |
           set -eu
@@ -39,7 +41,7 @@ jobs:
           python3 .github/scripts/prepare-xray-raw.py prepare \
             --arch "$XRAY_ARCH" --output "dist-$XRAY_ARCH"
       - name: Upload prepared architecture
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: xray-raw-${{ matrix.arch }}
           path: dist-${{ matrix.arch }}/
@@ -47,17 +49,16 @@ jobs:
           compression-level: 0
           retention-days: 7
 
-  publish:
+  assemble:
+    # Read-only: assembling and checking the payload needs no write token.
     needs: prepare
     runs-on: ubuntu-24.04
     timeout-minutes: 20
-    permissions:
-      contents: write
-      id-token: write
-      attestations: write
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: xray-raw-*
           path: prepared
@@ -66,12 +67,35 @@ jobs:
         run: |
           set -eu
           python3 .github/scripts/prepare-xray-raw.py assemble \
-            --input prepared --output dist \
-            --repository-commit "$GITHUB_SHA" \
-            --workflow-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            --input prepared --output dist --repository-commit "$GITHUB_SHA"
           test "$(find dist -maxdepth 1 -type f | wc -l)" -eq 5
-          cd dist
-          sha256sum -c xray-v26.3.27-SHA256SUMS
+      - name: Upload assembled payload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: xray-raw-dist
+          path: dist/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  publish:
+    # The only job that can write: attest, then claim, fill and publish the
+    # draft through publish-release.sh, which addresses it by id throughout.
+    needs: assemble
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: xray-raw-dist
+          path: dist
       - name: Attest raw executables
         uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
         with:
@@ -83,118 +107,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
-          test "$GITHUB_REF" = refs/heads/xray-only
-          claimed=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$DISTRIBUTION_TAG" 2>/dev/null | \
-            jq -r '.object.sha // empty' || true)
-          if [ -n "$claimed" ]; then
-            test "$claimed" = "$GITHUB_SHA" || {
-              echo "refusing tag owned by another commit: $claimed" >&2; exit 1;
-            }
-            matches=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" | \
-              jq -c --arg tag "$DISTRIBUTION_TAG" '[.[] | select(.tag_name==$tag)]')
-            test "$(printf '%s' "$matches" | jq 'length')" -le 1 || {
-              echo "refusing: more than one release claims $DISTRIBUTION_TAG" >&2; exit 1;
-            }
-            release=$(printf '%s' "$matches" | jq -c 'if length == 1 then .[0] else empty end')
-          else
-            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
-              -f ref="refs/tags/$DISTRIBUTION_TAG" -f sha="$GITHUB_SHA" >/dev/null
-            release=''
-          fi
-          if [ -n "$release" ]; then
-            test "$(printf '%s' "$release" | jq -r .draft)" = true || {
-              echo "refusing to alter a published release" >&2; exit 1;
-            }
-            test "$(printf '%s' "$release" | jq -r .target_commitish)" = "$GITHUB_SHA" || {
-              echo "draft target differs from the dispatch commit" >&2; exit 1;
-            }
-          else
-            # Created through the API rather than gh release create because the
-            # response carries the new id: a just-created draft is not reliably in
-            # the release listing yet, which is what stopped run 36292020667.
-            release=$(jq -n --arg tag "$DISTRIBUTION_TAG" --arg target "$GITHUB_SHA" \
-              --arg name "Xray v26.3.27 raw executables r1" \
-              --rawfile body .github/releases/xray-v26.3.27-r1.md \
-              '{tag_name: $tag, target_commitish: $target, name: $name, body: $body,
-                draft: true, prerelease: false}' | \
-              gh api --method POST "repos/$GITHUB_REPOSITORY/releases" --input -)
-          fi
-          release_id=$(printf '%s' "$release" | jq -r '.id // empty')
-          case "$release_id" in
-          '' | *[!0-9]*) echo "cannot resolve the draft release id" >&2; exit 1 ;;
-          esac
-          printf 'RELEASE_ID=%s\n' "$release_id" >>"$GITHUB_ENV"
-          printf 'CLAIMED_SHA=%s\n' "$GITHUB_SHA" >>"$GITHUB_ENV"
+          sh .github/scripts/publish-release.sh claim >"$RUNNER_TEMP/release-id"
+          printf 'RELEASE_ID=%s\n' "$(cat "$RUNNER_TEMP/release-id")" >>"$GITHUB_ENV"
       - name: Upload only absent exact assets
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          set -eu
-          release=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID")
-          test "$(printf '%s' "$release" | jq -r .draft)" = true || {
-            echo "refusing to alter a published release" >&2; exit 1;
-          }
-          test "$(printf '%s' "$release" | jq -r .tag_name)" = "$DISTRIBUTION_TAG" || {
-            echo "the claimed draft carries another tag" >&2; exit 1;
-          }
-          expected_file=$(mktemp)
-          present_file=$(mktemp)
-          cat >"$expected_file" <<'EXPECTED'
-          xray-v26.3.27-LICENSE.txt
-          xray-v26.3.27-PROVENANCE.json
-          xray-v26.3.27-SHA256SUMS
-          xray-v26.3.27-linux-amd64
-          xray-v26.3.27-linux-arm64
-          EXPECTED
-          LC_ALL=C sort -o "$expected_file" "$expected_file"
-          printf '%s' "$release" | jq -r '.assets[].name' | LC_ALL=C sort >"$present_file"
-          unknown=$(comm -23 "$present_file" "$expected_file")
-          rm -f "$expected_file" "$present_file"
-          test -z "$unknown" || { echo "unexpected release assets: $unknown" >&2; exit 1; }
-          for path in dist/*; do
-            name=${path##*/}
-            asset=$(printf '%s' "$release" | jq -c --arg name "$name" '.assets[] | select(.name==$name)')
-            if [ -n "$asset" ]; then
-              id=$(printf '%s' "$asset" | jq -r .id)
-              tmp=$(mktemp)
-              gh api -H 'Accept: application/octet-stream' \
-                "repos/$GITHUB_REPOSITORY/releases/assets/$id" >"$tmp"
-              cmp -s "$path" "$tmp" || { echo "refusing mismatched existing asset: $name" >&2; exit 1; }
-              rm -f "$tmp"
-            else
-              gh api --method POST -H 'Content-Type: application/octet-stream' \
-                "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?name=$name" \
-                --input "$path" >/dev/null
-            fi
-          done
+        run: sh .github/scripts/publish-release.sh upload
       - name: Verify and publish exact release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          set -eu
-          # The tag must still stand where this run found it: publication may not
-          # ride on a tag that moved underneath it.
-          actual=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$DISTRIBUTION_TAG" --jq .object.sha)
-          test "$actual" = "$CLAIMED_SHA" || {
-            echo "refusing: the tag moved from $CLAIMED_SHA to $actual" >&2; exit 1;
-          }
-          release=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID")
-          test "$(printf '%s' "$release" | jq -r .draft)" = true || {
-            echo "refusing to alter a published release" >&2; exit 1;
-          }
-          test "$(printf '%s' "$release" | jq -r .tag_name)" = "$DISTRIBUTION_TAG" || {
-            echo "the claimed draft carries another tag" >&2; exit 1;
-          }
-          test "$(printf '%s' "$release" | jq '.assets | length')" -eq 5
-          for path in dist/*; do
-            name=${path##*/}
-            id=$(printf '%s' "$release" | jq -r --arg name "$name" '.assets[] | select(.name==$name) | .id')
-            test -n "$id"
-            tmp=$(mktemp)
-            gh api -H 'Accept: application/octet-stream' \
-              "repos/$GITHUB_REPOSITORY/releases/assets/$id" >"$tmp"
-            cmp -s "$path" "$tmp"
-            rm -f "$tmp"
-          done
-          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
-            -F draft=false -F prerelease=false >/dev/null
+        run: sh .github/scripts/publish-release.sh publish

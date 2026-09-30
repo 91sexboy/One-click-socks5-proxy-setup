@@ -54,3 +54,12 @@ rollback restores the exact previous state.
   and signals remove invocation-owned candidates.
 - The Release publisher and CI must preserve raw/source pins and prove the raw
   asset equals the verified official ZIP member byte for byte.
+- Publication is resumable. The assembled payload is fixed by the commit (the
+  workflow run is named in the release notes, not the provenance record), and
+  assets upload executables first and the checksum and provenance records last.
+  If a dispatch stops part way, dispatch the workflow again from the same
+  `xray-only` commit: it finds the same draft, keeps every byte-identical
+  uploaded asset, replaces an asset whose upload never completed, refuses any
+  uploaded asset whose bytes differ, and publishes only after the downloaded
+  assets match the assembled payload and their checksum file. A published
+  release, or a tag on another commit, is never altered.
