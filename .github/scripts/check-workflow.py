@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Validate the release workflow's parsed structure and required entrypoints."""
+"""Validate the parsed structure of the CI and publish workflows.
+
+Rules that hold for any workflow here (pinned actions, job timeouts, blocking
+steps, least privilege) apply to both files; each file then has its own job set
+and entrypoint contract.
+"""
 
 from pathlib import Path
 import re
@@ -10,6 +15,12 @@ import yaml
 
 CHECKOUT = 'actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09'
 UPLOADER = 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02'
+DOWNLOADER = 'actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093'
+ATTESTER = 'actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661'
+PINNED = re.compile(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+@[0-9a-f]{40}')
+PUBLISH_JOBS = {'prepare', 'publish'}
+# Only the publishing job may write, and only what releasing and attesting need.
+PUBLISH_WRITES = {'contents': 'write', 'id-token': 'write', 'attestations': 'write'}
 JOBS = {'lint', 'unit', 'xray-assets', 'xray-mixed', 'xray-systemd', 'openrc-integration',
         'systemd-assertion-controls', 'openrc-assertion-controls', 'memory-report'}
 LIFECYCLE_ROWS = {('alpine:3.20', '0', '0'), ('alpine:3.22', '1', '1'),
@@ -53,7 +64,19 @@ def executable_lines(step):
     return result
 
 
+# A lone & backgrounds the command, so the step ends before it reports and its
+# status is never seen. && is a control operator handled separately, and an &
+# beside < or > is a redirection such as 2>&1.
+BACKGROUND = re.compile(r'(?<![&<>])&(?![&>])')
+# An unconditional exit or return before the required line ends the step first.
+TERMINATOR = re.compile(r'(exit|return)(\s|;|$)')
+OPENERS = ('if ', 'case ', 'while ', 'until ', 'for ')
+CLOSERS = ('fi', 'esac', 'done')
+
+
 def line_executes(line, command):
+    if BACKGROUND.search(line):
+        return False
     if line == command:
         return True
     # A required command may take a fixed environment-sourced argument. It must
@@ -67,12 +90,29 @@ def line_executes(line, command):
             for token in (' || ', ';', '|', 'if ', 'echo '))
 
 
+def live_lines(lines):
+    """Drop every line after an unconditional exit or return.
+
+    Only a terminator outside any compound command is unconditional; one inside
+    an if, case or loop body leaves the lines after the construct reachable.
+    """
+    depth = 0
+    for line in lines:
+        if depth == 0 and TERMINATOR.match(line):
+            return
+        yield line
+        if line.startswith(OPENERS):
+            depth += 1
+        elif line in CLOSERS or line.startswith(tuple(closer + ' ' for closer in CLOSERS)):
+            depth = max(depth - 1, 0)
+
+
 def entry(job, command, step_name=None):
     matches = []
     occurrences = 0
     for step in job['steps']:
         text = body(step)
-        lines = executable_lines(step)
+        lines = list(live_lines(executable_lines(step)))
         dangerous = any(pattern in text for pattern in (
             'echo ' + command, 'if false; then\n' + command,
             'if false; then ' + command, 'false && ' + command,
@@ -100,9 +140,17 @@ def matrix(job, key):
     return job.get('strategy', {}).get('matrix', {}).get(key, [])
 
 
-def check(workflow):
+def triggers(workflow):
+    # YAML 1.1 reads a bare `on` key as the boolean true.
+    return workflow.get('on', workflow.get(True))
+
+
+def common(workflow, job_set, actions):
+    """The rules every workflow here keeps, whatever its jobs do."""
     jobs = workflow.get('jobs', {})
-    require(set(jobs) == JOBS, 'the complete release job set must remain present')
+    require(set(jobs) == job_set, 'the complete job set must remain present')
+    require(workflow.get('permissions') == {'contents': 'read'},
+            'workflow permissions must default to read-only contents')
     for name, job in jobs.items():
         require(type(job.get('timeout-minutes')) is int and job['timeout-minutes'] > 0,
                 name + ': positive job-level timeout required')
@@ -113,12 +161,39 @@ def check(workflow):
         for step in job['steps']:
             require('continue-on-error' not in step, name + ': step cannot be non-blocking')
             if 'uses' in step:
-                require(step['uses'] in (CHECKOUT, UPLOADER), name + ': action pin changed')
+                require(isinstance(step['uses'], str) and PINNED.fullmatch(step['uses']),
+                        name + ': action must be pinned to a commit')
+                require(step['uses'] in actions, name + ': action pin changed')
             if 'run' in step:
                 require(isinstance(step['run'], str) and body(step) not in ('', 'true', ':'),
                         name + ': executable step required')
                 require(not re.search(r'\$\{\{\s*matrix\.', step['run']),
                         name + ': matrix values must enter through env')
+    return jobs
+
+
+def check_publish(workflow):
+    jobs = common(workflow, PUBLISH_JOBS, (CHECKOUT, UPLOADER, DOWNLOADER, ATTESTER))
+    require(triggers(workflow) == {'workflow_dispatch': None},
+            'publish: only a manual dispatch may publish')
+    require(workflow.get('concurrency', {}).get('cancel-in-progress') is False,
+            'publish: a running publication must never be cancelled')
+    require('permissions' not in jobs['prepare'], 'prepare: build job must stay read-only')
+    require(jobs['publish'].get('permissions') == PUBLISH_WRITES,
+            'publish: write permissions changed')
+    return len(jobs)
+
+
+def check(workflow):
+    jobs = common(workflow, JOBS, (CHECKOUT, UPLOADER))
+    on = triggers(workflow)
+    require(isinstance(on, dict) and set(on) == {'push', 'pull_request', 'workflow_dispatch'} and
+            on['push'] == {'branches': ['xray-only']},
+            'ci: push must cover only the primary branch, beside pull_request')
+    require(workflow.get('concurrency') == {
+        'group': 'ci-${{ github.ref }}',
+        'cancel-in-progress': "${{ github.event_name == 'pull_request' }}"},
+        'ci: superseded PR runs must be cancelled, primary-branch runs kept')
     for name in ('xray-assets', 'memory-report'):
         pairs = [(row.get('runner'), row.get('arch')) for row in matrix(jobs[name], 'include')]
         require(len(pairs) == 2 and set(pairs) == RUNNERS, name + ': native architecture matrix changed')
@@ -188,6 +263,7 @@ def check(workflow):
     require(uploads[0]['with'].get('if-no-files-found') == 'error', 'memory: missing artifact must fail')
     lint = jobs['lint']
     entry(lint, 'python3 .github/scripts/check-workflow.py .github/workflows/ci.yml')
+    entry(lint, 'python3 .github/scripts/check-workflow.py .github/workflows/publish-xray-raw.yml')
     entry(lint, 'python3 tests/lib/workflow_contract_regression.py')
     entry(lint, 'sh .github/scripts/lint-workflow-shell.sh')
     entry(lint, 'python3 tests/protocol/arity_audit.py')
@@ -198,7 +274,11 @@ def check(workflow):
 def main():
     try:
         path = Path(sys.argv[1]) if len(sys.argv) > 1 else Path('.github/workflows/ci.yml')
-        count = check(yaml.safe_load(path.read_text(encoding='utf-8')))
+        workflow = yaml.safe_load(path.read_text(encoding='utf-8'))
+        profiles = {'xray-only-ci': check, 'publish-xray-raw': check_publish}
+        require(isinstance(workflow, dict) and workflow.get('name') in profiles,
+                'unknown workflow name')
+        count = profiles[workflow['name']](workflow)
     except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError) as error:
         print('workflow contract: ' + str(error), file=sys.stderr)
         return 1

@@ -3,14 +3,13 @@
 #
 # The two lifecycle gates were moved into this directory so that the repo's
 # `sh -n` and shellcheck steps could read them, but every remaining inline
-# `run:` block stayed invisible to both -- around 140 lines that no guard here
-# checked. Moving the next three into files would shrink the hole rather than
+# `run:` block stayed invisible to both, unchecked by any guard here. Moving the next three into files would shrink the hole rather than
 # close it: the hole is that inline blocks are unreachable, so a block added
 # later would be unchecked again. This extracts all of them instead.
 set -eu
 
 # The same exemptions the tracked scripts in this directory already carry.
-# SC2034 is the `for n in $(seq 1 60)` bounded-retry idiom, whose counter is
+# SC2034 is the `for n in $(seq 1 N)` bounded-retry idiom, whose counter is
 # deliberately unused. Anything narrower stays an inline disable at its site so
 # it remains visible, which is how the rest of the repo is linted.
 SC_EXCLUDE=SC2317,SC2034,SC2016
