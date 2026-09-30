@@ -25,21 +25,85 @@ UNFORWARDED_QUOTA_RUN = ('docker run --rm --privileged -v "$PWD:/src" -w /src \\
                          '  sh /src/.github/scripts/alpine-lifecycle.sh\n')
 
 
+def on(workflow):
+    # YAML 1.1 loads a bare `on` key as True.
+    return workflow[True]
+
+
 class WorkflowContractTests(unittest.TestCase):
     def setUp(self):
         self.workflow = yaml.safe_load((ROOT / '.github/workflows/ci.yml').read_text())
+        self.publish = yaml.safe_load((ROOT / '.github/workflows/publish-xray-raw.yml').read_text())
 
     def run_oracle(self, workflow):
         with tempfile.TemporaryDirectory(prefix='s5-workflow-') as directory:
-            path = Path(directory) / 'ci.yml'
+            path = Path(directory) / 'workflow.yml'
             path.write_text(yaml.safe_dump(workflow, sort_keys=False))
             command = [sys.executable] + ([] if __debug__ else ['-O'])
             return subprocess.run(command + [str(ROOT / '.github/scripts/check-workflow.py'), str(path)],
                                   capture_output=True, text=True, timeout=10)
 
+    def assert_rejected(self, workflow, label, message):
+        result = self.run_oracle(workflow)
+        self.assertNotEqual(result.returncode, 0, label)
+        # The exact reason: a mutation rejected for an unrelated clause proves
+        # nothing about the clause it was written to falsify.
+        self.assertIn('workflow contract: ' + message + '\n', result.stderr, label)
+
     def test_equivalent_yaml_formatting_is_accepted(self):
-        result = self.run_oracle(self.workflow)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for workflow in (self.workflow, self.publish):
+            result = self.run_oracle(workflow)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_ci_triggers_and_concurrency(self):
+        mutations = {
+            'push-every-branch': (lambda w: on(w).update({'push': {'branches': ['**']}}),
+                                  'ci: push must cover only the primary branch, beside pull_request'),
+            'no-pull-request': (lambda w: on(w).pop('pull_request'),
+                                'ci: push must cover only the primary branch, beside pull_request'),
+            'no-concurrency': (lambda w: w.pop('concurrency'),
+                               'ci: superseded PR runs must be cancelled, primary-branch runs kept'),
+            'cancel-primary': (lambda w: w['concurrency'].update({'cancel-in-progress': True}),
+                               'ci: superseded PR runs must be cancelled, primary-branch runs kept'),
+            'write-default': (lambda w: w.update({'permissions': {'contents': 'write'}}),
+                              'workflow permissions must default to read-only contents'),
+        }
+        for label, (mutate, message) in mutations.items():
+            with self.subTest(mutation=label):
+                changed = copy.deepcopy(self.workflow)
+                mutate(changed)
+                self.assert_rejected(changed, label, message)
+
+    def test_publish_workflow_shares_the_generic_rules(self):
+        def step(workflow, job, uses):
+            return next(item for item in workflow['jobs'][job]['steps']
+                        if item.get('uses', '').startswith(uses))
+        mutations = {
+            'unpinned-action': (lambda w: step(w, 'publish', 'actions/download-artifact').update(
+                {'uses': 'actions/download-artifact@v4'}), 'publish: action must be pinned to a commit'),
+            'foreign-action': (lambda w: step(w, 'publish', 'actions/download-artifact').update(
+                {'uses': 'someone/else@' + '1' * 40}), 'publish: action pin changed'),
+            'no-timeout': (lambda w: w['jobs']['prepare'].pop('timeout-minutes'),
+                           'prepare: positive job-level timeout required'),
+            'job-escape': (lambda w: w['jobs']['publish'].update({'continue-on-error': True}),
+                           'publish: job cannot be non-blocking'),
+            'step-escape': (lambda w: w['jobs']['prepare']['steps'][-1].update({'continue-on-error': True}),
+                            'prepare: step cannot be non-blocking'),
+            'build-writes': (lambda w: w['jobs']['prepare'].update({'permissions': {'contents': 'write'}}),
+                             'prepare: build job must stay read-only'),
+            'extra-write': (lambda w: w['jobs']['publish']['permissions'].update({'packages': 'write'}),
+                            'publish: write permissions changed'),
+            'push-trigger': (lambda w: on(w).update({'push': None}),
+                             'publish: only a manual dispatch may publish'),
+            'cancellable': (lambda w: w['concurrency'].update({'cancel-in-progress': True}),
+                            'publish: a running publication must never be cancelled'),
+            'missing-job': (lambda w: w['jobs'].pop('prepare'), 'the complete job set must remain present'),
+        }
+        for label, (mutate, message) in mutations.items():
+            with self.subTest(mutation=label):
+                changed = copy.deepcopy(self.publish)
+                mutate(changed)
+                self.assert_rejected(changed, label, message)
 
     def test_missing_or_weakened_contract_is_rejected(self):
         mutations = {
@@ -72,6 +136,24 @@ class WorkflowContractTests(unittest.TestCase):
         # clause it targets, which is how a collapsed container command passed
         # here while never reaching the forwarding it was written to falsify.
         messages = {
+            'timeout': 'unit: positive job-level timeout required',
+            'boolean-timeout': 'unit: positive job-level timeout required',
+            'action-sha': 'unit: exact pinned checkout required',
+            'memory-runner': 'memory-report: native architecture matrix changed',
+            'runner-binding': 'memory-report: runner binding changed',
+            'missing-job': 'the complete job set must remain present',
+            'job-escape': 'unit: job cannot be non-blocking',
+            'step-escape': 'unit: step cannot be non-blocking',
+            'disabled-entrypoint': 'unit: executable step required',
+            'shell-binding': 'unit: shell binding changed',
+            'control-mutation': 'openrc-assertion-controls: assertion controls changed',
+            'control-image': 'openrc-assertion-controls: required Alpine versions changed',
+            'lifecycle-image': 'openrc-integration: required Alpine lifecycle rows changed',
+            'control-needs': 'systemd-assertion-controls: healthy gate dependency changed',
+            'upload-path': 'memory: only the architecture-specific comparison JSON may be uploaded',
+            'upload-missing': 'memory: missing artifact must fail',
+            'memory-env': 'memory: architecture binding changed',
+            'container-env': 'openrc-integration: matrix bindings changed',
             'lifecycle-hostile-flag': 'openrc-integration: required Alpine lifecycle rows changed',
             'lifecycle-quota-flag': 'openrc-integration: required Alpine lifecycle rows changed',
             'hostile-container-env': 'openrc-integration: matrix bindings changed',
@@ -81,13 +163,12 @@ class WorkflowContractTests(unittest.TestCase):
             'quota-container-forward':
                 'openrc-integration: quota-blind flag not forwarded to the container',
         }
+        self.assertEqual(set(messages), set(mutations))
         for label, mutate in mutations.items():
             with self.subTest(mutation=label):
                 changed = copy.deepcopy(self.workflow)
                 mutate(changed['jobs'])
-                result = self.run_oracle(changed)
-                self.assertNotEqual(result.returncode, 0, label)
-                self.assertIn('workflow contract: ' + messages.get(label, ''), result.stderr)
+                self.assert_rejected(changed, label, messages[label])
 
     def test_textual_noop_entrypoints_are_rejected(self):
         mutations = {
@@ -97,6 +178,10 @@ class WorkflowContractTests(unittest.TestCase):
             'and-dead': 'false && sh tests/run.sh',
             'swallowed': 'sh tests/run.sh || true',
             'duplicate': 'sh tests/run.sh\nsh tests/run.sh',
+            'background': 'sh tests/run.sh &',
+            'background-env': 'sh tests/run.sh >log 2>&1 &',
+            'exit-before': 'exit 0\nsh tests/run.sh',
+            'return-before': 'return\nsh tests/run.sh',
             'wrong-step': 'sh tests/run.sh',
         }
         for label, replacement in mutations.items():
@@ -111,9 +196,19 @@ class WorkflowContractTests(unittest.TestCase):
                     step['run'] = 'printf "unit suite displaced\n"'
                 else:
                     step['run'] = replacement
-                result = self.run_oracle(changed)
-                self.assertNotEqual(result.returncode, 0, label)
-                self.assertIn('workflow contract:', result.stderr)
+                message = {'wrong-step': 'entrypoint is in the wrong step: sh tests/run.sh',
+                           'comment': 'unit: executable step required'}.get(
+                               label, 'expected one executable entrypoint: sh tests/run.sh')
+                self.assert_rejected(changed, label, message)
+
+    def test_conditional_exit_does_not_hide_live_entrypoint(self):
+        # Only an unconditional terminator makes the lines after it dead.
+        changed = copy.deepcopy(self.workflow)
+        step = next(step for step in changed['jobs']['unit']['steps']
+                    if 'sh tests/run.sh' in step.get('run', ''))
+        step['run'] = 'if ! command -v sh; then\n  exit 1\nfi\nsh tests/run.sh 2>&1'
+        result = self.run_oracle(changed)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_unrelated_dead_branch_does_not_hide_live_entrypoint(self):
         changed = copy.deepcopy(self.workflow)

@@ -4,8 +4,9 @@
 # It lived inline as one single-quoted docker run argument, where a single
 # apostrophe in a comment closed the argument and handed the rest to the host
 # shell. That broke the gate twice and needed an oracle counting apostrophes to
-# hold it. As a file it is ordinary shell, read by sh -n, dash -n, busybox sh -n
-# and the linter like any other script in this directory.
+# hold it. As a file it is ordinary shell, read by the lint job's sh -n (dash
+# on the runner) and shellcheck like any other script in this directory, and
+# executed by BusyBox ash inside the container.
 set -eu
 # shellcheck source=.github/scripts/lifecycle-common.sh
 . "$(dirname "$0")/lifecycle-common.sh"

@@ -2,7 +2,7 @@
 # The systemd lifecycle gate, run on the runner by ci.yml.
 #
 # Extracted from an inline `run:` block for the same reason as its OpenRC
-# sibling: 129 lines of shell in YAML are read by nothing. As a file it goes
+# sibling: shell in YAML is read by nothing. As a file it goes
 # through sh -n and shellcheck with every other script in this directory, which
 # is how the Alpine extraction surfaced an early-expanding trap and two
 # credential checks that could not fail.

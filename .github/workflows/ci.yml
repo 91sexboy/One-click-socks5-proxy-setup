@@ -1,13 +1,21 @@
 name: xray-only-ci
 
 on:
+  # A PR commit runs once, through pull_request; push covers only the primary
+  # branch, where a merge lands. Pushing every branch doubled each PR's runs.
   push:
-    branches: ["**"]
+    branches: [xray-only]
   pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
+
+# A newer commit on the same PR supersedes the older run. Runs on the primary
+# branch are never cancelled: each merge keeps its own complete result.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   lint:
@@ -79,6 +87,7 @@ jobs:
       - name: Workflow structure has an independent oracle
         run: |
           python3 .github/scripts/check-workflow.py .github/workflows/ci.yml
+          python3 .github/scripts/check-workflow.py .github/workflows/publish-xray-raw.yml
           python3 tests/lib/workflow_contract_regression.py
           python3 -O tests/lib/workflow_contract_regression.py
 
@@ -236,9 +245,9 @@ jobs:
       - name: Add the test target addresses
         run: sudo sh .github/scripts/add-test-target-addresses.sh
       - name: Run real systemd lifecycle
-        # The lifecycle body is a file rather than an inline block: 129 lines of
-        # shell in YAML are read by no linter, and extracting its OpenRC sibling
-        # exposed two checks that could not fail.
+        # The lifecycle body is a file rather than an inline block: shell in YAML
+        # is read by no linter, and extracting its OpenRC sibling exposed two
+        # checks that could not fail.
         run: sh .github/scripts/systemd-lifecycle.sh
 
 
