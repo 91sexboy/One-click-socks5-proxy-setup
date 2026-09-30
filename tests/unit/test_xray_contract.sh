@@ -629,6 +629,7 @@ service.dataplane|23456|||authenticated proxy traffic could not be verified on p
 state.write|/state|||could not write the state file: /state.|无法写入 state 文件：/state。
 uninstall.progress|/uninstall|||could not record uninstall progress: /uninstall.|无法记录卸载进度：/uninstall。
 uninstall.identity||||could not record the identity of the installed paths; nothing was removed.|无法记录已安装路径的身份；未删除任何内容。
+cleanup.residue|/prefix/.xray.old|||kept a temporary file this run did not create: /prefix/.xray.old; remove it manually once it is no longer needed.|保留了不属于本次运行的临时文件：/prefix/.xray.old；确认不再需要后可手动删除。
 CATALOG
 
 S5_LANG=en

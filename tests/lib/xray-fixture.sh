@@ -67,6 +67,8 @@ XRAY_FIXTURE
     t_use_asset_fixture "$S5_TEST_ROOT/asset-xray"
     if [ "${2:-}" != real-download ]; then
         s5_download_engine() {
+            # Like the real one, a prefix this run creates is recorded as its own.
+            [ -d "$S5_PREFIX" ] || S5_CREATED_PREFIX=1
             mkdir -p "$S5_PREFIX" || return 1
             cp "$S5_TEST_ROOT/asset-xray" "$S5_BIN" || return 1
             chmod 0755 "$S5_BIN" || return 1

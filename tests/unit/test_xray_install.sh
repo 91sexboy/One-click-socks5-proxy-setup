@@ -76,11 +76,21 @@ test_cleanup_temps() {
     # owns none of the published files from the previous installation process.
     : >"$S5_SYSCONFDIR/.s5tmp.abc123"
     : >"$S5_STATEDIR/.s5state.xyz789"
+    # A binary candidate is removed only when this run registered it. Another
+    # run's .xray.* in an existing prefix is kept and named: failure cleanup
+    # does not sweep files it cannot prove it created.
     : >"$S5_PREFIX/.xray.qqq111"
-    s5_cleanup
+    : >"$S5_PREFIX/.xray.own222"
+    S5_BINARY_TEMP=$S5_PREFIX/.xray.own222
+    s5_cleanup 2>"$S5_TEST_ROOT/cleanup-temps.err"
     assert_file_absent "cleanup removes its own config temporary" "$S5_SYSCONFDIR/.s5tmp.abc123"
     assert_file_absent "cleanup removes its own state temporary" "$S5_STATEDIR/.s5state.xyz789"
-    assert_file_absent "cleanup removes its own binary temporary" "$S5_PREFIX/.xray.qqq111"
+    assert_file_absent "cleanup removes its registered binary temporary" "$S5_PREFIX/.xray.own222"
+    assert_file_exists "cleanup keeps another run's binary temporary" "$S5_PREFIX/.xray.qqq111"
+    assert_contains "cleanup names the binary temporary it kept" \
+        "[!] kept a temporary file this run did not create: $S5_PREFIX/.xray.qqq111" \
+        "$(cat "$S5_TEST_ROOT/cleanup-temps.err")"
+    rm -f "$S5_PREFIX/.xray.qqq111"
     assert_file_exists "cleanup leaves the published config alone" "$S5_CFG"
     t_xray_assert_healthy
 
@@ -564,10 +574,63 @@ test_alpine_group_warning() {
     rm -f "$S5_TEST_ROOT/fail-groupdel"
 }
 
+# c. A signal just after an account tool succeeds must still let cleanup find
+# the account, so the next install is not refused by its own leftover.
+s5t_account_signal() {
+    case "$1" in
+    group) groupadd() { "$S5_TEST_ROOT/bin/groupadd" "$@" && s5t_signal_self; } ;;
+    user) useradd() { "$S5_TEST_ROOT/bin/useradd" "$@" && s5t_signal_self; } ;;
+    esac
+    trap 's5_on_signal 143' TERM
+    trap 's5_cleanup' EXIT
+    s5_install_new
+}
+
+s5t_signal_self() {
+    python3 -c 'import os, signal; os.kill(os.getppid(), signal.SIGTERM)'
+}
+
+test_account_signal() {
+    for _as_tool in group user; do
+        t_xray_fixture 23456
+        ( s5t_account_signal "$_as_tool" ) >"$S5_TEST_ROOT/account-signal.log" 2>&1
+        assert_eq "a signal after $_as_tool creation exits with its status" 143 "$?"
+        assert_file_absent "a signal after $_as_tool creation leaves no user" "$S5_TEST_ROOT/user-exists"
+        assert_file_absent "a signal after $_as_tool creation leaves no group" "$S5_TEST_ROOT/group-exists"
+        t_run s5_install_new
+        assert_eq "install succeeds after a signal during $_as_tool creation" 0 "$T_STATUS"
+        [ "$T_STATUS" -eq 0 ] || printf '%s\n--- signal log ---\n%s\n' "$T_OUT" "$(cat "$S5_TEST_ROOT/account-signal.log")" >&2
+    done
+}
+
+# e. The manager reloads after the unit file is gone, and whenever this run
+# created it, including when enable was never reached.
+s5t_reload_order() {
+    systemctl() {
+        if [ "${1:-}" = daemon-reload ]; then
+            if [ -e "$S5_SERVICE_ARTIFACT" ]; then echo present; else echo absent; fi >>"$S5_TEST_ROOT/reload-order"
+        fi
+        case "$S5T_RELOAD_FAULT:${1:-}" in start:start | enable:enable) return 1 ;; esac
+        "$S5_TEST_ROOT/bin/systemctl" "$@"
+    }
+    s5_install_new
+    s5_cleanup
+}
+
+test_cleanup_reload_order() {
+    for S5T_RELOAD_FAULT in start enable; do
+        t_xray_fixture 23456
+        ( s5t_reload_order ) >"$S5_TEST_ROOT/reload.log" 2>&1
+        assert_file_absent "a failed $S5T_RELOAD_FAULT removes the unit" "$S5_SERVICE_ARTIFACT"
+        assert_eq "the last reload after a failed $S5T_RELOAD_FAULT sees the unit gone" absent \
+            "$(tail -n 1 "$S5_TEST_ROOT/reload-order" 2>/dev/null)"
+    done
+}
+
 test_sha256_unit_failure() { s5t_digest_failure_install unit; }
 test_sha256_config_install_failure() { s5t_digest_failure_install config; }
 
-SCENARIOS='fresh_step_messages alpine_group_warning cleanup_stop_failure account_creation_failure account_lifecycle install openrc_logging_warning config_corrupt binary_corrupt unit_corrupt account_corrupt cleanup_temps openrc_runtime locks raw_command_cleanup raw_release_failure raw_candidate_failure raw_signal fresh_stage_failure_cleanup sha256_unit_failure sha256_config_install_failure'
+SCENARIOS='account_signal cleanup_reload_order fresh_step_messages alpine_group_warning cleanup_stop_failure account_creation_failure account_lifecycle install openrc_logging_warning config_corrupt binary_corrupt unit_corrupt account_corrupt cleanup_temps openrc_runtime locks raw_command_cleanup raw_release_failure raw_candidate_failure raw_signal fresh_stage_failure_cleanup sha256_unit_failure sha256_config_install_failure'
 if [ "$#" -eq 0 ]; then
     # Expand the fixed scenario words into the default argument list.
     # shellcheck disable=SC2086
