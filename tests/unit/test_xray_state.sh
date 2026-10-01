@@ -381,4 +381,31 @@ t_run s5_state_write
 assert_ne "state writer refuses malformed archive metadata" 0 "$T_STATUS"
 assert_file_absent "malformed archive metadata writes no state" "$S5_STATE"
 
+# The schema-2 writer stores exactly its keys, in order. The list is written out
+# here rather than read from the script, so a reordered constant is caught.
+t_xray_fixture 23456
+t_xray_install
+assert_eq "an installed state stores the schema-2 keys in order" \
+    'schema engine release commit distribution_tag asset_format asset asset_size asset_sha256 binary_size binary_sha256 protocol auth udp listen port username os arch family init account_uid account_gid config_sha256 unit_sha256 status' \
+    "$(cut -f1 "$S5_STATE" | tr '\n' ' ' | sed 's/ $//')"
+
+# A committed transaction is recovered after one validated state load, and the
+# command that found it reuses that load instead of parsing the state again. The
+# next opening, with no transaction left, loads afresh.
+mkdir "$S5_TXNDIR"
+chmod 0700 "$S5_TXNDIR"
+printf 'committed\n' >"$S5_TXN_COMMITTED"
+chmod 0600 "$S5_TXN_COMMITTED"
+: >"$S5_TEST_ROOT/state-loads"
+(
+    s5_state_load() { printf 'load\n' >>"$S5_TEST_ROOT/state-loads"; return 0; }
+    s5_open_managed_state inspect || exit 1
+    printf 'first\n' >>"$S5_TEST_ROOT/state-loads"
+    s5_open_managed_state inspect
+) >"$S5_TEST_ROOT/state-loads.log" 2>&1
+assert_eq "a committed recovery and the opening that found it succeed" 0 "$?"
+assert_file_absent "the committed transaction is cleaned up" "$S5_TXNDIR"
+assert_eq "a committed recovery loads the state once, and the next opening again" \
+    "$(printf 'load\nfirst\nload')" "$(cat "$S5_TEST_ROOT/state-loads")"
+
 t_summary

@@ -86,6 +86,42 @@ S5_UNINSTALL_SERVICE_ID=''
 S5_UNINSTALL_CONFIG_ID=''
 S5_UNINSTALL_BINARY_ID=''
 S5_UNINSTALL_STATE_ID=''
+S5_RCV_INIT=''
+S5_RCV_FAMILY=''
+S5_STATE_PRELOADED=0
+
+# The normalized state record, in order. Schema 2 stores exactly these keys, and
+# every reader receives them in this order whatever the schema on disk.
+S5_STATE_FIELDS='schema engine release commit distribution_tag asset_format asset asset_size'
+S5_STATE_FIELDS="$S5_STATE_FIELDS asset_sha256 binary_size binary_sha256 protocol auth udp listen"
+S5_STATE_FIELDS="$S5_STATE_FIELDS port username os arch family init account_uid account_gid"
+S5_STATE_FIELDS="$S5_STATE_FIELDS config_sha256 unit_sha256 status"
+# Schema 1 stored the archive's size and digest instead of the asset's, and no
+# distribution tag or format. Legacy is schema 1 without the schema line and
+# possibly without family.
+S5_STATE_V1_FIELDS='schema engine release commit asset archive_size archive_sha256 binary_size'
+S5_STATE_V1_FIELDS="$S5_STATE_V1_FIELDS binary_sha256 protocol auth udp listen port username"
+S5_STATE_V1_FIELDS="$S5_STATE_V1_FIELDS os arch family init account_uid account_gid config_sha256"
+S5_STATE_V1_FIELDS="$S5_STATE_V1_FIELDS unit_sha256 status"
+# The uninstall recovery record as "key:variable", in order. init and family are
+# compared with this host's rather than loaded, so they pass through their own
+# variables.
+S5_RECOVERY_TABLE='phase:S5_UNINSTALL_PHASE init:S5_RCV_INIT family:S5_RCV_FAMILY'
+S5_RECOVERY_TABLE="$S5_RECOVERY_TABLE uid:S5_ACCOUNT_UID gid:S5_ACCOUNT_GID"
+S5_RECOVERY_TABLE="$S5_RECOVERY_TABLE config_sha256:S5_CONFIG_SHA256"
+S5_RECOVERY_TABLE="$S5_RECOVERY_TABLE binary_sha256:S5_INSTALLED_BINARY_SHA256"
+S5_RECOVERY_TABLE="$S5_RECOVERY_TABLE unit_sha256:S5_UNIT_SHA256"
+S5_RECOVERY_TABLE="$S5_RECOVERY_TABLE prefix_id:S5_UNINSTALL_PREFIX_ID"
+S5_RECOVERY_TABLE="$S5_RECOVERY_TABLE confdir_id:S5_UNINSTALL_CONFDIR_ID"
+S5_RECOVERY_TABLE="$S5_RECOVERY_TABLE statedir_id:S5_UNINSTALL_STATEDIR_ID"
+S5_RECOVERY_TABLE="$S5_RECOVERY_TABLE service_id:S5_UNINSTALL_SERVICE_ID"
+S5_RECOVERY_TABLE="$S5_RECOVERY_TABLE config_id:S5_UNINSTALL_CONFIG_ID"
+S5_RECOVERY_TABLE="$S5_RECOVERY_TABLE binary_id:S5_UNINSTALL_BINARY_ID"
+S5_RECOVERY_TABLE="$S5_RECOVERY_TABLE state_id:S5_UNINSTALL_STATE_ID"
+# The rollback copies a transaction may hold; with the markers below they are
+# the only names the transaction directory may contain.
+S5_TXN_BACKUPS='old.config.json old.state old.xray old.unit'
+S5_TXN_MARKERS='committed rolled-back stopping unit-replacing'
 
 s5_guard_environment() {
     if [ "${S5_TEST_MODE:-0}" = 1 ]; then
@@ -1773,25 +1809,24 @@ s5_state_schema() {
     ' "$1" 2>/dev/null
 }
 
-# Parse every supported on-disk schema into one normalized 26-line record. The
-# schema-specific key sets remain strict: accepting schema-2 names in schema 1
-# would make a partially migrated state look authoritative, while rejecting old
-# archive fields would strand installations created by earlier scripts.
-# Emit one value per line in this fixed order only after the whole schema passes.
-# Values cannot contain tabs/newlines; read -r consumes them as data, never code.
-# The legacy schema omits family, represented by an empty line in that slot.
+# Parse every supported on-disk schema into one normalized record in
+# S5_STATE_FIELDS order. The schema-specific key sets remain strict: accepting
+# schema-2 names in schema 1 would make a partially migrated state look
+# authoritative, while rejecting old archive fields would strand installations
+# created by earlier scripts. Emit one value per line only after the whole schema
+# passes. Values cannot contain tabs/newlines; read -r consumes them as data,
+# never code. The legacy schema omits family, represented by an empty line.
 s5_state_parse_file() {
     _sspf_schema=$(s5_state_schema "$1") || return 1
     case "$_sspf_schema" in
     legacy | 1)
-        awk -F '\t' -v expected="$_sspf_schema" '
+        awk -F '\t' -v expected="$_sspf_schema" -v stored="$S5_STATE_V1_FIELDS" \
+            -v record="$S5_STATE_FIELDS" '
             BEGIN {
-                count=split("schema engine release commit asset archive_size archive_sha256 " \
-                    "binary_size binary_sha256 protocol auth udp listen port username os arch " \
-                    "family init account_uid account_gid config_sha256 unit_sha256 status", keys, " ")
+                count=split(stored, keys, " ")
+                fields=split(record, out, " ")
                 for (i=1; i<=count; i++) allowed[keys[i]]=1
                 valid=1
-                if (expected == "legacy") values["schema"]="legacy"
             }
             {
                 if (NF != 2 || $1 == "" || $2 == "") valid=0
@@ -1800,39 +1835,32 @@ s5_state_parse_file() {
             }
             END {
                 if (expected == "legacy") {
-                    if ((NR != 22 && NR != 23) || ("schema" in seen)) valid=0
+                    if ((NR != count - 2 && NR != count - 1) || ("schema" in seen)) valid=0
                     if (!("family" in seen)) values["family"]=""
                     values["schema"]="legacy"
                 } else {
-                    if (NR != 24 || values["schema"] != "1" || !("family" in seen)) valid=0
+                    if (NR != count || values["schema"] != "1" || !("family" in seen)) valid=0
                 }
-                for (i=2; i<=count; i++) {
+                for (i=1; i<=count; i++) {
+                    if (keys[i] == "schema") continue
                     if (keys[i] == "family" && expected == "legacy" && !("family" in seen)) continue
                     if (!(keys[i] in seen)) valid=0
                 }
                 if (!valid) exit 1
-                print values["schema"]
-                print values["engine"]
-                print values["release"]
-                print values["commit"]
-                print "xray-" values["release"]
-                print "zip"
-                print values["asset"]
-                print values["archive_size"]
-                print values["archive_sha256"]
-                print values["binary_size"]
-                print values["binary_sha256"]
-                for (i=10; i<=count; i++) print values[keys[i]]
+                for (i=1; i<=fields; i++) {
+                    if (out[i] == "distribution_tag") print "xray-" values["release"]
+                    else if (out[i] == "asset_format") print "zip"
+                    else if (out[i] == "asset_size") print values["archive_size"]
+                    else if (out[i] == "asset_sha256") print values["archive_sha256"]
+                    else print values[out[i]]
+                }
             }
         ' "$1" 2>/dev/null
         ;;
     2)
-        awk -F '\t' '
+        awk -F '\t' -v stored="$S5_STATE_FIELDS" '
             BEGIN {
-                count=split("schema engine release commit distribution_tag asset_format asset " \
-                    "asset_size asset_sha256 binary_size binary_sha256 protocol auth udp listen " \
-                    "port username os arch family init account_uid account_gid config_sha256 " \
-                    "unit_sha256 status", keys, " ")
+                count=split(stored, keys, " ")
                 for (i=1; i<=count; i++) allowed[keys[i]]=1
                 valid=1
             }
@@ -1853,7 +1881,44 @@ s5_state_parse_file() {
     esac
 }
 
-s5_state_parse() { s5_state_parse_file "$S5_STATE"; }
+# s5_state_table <schema> <prefix>: the "key:variable" table of a schema's
+# stored keys, each held in <prefix><normalized key>, so schema 1's archive
+# fields share the asset fields' variables. The prefix is the caller's own.
+s5_state_table() {
+    case "$1" in 2) _sst_fields=$S5_STATE_FIELDS ;; *) _sst_fields=$S5_STATE_V1_FIELDS ;; esac
+    for _sst_key in $_sst_fields; do
+        case "$_sst_key" in
+        archive_size) printf ' %s:%sasset_size' "$_sst_key" "$2" ;;
+        archive_sha256) printf ' %s:%sasset_sha256' "$_sst_key" "$2" ;;
+        *) printf ' %s:%s%s' "$_sst_key" "$2" "$_sst_key" ;;
+        esac
+    done
+}
+
+# s5_record_read <table>: read one line per "key:variable" word of the table from
+# stdin into that variable. Both the tables and their names are constants of this
+# script, and eval sees the value only as a reference, never as code.
+s5_record_read() {
+    for _srcr_pair in $1; do
+        IFS= read -r _srcr_value || return 1
+        eval "${_srcr_pair#*:}=\$_srcr_value"
+    done
+    _srcr_value=''
+}
+
+# s5_record_print <table>: print "key<TAB>value" for every word of the table.
+s5_record_print() {
+    for _srcp_pair in $1; do
+        eval "_srcp_value=\${${_srcp_pair#*:}}"
+        printf '%s\t%s\n' "${_srcp_pair%%:*}" "$_srcp_value"
+    done
+    _srcp_value=''
+}
+
+s5_valid_commit() {
+    [ "${#1}" -eq 40 ] || return 1
+    case "$1" in *[!0-9a-fA-F]*) return 1 ;; esac
+}
 
 s5_valid_distribution_tag() {
     _svdt_release=$1
@@ -1906,93 +1971,56 @@ s5_state_write() {
         [ "$_ssw_schema" != legacy ] || _ssw_schema=1
         _ssw_release=$S5_INSTALLED_RELEASE
         _ssw_commit=$S5_INSTALLED_COMMIT
-        _ssw_distribution=$S5_INSTALLED_DISTRIBUTION_TAG
-        _ssw_format=$S5_INSTALLED_ASSET_FORMAT
+        _ssw_distribution_tag=$S5_INSTALLED_DISTRIBUTION_TAG
+        _ssw_asset_format=$S5_INSTALLED_ASSET_FORMAT
         _ssw_asset=$S5_INSTALLED_ASSET_NAME
-        _ssw_size=$S5_INSTALLED_ASSET_SIZE
-        _ssw_sha=$S5_INSTALLED_ASSET_SHA256
-        _ssw_binsize=$S5_INSTALLED_BINARY_SIZE
-        _ssw_binsha=$S5_INSTALLED_BINARY_SHA256
+        _ssw_asset_size=$S5_INSTALLED_ASSET_SIZE
+        _ssw_asset_sha256=$S5_INSTALLED_ASSET_SHA256
+        _ssw_binary_size=$S5_INSTALLED_BINARY_SIZE
+        _ssw_binary_sha256=$S5_INSTALLED_BINARY_SHA256
         ;;
     *)
         _ssw_schema=2
         _ssw_release=$S5_XRAY_VERSION
         _ssw_commit=$S5_XRAY_COMMIT
-        _ssw_distribution=$S5_XRAY_DISTRIBUTION_TAG
-        _ssw_format=raw
+        _ssw_distribution_tag=$S5_XRAY_DISTRIBUTION_TAG
+        _ssw_asset_format=raw
         _ssw_asset=$S5_ASSET_NAME
-        _ssw_size=$S5_ASSET_SIZE
-        _ssw_sha=$S5_ASSET_SHA256
-        _ssw_binsize=$S5_ASSET_SIZE
-        _ssw_binsha=$S5_ASSET_SHA256
+        _ssw_asset_size=$S5_ASSET_SIZE
+        _ssw_asset_sha256=$S5_ASSET_SHA256
+        _ssw_binary_size=$S5_ASSET_SIZE
+        _ssw_binary_sha256=$S5_ASSET_SHA256
         ;;
     esac
-    s5_valid_release "$_ssw_release" || return 1
-    [ "${#_ssw_commit}" -eq 40 ] || return 1
-    case "$_ssw_commit" in *[!0-9a-fA-F]*) return 1 ;; esac
-    s5_state_asset_valid "$_ssw_schema" "$_ssw_release" "$_ssw_distribution" \
-        "$_ssw_format" "$_ssw_asset" "$_ssw_size" "$_ssw_sha" \
-        "$_ssw_binsize" "$_ssw_binsha" "$S5_ARCHNAME" || return 1
-    [ "$S5_BINARY_SHA256" = "$_ssw_binsha" ] || return 1
-    [ "$(s5_bytecount "$S5_BIN" 2>/dev/null)" = "$_ssw_binsize" ] || return 1
+    s5_valid_release "$_ssw_release" && s5_valid_commit "$_ssw_commit" || return 1
+    s5_state_asset_valid "$_ssw_schema" "$_ssw_release" "$_ssw_distribution_tag" \
+        "$_ssw_asset_format" "$_ssw_asset" "$_ssw_asset_size" "$_ssw_asset_sha256" \
+        "$_ssw_binary_size" "$_ssw_binary_sha256" "$S5_ARCHNAME" || return 1
+    [ "$S5_BINARY_SHA256" = "$_ssw_binary_sha256" ] || return 1
+    [ "$(s5_bytecount "$S5_BIN" 2>/dev/null)" = "$_ssw_binary_size" ] || return 1
     [ "$(s5_sha256 "$S5_BIN" 2>/dev/null)" = "$S5_BINARY_SHA256" ] || return 1
-
-    if [ "$_ssw_schema" = 2 ]; then
-        s5_atomic_write "$S5_STATE" root:root 0600 <<STATE
-schema	2
-engine	xray
-release	$_ssw_release
-commit	$_ssw_commit
-distribution_tag	$_ssw_distribution
-asset_format	raw
-asset	$_ssw_asset
-asset_size	$_ssw_size
-asset_sha256	$_ssw_sha
-binary_size	$_ssw_binsize
-binary_sha256	$S5_BINARY_SHA256
-protocol	mixed
-auth	password
-udp	false
-listen	$S5_LISTEN
-port	$S5_PORT
-username	$S5_USERNAME
-os	$S5_OS_ID-$S5_OS_VERSION_ID
-arch	$S5_ARCHNAME
-family	$S5_OS_FAMILY
-init	$S5_INIT
-account_uid	$S5_ACCOUNT_UID
-account_gid	$S5_ACCOUNT_GID
-config_sha256	$S5_CONFIG_SHA256
-unit_sha256	$S5_UNIT_SHA256
-status	complete
-STATE
-        return $?
-    fi
+    _ssw_engine=xray
+    _ssw_protocol=mixed
+    _ssw_auth=password
+    _ssw_udp=false
+    _ssw_listen=$S5_LISTEN
+    _ssw_port=$S5_PORT
+    _ssw_username=$S5_USERNAME
+    # Recorded for diagnosis only, so nothing reads it back by name: the state
+    # table writes it out.
+    # shellcheck disable=SC2034
+    _ssw_os=$S5_OS_ID-$S5_OS_VERSION_ID
+    _ssw_arch=$S5_ARCHNAME
+    _ssw_family=$S5_OS_FAMILY
+    _ssw_init=$S5_INIT
+    _ssw_account_uid=$S5_ACCOUNT_UID
+    _ssw_account_gid=$S5_ACCOUNT_GID
+    _ssw_config_sha256=$S5_CONFIG_SHA256
+    _ssw_unit_sha256=$S5_UNIT_SHA256
+    _ssw_status=complete
+    _ssw_record=$(s5_record_print "$(s5_state_table "$_ssw_schema" _ssw_)") || return 1
     s5_atomic_write "$S5_STATE" root:root 0600 <<STATE
-schema	1
-engine	xray
-release	$_ssw_release
-commit	$_ssw_commit
-asset	$_ssw_asset
-archive_size	$_ssw_size
-archive_sha256	$_ssw_sha
-binary_size	$_ssw_binsize
-binary_sha256	$S5_BINARY_SHA256
-protocol	mixed
-auth	password
-udp	false
-listen	$S5_LISTEN
-port	$S5_PORT
-username	$S5_USERNAME
-os	$S5_OS_ID-$S5_OS_VERSION_ID
-arch	$S5_ARCHNAME
-family	$S5_OS_FAMILY
-init	$S5_INIT
-account_uid	$S5_ACCOUNT_UID
-account_gid	$S5_ACCOUNT_GID
-config_sha256	$S5_CONFIG_SHA256
-unit_sha256	$S5_UNIT_SHA256
-status	complete
+$_ssw_record
 STATE
 }
 
@@ -2063,6 +2091,8 @@ s5_verify_installed_artifacts() {
     return 0
 }
 
+# s5_record_read assigns the record's fields by name, which ShellCheck cannot see.
+# shellcheck disable=SC2154
 s5_state_load() {
     _sload_current_family=$S5_OS_FAMILY
     _sload_current_init=$S5_INIT
@@ -2071,61 +2101,42 @@ s5_state_load() {
         return 3
     fi
     s5_path_contract "$S5_STATE" file root:root 600 || return 1
-    _sload_fields=$(s5_state_parse)
+    _sload_fields=$(s5_state_parse_file "$S5_STATE")
     _sload_parse=$?
     [ "$_sload_parse" -eq 0 ] || { [ "$_sload_parse" -eq 4 ] && return 4; return 1; }
-    {
-        IFS= read -r _sload_schema
-        IFS= read -r _sload_engine
-        IFS= read -r _sload_release
-        IFS= read -r _sload_commit
-        IFS= read -r _sload_distribution
-        IFS= read -r _sload_format
-        IFS= read -r _sload_asset
-        IFS= read -r _sload_size
-        IFS= read -r _sload_sha
-        IFS= read -r _sload_binsize
-        IFS= read -r _sload_binsha
-        IFS= read -r _sload_protocol
-        IFS= read -r _sload_auth
-        IFS= read -r _sload_udp
-        IFS= read -r S5_LISTEN
-        IFS= read -r S5_PORT
-        IFS= read -r S5_USERNAME
-        IFS= read -r _sload_os
-        IFS= read -r S5_ARCHNAME
-        IFS= read -r S5_OS_FAMILY
-        IFS= read -r S5_INIT
-        IFS= read -r S5_ACCOUNT_UID
-        IFS= read -r S5_ACCOUNT_GID
-        IFS= read -r S5_CONFIG_SHA256
-        IFS= read -r S5_UNIT_SHA256
-        IFS= read -r _sload_status
-    } <<STATE_FIELDS
+    s5_record_read "$(s5_state_table 2 _sload_)" <<STATE_FIELDS || return 1
 $_sload_fields
 STATE_FIELDS
     _sload_fields=''
+    S5_LISTEN=$_sload_listen
+    S5_PORT=$_sload_port
+    S5_USERNAME=$_sload_username
+    S5_ARCHNAME=$_sload_arch
+    S5_OS_FAMILY=$_sload_family
+    S5_INIT=$_sload_init
+    S5_ACCOUNT_UID=$_sload_account_uid
+    S5_ACCOUNT_GID=$_sload_account_gid
+    S5_CONFIG_SHA256=$_sload_config_sha256
+    S5_UNIT_SHA256=$_sload_unit_sha256
     [ "$_sload_engine" = xray ] || return 1
-    s5_valid_release "$_sload_release" || return 1
-    [ "${#_sload_commit}" -eq 40 ] || return 1
-    case "$_sload_commit" in *[!0-9a-fA-F]*) return 1 ;; esac
-    s5_state_asset_valid "$_sload_schema" "$_sload_release" "$_sload_distribution" \
-        "$_sload_format" "$_sload_asset" "$_sload_size" "$_sload_sha" \
-        "$_sload_binsize" "$_sload_binsha" "$S5_ARCHNAME" || return 1
+    s5_valid_release "$_sload_release" && s5_valid_commit "$_sload_commit" || return 1
+    s5_state_asset_valid "$_sload_schema" "$_sload_release" "$_sload_distribution_tag" \
+        "$_sload_asset_format" "$_sload_asset" "$_sload_asset_size" "$_sload_asset_sha256" \
+        "$_sload_binary_size" "$_sload_binary_sha256" "$S5_ARCHNAME" || return 1
     [ "$_sload_protocol" = mixed ] && [ "$_sload_auth" = password ] &&
         [ "$_sload_udp" = false ] || return 1
     [ "$_sload_status" = complete ] || return 4
     S5_INSTALLED_SCHEMA=$_sload_schema
     S5_INSTALLED_RELEASE=$_sload_release
     S5_INSTALLED_COMMIT=$_sload_commit
-    S5_INSTALLED_DISTRIBUTION_TAG=$_sload_distribution
-    S5_INSTALLED_ASSET_FORMAT=$_sload_format
+    S5_INSTALLED_DISTRIBUTION_TAG=$_sload_distribution_tag
+    S5_INSTALLED_ASSET_FORMAT=$_sload_asset_format
     S5_INSTALLED_ASSET_NAME=$_sload_asset
-    S5_INSTALLED_ASSET_SIZE=$_sload_size
-    S5_INSTALLED_ASSET_SHA256=$_sload_sha
-    S5_INSTALLED_BINARY_SIZE=$_sload_binsize
-    S5_INSTALLED_BINARY_SHA256=$_sload_binsha
-    S5_BINARY_SHA256=$_sload_binsha
+    S5_INSTALLED_ASSET_SIZE=$_sload_asset_size
+    S5_INSTALLED_ASSET_SHA256=$_sload_asset_sha256
+    S5_INSTALLED_BINARY_SIZE=$_sload_binary_size
+    S5_INSTALLED_BINARY_SHA256=$_sload_binary_sha256
+    S5_BINARY_SHA256=$_sload_binary_sha256
     if [ -z "$S5_OS_FAMILY" ]; then
         case "$S5_INIT" in systemd) S5_OS_FAMILY=debian ;; *) return 1 ;; esac
     fi
@@ -2170,8 +2181,13 @@ s5_open_managed_state() {
         [ "$1" = update ] || s5_trap_lock_only
         [ "$_somr" -eq 0 ] || return 5
     fi
-    s5_state_load
-    _som_status=$?
+    if [ "$S5_STATE_PRELOADED" = 1 ]; then
+        _som_status=0
+    else
+        s5_state_load
+        _som_status=$?
+    fi
+    S5_STATE_PRELOADED=0
     [ "$_som_status" -eq 0 ] || return "$_som_status"
     S5_UPDATE_NEEDS_BINARY=0
     if [ "$1" = update ]; then
@@ -2558,11 +2574,8 @@ s5_transaction_file_contract() {
 
 s5_transaction_contract() {
     s5_path_contract "$S5_TXNDIR" dir root:root 700 || return 1
-    for _stc_path in "$S5_TXNDIR/old.config.json" "$S5_TXNDIR/old.state" \
-        "$S5_TXNDIR/old.xray" "$S5_TXNDIR/old.unit" \
-        "$S5_TXN_COMMITTED" "$S5_TXN_ROLLED_BACK" "$S5_TXN_STOPPING" \
-        "$S5_TXN_UNIT_REPLACING"; do
-        s5_transaction_file_contract "$_stc_path" || return 1
+    for _stc_name in $S5_TXN_BACKUPS $S5_TXN_MARKERS; do
+        s5_transaction_file_contract "$S5_TXNDIR/$_stc_name" || return 1
     done
     if { [ -e "$S5_TXNDIR/old.unit" ] || [ -L "$S5_TXNDIR/old.unit" ]; } &&
         [ "$S5_INIT" != openrc ]; then return 1; fi
@@ -2579,15 +2592,20 @@ s5_transaction_contract() {
     done
     for _stc_path in "$S5_TXNDIR"/* "$S5_TXNDIR"/.[!.]* "$S5_TXNDIR"/..?*; do
         [ -e "$_stc_path" ] || [ -L "$_stc_path" ] || continue
-        case "$_stc_path" in
-        "$S5_TXNDIR/old.config.json" | "$S5_TXNDIR/old.state" | "$S5_TXNDIR/old.xray" | \
-        "$S5_TXNDIR/old.unit" | "$S5_TXN_COMMITTED" | "$S5_TXN_ROLLED_BACK" | \
-        "$S5_TXN_STOPPING" | "$S5_TXN_UNIT_REPLACING" | "$S5_TXNDIR"/.s5new.* | \
-        "$S5_TXNDIR"/.s5tmp.*) ;;
-        *) return 1 ;;
+        _stc_name=${_stc_path#"$S5_TXNDIR"/}
+        case "$_stc_name" in
+        .s5new.* | .s5tmp.*) ;;
+        *) s5_transaction_member "$_stc_name" || return 1 ;;
         esac
     done
     return 0
+}
+
+# s5_transaction_member <name>: whether a name is a backup or marker the
+# transaction directory may hold.
+s5_transaction_member() {
+    case " $S5_TXN_BACKUPS $S5_TXN_MARKERS " in *" $1 "*) return 0 ;; esac
+    return 1
 }
 
 s5_cleanup_transaction() {
@@ -2599,9 +2617,9 @@ s5_cleanup_transaction() {
     # Remove the intent marker before old.unit. A hard kill between those two
     # deletions then leaves a replayable extra backup, never a marker whose
     # required rollback copy has already disappeared.
-    for _sctf in "$S5_TXN_UNIT_REPLACING" "$S5_TXNDIR"/old.config.json \
-        "$S5_TXNDIR"/old.state "$S5_TXNDIR"/old.xray "$S5_TXNDIR"/old.unit \
-        "$S5_TXNDIR"/.s5new.* "$S5_TXNDIR"/.s5tmp.* "$S5_TXN_STOPPING"; do
+    set -- "$S5_TXN_UNIT_REPLACING"
+    for _sctn in $S5_TXN_BACKUPS; do set -- "$@" "$S5_TXNDIR/$_sctn"; done
+    for _sctf in "$@" "$S5_TXNDIR"/.s5new.* "$S5_TXNDIR"/.s5tmp.* "$S5_TXN_STOPPING"; do
         [ -e "$_sctf" ] || [ -L "$_sctf" ] || continue
         [ ! -L "$_sctf" ] && [ -f "$_sctf" ] || return 1
         rm -f "$_sctf" || return 1
@@ -2637,6 +2655,8 @@ s5_transaction_recover() {
         # validates. Drift preserves remaining backups for diagnosis; a committed
         # update and a completed rollback are never reversed during cleanup.
         s5_state_load || return 1
+        # The caller loads the state next; this validated load is the same one.
+        S5_STATE_PRELOADED=1
         s5_cleanup_transaction
         return $?
     fi
@@ -2976,59 +2996,32 @@ s5_confirm() {
 s5_confirm_install() { s5_confirm install; }
 s5_confirm_update() { s5_confirm update; }
 
+# s5_record_read assigns the record's fields by name, which ShellCheck cannot see.
+# shellcheck disable=SC2154
 s5_transaction_verify_rollback() {
     s5_transaction_contract || return 1
     _stvr_fields=$(s5_state_parse_file "$S5_TXNDIR/old.state")
     _stvr_parse=$?
     [ "$_stvr_parse" -eq 0 ] || return 1
-    {
-        IFS= read -r _stvr_schema
-        IFS= read -r _stvr_engine
-        IFS= read -r _stvr_release
-        IFS= read -r _stvr_commit
-        IFS= read -r _stvr_distribution
-        IFS= read -r _stvr_format
-        IFS= read -r _stvr_asset
-        IFS= read -r _stvr_asset_size
-        IFS= read -r _stvr_asset_sha
-        IFS= read -r _stvr_binary_size
-        IFS= read -r _stvr_binary_sha
-        IFS= read -r _stvr_protocol
-        IFS= read -r _stvr_auth
-        IFS= read -r _stvr_udp
-        IFS= read -r _stvr_listen
-        IFS= read -r _stvr_port
-        IFS= read -r _stvr_username
-        IFS= read -r _stvr_os
-        IFS= read -r _stvr_arch
-        IFS= read -r _stvr_family
-        IFS= read -r _stvr_init
-        IFS= read -r _stvr_uid
-        IFS= read -r _stvr_gid
-        IFS= read -r _stvr_config_sha
-        IFS= read -r _stvr_unit_sha
-        IFS= read -r _stvr_status
-    } <<ROLLBACK_FIELDS
+    s5_record_read "$(s5_state_table 2 _stvr_)" <<ROLLBACK_FIELDS || return 1
 $_stvr_fields
 ROLLBACK_FIELDS
     _stvr_fields=''
     [ "$_stvr_engine:$_stvr_protocol:$_stvr_auth:$_stvr_udp:$_stvr_status" = \
         xray:mixed:password:false:complete ] || return 1
-    s5_valid_release "$_stvr_release" || return 1
-    [ "${#_stvr_commit}" -eq 40 ] || return 1
-    case "$_stvr_commit" in *[!0-9a-fA-F]*) return 1 ;; esac
-    s5_state_asset_valid "$_stvr_schema" "$_stvr_release" "$_stvr_distribution" \
-        "$_stvr_format" "$_stvr_asset" "$_stvr_asset_size" "$_stvr_asset_sha" \
-        "$_stvr_binary_size" "$_stvr_binary_sha" "$_stvr_arch" || return 1
-    s5_valid_sha256 "$_stvr_config_sha" && s5_valid_sha256 "$_stvr_unit_sha" || return 1
+    s5_valid_release "$_stvr_release" && s5_valid_commit "$_stvr_commit" || return 1
+    s5_state_asset_valid "$_stvr_schema" "$_stvr_release" "$_stvr_distribution_tag" \
+        "$_stvr_asset_format" "$_stvr_asset" "$_stvr_asset_size" "$_stvr_asset_sha256" \
+        "$_stvr_binary_size" "$_stvr_binary_sha256" "$_stvr_arch" || return 1
+    s5_valid_sha256 "$_stvr_config_sha256" && s5_valid_sha256 "$_stvr_unit_sha256" || return 1
     s5_valid_port "$_stvr_port" && s5_valid_stored_username "$_stvr_username" &&
         s5_ipv4_is_canonical "$_stvr_listen" || return 1
     [ "${_stvr_family:-debian}:$_stvr_init" = "$S5_OS_FAMILY:$S5_INIT" ] || return 1
-    s5_valid_decimal "$_stvr_uid" && s5_valid_decimal "$_stvr_gid" || return 1
+    s5_valid_decimal "$_stvr_account_uid" && s5_valid_decimal "$_stvr_account_gid" || return 1
     _stvr_saved_uid=$S5_ACCOUNT_UID
     _stvr_saved_gid=$S5_ACCOUNT_GID
-    S5_ACCOUNT_UID=$_stvr_uid
-    S5_ACCOUNT_GID=$_stvr_gid
+    S5_ACCOUNT_UID=$_stvr_account_uid
+    S5_ACCOUNT_GID=$_stvr_account_gid
     s5_account_identity
     _stvr_account_status=$?
     S5_ACCOUNT_UID=$_stvr_saved_uid
@@ -3047,12 +3040,12 @@ ROLLBACK_FIELDS
     s5_path_contract "$S5_CFG" file "root:$S5_SERVICE_GROUP" 640 || return 1
     s5_path_contract "$S5_STATE" file root:root 600 || return 1
     s5_path_contract "$S5_BIN" exec root:root 755 || return 1
-    [ "$(s5_sha256 "$_stvr_unit" 2>/dev/null)" = "$_stvr_unit_sha" ] || return 1
-    [ "$(s5_sha256 "$S5_TXNDIR/old.config.json" 2>/dev/null)" = "$_stvr_config_sha" ] || return 1
+    [ "$(s5_sha256 "$_stvr_unit" 2>/dev/null)" = "$_stvr_unit_sha256" ] || return 1
+    [ "$(s5_sha256 "$S5_TXNDIR/old.config.json" 2>/dev/null)" = "$_stvr_config_sha256" ] || return 1
     _stvr_binary=$S5_BIN
     [ ! -e "$S5_TXNDIR/old.xray" ] || _stvr_binary=$S5_TXNDIR/old.xray
     [ "$(s5_bytecount "$_stvr_binary" 2>/dev/null)" = "$_stvr_binary_size" ] || return 1
-    [ "$(s5_sha256 "$_stvr_binary" 2>/dev/null)" = "$_stvr_binary_sha" ] || return 1
+    [ "$(s5_sha256 "$_stvr_binary" 2>/dev/null)" = "$_stvr_binary_sha256" ] || return 1
     return 0
 }
 
@@ -3711,70 +3704,42 @@ s5_uninstall_capture_identities() {
 }
 
 s5_uninstall_recovery_write() {
-    _surw_phase=$1
-    s5_uninstall_phase_valid "$_surw_phase" || return 1
+    s5_uninstall_phase_valid "$1" || return 1
+    S5_UNINSTALL_PHASE=$1
+    S5_RCV_INIT=$S5_INIT
+    S5_RCV_FAMILY=$S5_OS_FAMILY
+    _surw_record=$(s5_record_print "$S5_RECOVERY_TABLE") || return 1
     s5_atomic_write "$S5_UNINSTALL_STATE" root:root 0600 <<RECOVERY
-phase	$_surw_phase
-init	$S5_INIT
-family	$S5_OS_FAMILY
-uid	$S5_ACCOUNT_UID
-gid	$S5_ACCOUNT_GID
-config_sha256	$S5_CONFIG_SHA256
-binary_sha256	$S5_INSTALLED_BINARY_SHA256
-unit_sha256	$S5_UNIT_SHA256
-prefix_id	$S5_UNINSTALL_PREFIX_ID
-confdir_id	$S5_UNINSTALL_CONFDIR_ID
-statedir_id	$S5_UNINSTALL_STATEDIR_ID
-service_id	$S5_UNINSTALL_SERVICE_ID
-config_id	$S5_UNINSTALL_CONFIG_ID
-binary_id	$S5_UNINSTALL_BINARY_ID
-state_id	$S5_UNINSTALL_STATE_ID
+$_surw_record
 RECOVERY
 }
 
 s5_uninstall_recovery_load() {
     _surl_path=${1:-$S5_UNINSTALL_STATE}
     s5_path_contract "$_surl_path" file root:root 600 || return 1
-    _surl_fields=$(awk -F '\t' '
-        BEGIN {
-            split("phase init family uid gid config_sha256 binary_sha256 unit_sha256 prefix_id " \
-                "confdir_id statedir_id service_id config_id binary_id state_id", k, " ")
-            for(i in k) a[k[i]]=1
-        }
+    _surl_keys=''
+    for _surl_pair in $S5_RECOVERY_TABLE; do _surl_keys="$_surl_keys ${_surl_pair%%:*}"; done
+    _surl_fields=$(awk -F '\t' -v stored="$_surl_keys" '
+        BEGIN { count=split(stored, k, " "); for(i=1;i<=count;i++) a[k[i]]=1 }
         NF != 2 || !($1 in a) || seen[$1]++ || $2 == "" { bad=1 }
         { v[$1]=$2 }
-        END { if (bad || NR != 15) exit 1; for(i=1;i<=15;i++) print v[k[i]] }
+        END { if (bad || NR != count) exit 1; for(i=1;i<=count;i++) print v[k[i]] }
     ' "$_surl_path" 2>/dev/null) || return 1
-    {
-        IFS= read -r S5_UNINSTALL_PHASE
-        IFS= read -r _surl_init
-        IFS= read -r _surl_family
-        IFS= read -r S5_ACCOUNT_UID
-        IFS= read -r S5_ACCOUNT_GID
-        IFS= read -r S5_CONFIG_SHA256
-        IFS= read -r S5_INSTALLED_BINARY_SHA256
-        IFS= read -r S5_UNIT_SHA256
-        IFS= read -r S5_UNINSTALL_PREFIX_ID
-        IFS= read -r S5_UNINSTALL_CONFDIR_ID
-        IFS= read -r S5_UNINSTALL_STATEDIR_ID
-        IFS= read -r S5_UNINSTALL_SERVICE_ID
-        IFS= read -r S5_UNINSTALL_CONFIG_ID
-        IFS= read -r S5_UNINSTALL_BINARY_ID
-        IFS= read -r S5_UNINSTALL_STATE_ID
-    } <<RECOVERY_FIELDS
+    s5_record_read "$S5_RECOVERY_TABLE" <<RECOVERY_FIELDS || return 1
 $_surl_fields
 RECOVERY_FIELDS
     _surl_fields=''
     s5_uninstall_phase_valid "$S5_UNINSTALL_PHASE" || return 1
-    [ "$_surl_init" = "$S5_INIT" ] && [ "$_surl_family" = "$S5_OS_FAMILY" ] || return 1
+    [ "$S5_RCV_INIT" = "$S5_INIT" ] && [ "$S5_RCV_FAMILY" = "$S5_OS_FAMILY" ] || return 1
     s5_valid_decimal "$S5_ACCOUNT_UID" && s5_valid_decimal "$S5_ACCOUNT_GID" &&
         s5_valid_sha256 "$S5_CONFIG_SHA256" &&
         s5_valid_sha256 "$S5_INSTALLED_BINARY_SHA256" &&
         s5_valid_sha256 "$S5_UNIT_SHA256" || return 1
-    for _surl_id in "$S5_UNINSTALL_PREFIX_ID" "$S5_UNINSTALL_CONFDIR_ID" \
-        "$S5_UNINSTALL_STATEDIR_ID" "$S5_UNINSTALL_SERVICE_ID" \
-        "$S5_UNINSTALL_CONFIG_ID" "$S5_UNINSTALL_BINARY_ID" "$S5_UNINSTALL_STATE_ID"; do
-        case "$_surl_id" in *[!0-9:]* | *::* | :* | *:) return 1 ;; esac
+    for _surl_pair in $S5_RECOVERY_TABLE; do
+        case "${_surl_pair%%:*}" in *_id) ;; *) continue ;; esac
+        _surl_id=''
+        eval "_surl_id=\${${_surl_pair#*:}}"
+        case "$_surl_id" in '' | *[!0-9:]* | *::* | :* | *:) return 1 ;; esac
     done
 }
 
