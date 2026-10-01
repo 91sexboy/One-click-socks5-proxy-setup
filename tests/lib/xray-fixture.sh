@@ -119,11 +119,20 @@ SYSTEMCTL
     t_stub rc-service <<'RCSERVICE'
 #!/bin/sh
 case "$2" in
+start|restart)
+    port=$(sed -n 's/^[[:space:]]*"port":[[:space:]]*\([0-9][0-9]*\),*/\1/p' \
+        "$S5_STUB_CFG" | head -n 1)
+    printf '%s\n' "$port" >"$S5_TEST_ROOT/svc_active"
+    ;;
 stop) rm -f "$S5_TEST_ROOT/svc_active" ;;
 status) if [ -f "$S5_TEST_ROOT/svc_active" ]; then exit 0; else exit 3; fi ;;
 esac
 exit 0
 RCSERVICE
+    t_stub rc-update <<'RCUPDATE'
+#!/bin/sh
+exit 0
+RCUPDATE
     for _acct_cmd in getent groupadd groupdel useradd userdel addgroup delgroup adduser deluser id; do
         t_stub "$_acct_cmd" <<'ACCT'
 #!/bin/sh
@@ -172,6 +181,55 @@ ACCT
     S5_STUB_CFG=$S5_CFG
     export PATH S5_STUB_CFG
     s5_asset_select
+}
+
+# t_xray_openrc_fixture <port>: the fixture on an Alpine host managed by OpenRC.
+t_xray_openrc_fixture() {
+    t_xray_fixture "$@"
+    S5_INIT=openrc
+    S5_OS_FAMILY=alpine
+    s5_select_service_artifact
+}
+
+# t_raw_fixture <port>: the fixture with the real download path. A runnable shell
+# fixture cannot satisfy production file(1)'s ELF gate, so the seam reports the
+# architecture while every byte, digest, mode and rename check remains
+# production code.
+t_raw_fixture() {
+    t_xray_fixture "$1" real-download
+    S5_TEST_ASSET_PATH=$S5_TEST_ROOT/asset-xray
+    export S5_TEST_ASSET_PATH
+    s5_file_type_command() {
+        printf '%s\n' 'ELF 64-bit LSB executable, x86-64, statically linked'
+    }
+}
+
+# t_xray_older_state [binary]: rewrite the installed schema-1 state as an older,
+# still supported release. With "binary" the installed executable becomes that
+# release's own bytes, recorded as such, so its digest differs from the current
+# candidate's.
+t_xray_older_state() {
+    _txos_size=''
+    _txos_sha=''
+    if [ "${1:-}" = binary ]; then
+        printf '#!/bin/sh\nprintf older\\n\n' >"$S5_TEST_ROOT/older-xray"
+        chmod 0755 "$S5_TEST_ROOT/older-xray"
+        cp "$S5_TEST_ROOT/older-xray" "$S5_BIN" || return 1
+        _txos_sha=$(t_sha256 "$S5_BIN")
+        _txos_size=$(wc -c <"$S5_BIN" | tr -d '[:space:]')
+    fi
+    awk -F '\t' -v sha="$_txos_sha" -v size="$_txos_size" '
+        BEGIN { OFS="\t" }
+        $1 == "release" { $2="v25.1.1" }
+        $1 == "commit" { $2="1111111111111111111111111111111111111111" }
+        $1 == "archive_size" { $2="123456" }
+        $1 == "archive_sha256" { $2="2222222222222222222222222222222222222222222222222222222222222222" }
+        $1 == "binary_size" && size != "" { $2=size }
+        $1 == "binary_sha256" && sha != "" { $2=sha }
+        { print }
+    ' "$S5_STATE" >"$S5_STATE.next" || return 1
+    mv "$S5_STATE.next" "$S5_STATE" || return 1
+    chmod 0600 "$S5_STATE"
 }
 
 # Convert the current schema-2 fixture state into the exact schema-1 shape

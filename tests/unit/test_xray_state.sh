@@ -250,9 +250,7 @@ s5t_state_expect "external executable edit is refused" 1
 # the historical digest in state is a different value from the candidate's and
 # the two can be told apart.
 s5t_state_reset
-printf '#!/bin/sh\nprintf older\\n\n' >"$S5_TEST_ROOT/older-xray"
-cp "$S5_TEST_ROOT/older-xray" "$S5_BIN"
-chmod 755 "$S5_PREFIX" "$S5_BIN"
+chmod 755 "$S5_PREFIX"
 chmod 750 "$S5_SYSCONFDIR"
 chmod 640 "$S5_CFG"
 chmod 700 "$S5_STATEDIR"
@@ -260,16 +258,8 @@ chmod 600 "$S5_STATE"
 chmod 644 "$S5_SERVICE_ARTIFACT"
 printf '900\n' >"$S5_TEST_ROOT/user-exists"
 printf '900\n' >"$S5_TEST_ROOT/group-exists"
-awk -F '\t' -v sha="$(t_sha256 "$S5_BIN")" \
-    -v size="$(wc -c <"$S5_BIN" | tr -d '[:space:]')" 'BEGIN { OFS="\t" }
-    $1 == "release" { $2="v25.1.1" }
-    $1 == "commit" { $2="1111111111111111111111111111111111111111" }
-    $1 == "archive_size" { $2="123456" }
-    $1 == "archive_sha256" { $2="2222222222222222222222222222222222222222222222222222222222222222" }
-    $1 == "binary_size" { $2=size }
-    $1 == "binary_sha256" { $2=sha }
-    { print }
-' "$S5_TEST_ROOT/valid-state" >"$S5_STATE"
+t_xray_older_state binary
+chmod 755 "$S5_BIN"
 s5t_state_expect "a supported older installed release remains loadable" 0
 assert_eq "the state seam reports the installed release" v25.1.1 "$S5_INSTALLED_RELEASE"
 assert_eq "the state seam reports the installed binary digest" \

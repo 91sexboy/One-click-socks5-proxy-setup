@@ -46,18 +46,6 @@ assert_not_contains "target installer no longer creates extraction FIFOs" 'mkfif
 assert_contains "candidate is created beside the final binary" \
     'mktemp "$S5_PREFIX/.xray.XXXXXX"' "$source"
 
-# A runnable shell fixture cannot satisfy production file(1)'s ELF gate, so the
-# seam reports the architecture while every byte, digest, mode and rename check
-# remains production code.
-t_raw_fixture() {
-    t_xray_fixture 23456 real-download
-    S5_TEST_ASSET_PATH=$S5_TEST_ROOT/asset-xray
-    export S5_TEST_ASSET_PATH
-    s5_file_type_command() {
-        printf '%s\n' 'ELF 64-bit LSB executable, x86-64, statically linked'
-    }
-}
-
 # t_run captures output in a command-substitution subshell, which drops the
 # candidate registration cleanup relies on. Staging failures run here instead,
 # in the test's own shell, exactly as the command would run them.
@@ -71,7 +59,7 @@ t_candidate_count() {
         wc -l | tr -d '[:space:]'
 }
 
-t_raw_fixture
+t_raw_fixture 23456
 t_run_here s5_download_engine
 assert_eq "valid raw candidate installs" 0 "$T_STATUS"
 assert_file_exists "raw publication creates final xray" "$S5_BIN"
@@ -82,7 +70,7 @@ assert_eq "successful publication leaves no prefix candidate" 0 "$(t_candidate_c
 assert_eq "successful publication clears the tracked candidate" '' "$S5_BINARY_TEMP"
 
 # Exact-size and digest gates remove every refused candidate.
-t_raw_fixture
+t_raw_fixture 23456
 S5T_SIZE_OVERRIDE=$((S5T_BIN_SIZE + 1))
 t_run_here s5_download_engine
 assert_ne "short raw asset is refused" 0 "$T_STATUS"
@@ -92,7 +80,7 @@ assert_file_absent "short raw asset is never published" "$S5_BIN"
 assert_eq "short raw candidate is removed" 0 "$(t_candidate_count)"
 
 # Correct size but wrong digest is independent of the size gate.
-t_raw_fixture
+t_raw_fixture 23456
 S5T_SHA_OVERRIDE=1111111111111111111111111111111111111111111111111111111111111111
 t_run_here s5_download_engine
 assert_ne "wrong raw digest is refused" 0 "$T_STATUS"
@@ -101,7 +89,7 @@ assert_file_absent "wrong-digest asset is never published" "$S5_BIN"
 assert_eq "wrong-digest candidate is removed" 0 "$(t_candidate_count)"
 
 # Architecture, linkage and version are checked only after byte identity.
-t_raw_fixture
+t_raw_fixture 23456
 s5_file_type_command() {
     printf '%s\n' 'ELF 64-bit LSB executable, ARM aarch64, statically linked'
 }
@@ -111,7 +99,7 @@ assert_contains "wrong ELF architecture reports architecture" 'architecture' "$T
 s5_cleanup
 assert_eq "wrong-architecture candidate is removed" 0 "$(t_candidate_count)"
 
-t_raw_fixture
+t_raw_fixture 23456
 s5_file_type_command() {
     printf '%s\n' 'ELF 64-bit LSB executable, x86-64, dynamically linked, interpreter /lib64/ld-linux.so.2'
 }
@@ -121,7 +109,7 @@ assert_contains "dynamic candidate reports linkage" 'linkage' "$T_OUT"
 s5_cleanup
 assert_eq "dynamic candidate is removed" 0 "$(t_candidate_count)"
 
-t_raw_fixture
+t_raw_fixture 23456
 s5_xray_version_command() { printf '%s\n' 'Xray 99.0.0 (synthetic)'; }
 t_run_here s5_download_engine
 assert_ne "wrong Xray version is refused" 0 "$T_STATUS"
@@ -133,7 +121,7 @@ assert_eq "wrong-version candidate is removed" 0 "$(t_candidate_count)"
 # file(1) failing, a refused chmod, a candidate the kernel will not execute
 # (noexec /usr/local), and a digest tool that cannot run at all.
 for _stage_fault in filetype permission exec digest; do
-    t_raw_fixture
+    t_raw_fixture 23456
     case "$_stage_fault" in
     filetype) s5_file_type_command() { return 1; } ;;
     permission)
@@ -168,7 +156,7 @@ done
 # Acceptance hashes the candidate once, at download, and publication records it
 # once more after the rename. Verification used to hash the same private file a
 # third time. The counting seam is the production digest command.
-t_raw_fixture
+t_raw_fixture 23456
 _hc_real=$(command -v sha256sum)
 s5_sha256_command() { printf '%s\n' "$1" >>"$S5_TEST_ROOT/hash.log"; "$_hc_real" "$1"; }
 t_run_here s5_download_engine
@@ -194,7 +182,7 @@ assert_eq "a configuration-only update hashes the executable three times" 3 \
 # An endpoint that ignores --max-filesize and returns more than the pin is
 # reported with both byte counts (ADR-0006), not as a bare "size".
 for _os_lang in en zh; do
-    t_raw_fixture
+    t_raw_fixture 23456
     S5_LANG=$_os_lang
     unset S5_TEST_ASSET_PATH
     s5_curl_command() {
@@ -222,7 +210,7 @@ S5_LANG=en
 # Each request's own argv, told apart by its URL. The asset download and the
 # public-address lookup share s5_curl_command, so a search of the source text
 # found a flag in whichever of the two still carried it.
-t_raw_fixture
+t_raw_fixture 23456
 unset S5_TEST_ASSET_PATH
 : >"$S5_TEST_ROOT/curl.argv"
 s5_curl_command() { printf '%s\n' "$*" >>"$S5_TEST_ROOT/curl.argv"; return 22; }
@@ -244,7 +232,7 @@ assert_contains "the asset download is bounded one byte past the pin" \
     "--max-filesize $((S5T_BIN_SIZE + 1))" "$_asset_argv"
 
 # The download seam classifies curl's direct write status without parsing stderr.
-t_raw_fixture
+t_raw_fixture 23456
 S5_TEST_ASSET_PATH=''
 unset S5_TEST_ASSET_PATH
 s5_curl_command() {
@@ -263,7 +251,7 @@ assert_contains "curl write failure reports observed and expected bytes" \
 assert_contains "curl write failure is classified as storage" 'full or over quota' "$T_OUT"
 assert_eq "curl write failure removes candidate" 0 "$(t_candidate_count)"
 
-t_raw_fixture
+t_raw_fixture 23456
 S5_TEST_ASSET_PATH=''
 unset S5_TEST_ASSET_PATH
 s5_curl_command() { return 28; }
@@ -275,7 +263,7 @@ assert_not_contains "transport failure is not reported as storage" 'full or over
 assert_eq "transport failure removes candidate" 0 "$(t_candidate_count)"
 
 # A successful short transfer is artifact identity failure, not storage evidence.
-t_raw_fixture
+t_raw_fixture 23456
 S5_TEST_ASSET_PATH=''
 unset S5_TEST_ASSET_PATH
 s5_curl_command() {
@@ -295,7 +283,7 @@ assert_eq "successful short response removes candidate" 0 "$(t_candidate_count)"
 
 # Candidate is private during verification and is the same inode renamed into
 # place; no extracted or publication copy is introduced.
-t_raw_fixture
+t_raw_fixture 23456
 _s5t_inode_file=$S5_TEST_ROOT/candidate.inode
 _s5t_mode_file=$S5_TEST_ROOT/candidate.mode
 s5_xray_version_command() {
@@ -312,7 +300,7 @@ assert_eq "published binary is the verified candidate inode"     "$(cat "$_s5t_i
 
 # Fresh capacity is exactly one raw binary. The seam records the request rather
 # than depending on this host's current free-space count.
-t_raw_fixture
+t_raw_fixture 23456
 _s5t_space_path=''
 _s5t_space_bytes=''
 s5_require_space() { _s5t_space_path=$1; _s5t_space_bytes=$2; return 0; }
@@ -325,7 +313,7 @@ assert_eq "fresh capacity requires one raw binary" "$S5T_BIN_SIZE" "$_s5t_space_
 
 # Prefix mode and partial candidate cleanup are both attempted on an existing
 # installation even when staging fails.
-t_raw_fixture
+t_raw_fixture 23456
 mkdir -p "$S5_PREFIX"
 chmod 0755 "$S5_PREFIX"
 printf 'existing\n' >"$S5_BIN"
@@ -340,7 +328,7 @@ assert_contains "failed update preserves the installed binary" 'existing' "$(cat
 
 # Unified signal and failure cleanup tracks the same candidate path without a FIFO or
 # external work directory.
-t_raw_fixture
+t_raw_fixture 23456
 mkdir -p "$S5_PREFIX"
 chmod 0700 "$S5_PREFIX"
 S5_CREATED_PREFIX=0
@@ -354,7 +342,7 @@ assert_mode "cleanup restores existing prefix traversal" 755 "$S5_PREFIX"
 # Pin a stat snapshot at the syscall boundary, not the production seam. This
 # both avoids the live filesystem read race and proves that changing %f to %a
 # loses the root reserve, including on hosts that have no reserve themselves.
-t_raw_fixture
+t_raw_fixture 23456
 _tfs_snapshot() (
     stat() {
         case "$*" in
@@ -392,7 +380,7 @@ command rm -f "$S5_TEST_ROOT/fsid/churn"
 # Update publication must never acquire fresh-install ownership, including the
 # signal window inside rename. Otherwise cleanup removes the live binary before
 # rollback verifies it and the old installation becomes unrecoverable.
-t_raw_fixture
+t_raw_fixture 23456
 mkdir -p "$S5_PREFIX"
 printf 'old binary\n' >"$S5_BIN"
 chmod 0755 "$S5_PREFIX" "$S5_BIN"
@@ -407,7 +395,7 @@ assert_eq "update rename never marks the binary as fresh" 0 "$(cat "$S5_TEST_ROO
 unset -f mv
 
 # A failed removal keeps the tracked path so a later cleanup can retry it.
-t_raw_fixture
+t_raw_fixture 23456
 mkdir -p "$S5_PREFIX"
 S5_BINARY_TEMP=$(mktemp "$S5_PREFIX/.xray.XXXXXX")
 _s5t_failed_temp=$S5_BINARY_TEMP
@@ -424,7 +412,7 @@ assert_eq "successful retry clears candidate identity" '' "$S5_BINARY_TEMP"
 # filesystems each requirement belongs to its own path; unknown ids fall back to
 # the separate checks rather than disabling the check entirely.
 for _s5t_devices in shared split unknown; do
-    t_raw_fixture
+    t_raw_fixture 23456
     mkdir -p "$S5_TXNDIR" "$S5_PREFIX"
     s5_fs_id_command() {
         case "$_s5t_devices:$1" in
@@ -447,7 +435,7 @@ $S5_PREFIX $S5_ASSET_SIZE"
 done
 
 # A successful oversized response is refused before any version execution.
-t_raw_fixture
+t_raw_fixture 23456
 S5T_SIZE_OVERRIDE=$((S5T_BIN_SIZE - 1))
 t_run_here s5_download_engine
 assert_ne "oversized raw fixture is refused" 0 "$T_STATUS"
@@ -455,7 +443,7 @@ assert_file_absent "oversized candidate never publishes" "$S5_BIN"
 assert_eq "oversized candidate is removed" 0 "$(t_candidate_count)"
 
 # Verification failures must not execute the downloaded bytes.
-t_raw_fixture
+t_raw_fixture 23456
 s5_xray_version_command() { : >"$S5_TEST_ROOT/version-called"; return 0; }
 S5T_SHA_OVERRIDE=1111111111111111111111111111111111111111111111111111111111111111
 t_run_here s5_download_engine
@@ -464,7 +452,7 @@ assert_file_absent "digest failure never runs version" "$S5_TEST_ROOT/version-ca
 
 # The exact quota failure that motivated this change stays a storage error even
 # when statfs reports ample space. Inject curl's documented write-error status.
-t_raw_fixture
+t_raw_fixture 23456
 unset S5_TEST_ASSET_PATH
 s5_asset_select() {
     S5_ASSET_SIZE=36577406
@@ -488,7 +476,7 @@ assert_eq "quota-blind failure removes candidate" 0 "$(t_candidate_count)"
 
 # Observe a real handled signal inside download, not a direct cleanup call.
 for _tsignal in HUP INT TERM; do
-    t_raw_fixture
+    t_raw_fixture 23456
     mkdir -p "$S5_PREFIX"
     chmod 0755 "$S5_PREFIX"
     printf 'old binary\n' >"$S5_BIN"
@@ -519,7 +507,7 @@ done
 # Absolute tool seams and MAGIC isolation still hold after removing unzip. The
 # fixture replaces the file(1) seam, so production is sourced again: the seams
 # under test must be production's own, not copies written into this file.
-t_raw_fixture
+t_raw_fixture 23456
 t_source_production "$S5_REPO_ROOT/tests/fixtures/os-release/debian-12"
 mkdir "$S5_TEST_ROOT/hostile-bin"
 for _hostile in curl sha256sum file; do

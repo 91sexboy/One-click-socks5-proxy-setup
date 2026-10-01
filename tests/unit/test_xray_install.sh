@@ -103,12 +103,9 @@ test_cleanup_temps() {
     assert_file_absent "cleanup ignores a matching name in the caller's cwd" "$S5_SYSCONFDIR/.s5tmp.cwdcase"
 }
 
-test_openrc_logging_warning() {
-    t_xray_fixture 23456
-    S5_INIT=openrc
-    S5_OS_FAMILY=alpine
-    s5_select_service_artifact
-    s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
+# OpenRC's commands routed through the systemctl double, so they share its
+# transcript and service state.
+s5t_openrc_via_systemctl() {
     t_stub rc-service <<'RCSERVICE'
 #!/bin/sh
 exec "$S5_TEST_ROOT/bin/systemctl" "$2"
@@ -117,6 +114,15 @@ RCSERVICE
 #!/bin/sh
 exec "$S5_TEST_ROOT/bin/systemctl" "$1"
 RCUPDATE
+}
+
+test_openrc_logging_warning() {
+    t_xray_fixture 23456
+    S5_INIT=openrc
+    S5_OS_FAMILY=alpine
+    s5_select_service_artifact
+    s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
+    s5t_openrc_via_systemctl
 
     t_run s5_cmd_install
     assert_eq "OpenRC install succeeds without a syslog endpoint" 0 "$T_STATUS"
@@ -134,14 +140,7 @@ RCUPDATE
     s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
     mkdir -p "$S5_ROOTDIR/dev"
     : >"$S5_ROOTDIR/dev/log"
-    t_stub rc-service <<'RCSERVICE'
-#!/bin/sh
-exec "$S5_TEST_ROOT/bin/systemctl" "$2"
-RCSERVICE
-    t_stub rc-update <<'RCUPDATE'
-#!/bin/sh
-exec "$S5_TEST_ROOT/bin/systemctl" "$1"
-RCUPDATE
+    s5t_openrc_via_systemctl
     t_run s5_cmd_install
     assert_eq "OpenRC install succeeds with /dev/log present" 0 "$T_STATUS"
     assert_not_contains "OpenRC install does not warn when /dev/log exists" \
@@ -205,12 +204,7 @@ test_locks() {
 }
 
 s5t_raw_command_fixture() {
-    t_xray_fixture 23456 real-download
-    S5_TEST_ASSET_PATH=$S5_TEST_ROOT/asset-xray
-    export S5_TEST_ASSET_PATH
-    s5_file_type_command() {
-        printf '%s\n' 'ELF 64-bit LSB executable, x86-64, statically linked'
-    }
+    t_raw_fixture 23456
     s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
 }
 
@@ -428,14 +422,7 @@ is-active|status)
 esac
 exit 0
 MANAGER
-    t_stub rc-service <<'RCSERVICE'
-#!/bin/sh
-exec "$S5_TEST_ROOT/bin/systemctl" "$2"
-RCSERVICE
-    t_stub rc-update <<'RCUPDATE'
-#!/bin/sh
-exec "$S5_TEST_ROOT/bin/systemctl" "$1"
-RCUPDATE
+    s5t_openrc_via_systemctl
     S5_VERIFY_TEMP=$S5_TEST_ROOT/verify-temp
     printf '%s\n' "$S5_PASSWORD" >"$S5_VERIFY_TEMP"
     chmod 0600 "$S5_VERIFY_TEMP"
@@ -680,24 +667,5 @@ test_sha256_unit_failure() { s5t_digest_failure_install unit; }
 test_sha256_config_install_failure() { s5t_digest_failure_install config; }
 
 SCENARIOS='account_signal account_remove_halves install_exit_handler cleanup_reload_order fresh_step_messages alpine_group_warning cleanup_stop_failure account_creation_failure account_lifecycle install openrc_logging_warning config_corrupt binary_corrupt unit_corrupt account_corrupt cleanup_temps openrc_runtime locks raw_command_cleanup raw_release_failure raw_candidate_failure raw_signal fresh_stage_failure_cleanup sha256_unit_failure sha256_config_install_failure'
-if [ "$#" -eq 0 ]; then
-    # Expand the fixed scenario words into the default argument list.
-    # shellcheck disable=SC2086
-    set -- $SCENARIOS
-fi
-for scenario do
-    _scenario_known=0
-    for _scenario_name in $SCENARIOS; do
-        if [ "$scenario" = "$_scenario_name" ]; then _scenario_known=1; break; fi
-    done
-    if [ "$_scenario_known" = 1 ]; then
-        if ! command -v "test_$scenario" >/dev/null 2>&1; then
-            t_bad "missing install scenario: $scenario"
-        else
-            "test_$scenario"
-        fi
-    else
-        t_bad "unknown install scenario: $scenario"
-    fi
-done
+t_run_scenarios install "$@"
 t_summary
