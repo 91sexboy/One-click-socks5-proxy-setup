@@ -216,8 +216,12 @@ assert_contains "OpenRC adds target addresses inside its native container" \
     'sh .github/scripts/add-test-target-addresses.sh' "$alpine_text"
 assert_eq "both native gates run the mixed gate" 2 \
     "$(printf '%s\n' "$gates_text" | grep -c 'run_xray_mixed.sh')"
-assert_eq "both native duplex targets answer at denied addresses too" 2 \
-    "$(printf '%s\n' "$gates_text" | grep -c 'duplex_target.py --host 0.0.0.0 --host6 ::')"
+assert_eq "both native gates start the shared duplex target" 2 \
+    "$(printf '%s\n' "$gates_text" | grep -c 'lifecycle_start_duplex_target "$work"')"
+assert_eq "the shared duplex target answers at denied addresses too" 1 \
+    "$(grep -c 'duplex_target.py --host 0.0.0.0 --host6 ::' "$ROOT/.github/scripts/lifecycle-common.sh")"
+assert_eq "no CI script starts the duplex target by hand" 1 \
+    "$(cat "$ROOT"/.github/scripts/*.sh "$ROOT/.github/workflows/ci.yml" | grep -c 'duplex_target.py')"
 
 assert_eq "both native gates prove the configured production listen address" 2 \
     "$(printf '%s\n' "$gates_text" | grep -c '\["inbounds"\]\[0\]\["listen"\]')"

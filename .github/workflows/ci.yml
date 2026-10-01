@@ -220,16 +220,7 @@ jobs:
           # shellcheck source=/dev/null
           . .github/scripts/lifecycle-common.sh
           lifecycle_write_fixtures "$root"
-          # Bound on every address so the same target answers at both the
-          # permitted 192.0.2.1 and the denied 127.0.0.1. The boundary case needs a
-          # live listener at the denied address, or a refusal would only prove that
-          # nothing was listening there.
-          python3 tests/protocol/duplex_target.py --host 0.0.0.0 --host6 :: \
-            --ready-file "$root/target.port" --count-file "$root/count" --report-file "$root/report" &
-          target_pid=$!
-          for n in $(seq 1 50); do test -s "$root/target.port" && break; sleep 0.1; done
-          test -s "$root/target.port"
-          target_port=$(cat "$root/target.port")
+          lifecycle_start_duplex_target "$root"
           OUTDIR="$root/out" PASSFILE="$root/pass" PORT=23456 ARCH=amd64 \
             sh tests/protocol/start_engine.sh >"$root/engine.log" 2>&1 &
           engine_pid=$!
@@ -246,6 +237,9 @@ jobs:
             exit 1
           fi
           ready_port=$(cat "$root/out/ready")
+          # lifecycle_start_duplex_target set target_port; ShellCheck does not
+          # follow the sourced helper.
+          # shellcheck disable=SC2154
           PASSFILE="$root/pass" PORT="$ready_port" TARGET_PORT="$target_port" \
             REPORT="$root/report" OUT="$root/probe" \
             sh tests/protocol/run_xray_mixed.sh
