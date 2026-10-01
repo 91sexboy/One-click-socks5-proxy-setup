@@ -1230,7 +1230,7 @@ test_transaction_all_commands() {
     printf 'committed\n' >"$S5_TXN_COMMITTED"
     chmod 0600 "$S5_TXN_COMMITTED"
     printf 'drift\n' >>"$S5_CFG"
-    t_run s5_open_managed_state inspect
+    t_run s5_open_managed_state
     assert_eq "committed cleanup refuses invalid new state" 5 "$T_STATUS"
     assert_file_exists "committed cleanup preserves old config backup on drift" "$S5_TXNDIR/old.config.json"
     assert_file_exists "committed cleanup preserves old state backup on drift" "$S5_TXNDIR/old.state"

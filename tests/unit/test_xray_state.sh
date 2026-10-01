@@ -399,9 +399,9 @@ chmod 0600 "$S5_TXN_COMMITTED"
 : >"$S5_TEST_ROOT/state-loads"
 (
     s5_state_load() { printf 'load\n' >>"$S5_TEST_ROOT/state-loads"; return 0; }
-    s5_open_managed_state inspect || exit 1
+    s5_open_managed_state || exit 1
     printf 'first\n' >>"$S5_TEST_ROOT/state-loads"
-    s5_open_managed_state inspect
+    s5_open_managed_state
 ) >"$S5_TEST_ROOT/state-loads.log" 2>&1
 assert_eq "a committed recovery and the opening that found it succeed" 0 "$?"
 assert_file_absent "the committed transaction is cleaned up" "$S5_TXNDIR"
@@ -429,5 +429,20 @@ t_run s5_uninstall_expect disabled disabled
 assert_ne "an unknown phase has no expectation" 0 "$T_STATUS"
 t_run s5_uninstall_phase_valid no-such-phase
 assert_ne "an unknown phase is invalid" 0 "$T_STATUS"
+
+# The state seam distinguishes only update from everything else, and the service
+# artifact's type and mode come from the backend alone.
+t_run s5_open_managed_state inspect
+assert_ne "the state seam refuses a capability it does not have" 0 "$T_STATUS"
+for _unit_case in systemd:file:644 openrc:exec:755; do
+    S5_INIT=${_unit_case%%:*}
+    s5_unit_mode
+    assert_eq "$S5_INIT selects its service artifact's type and mode" \
+        "${_unit_case#*:}" "$S5_UNIT_TYPE:$S5_UNIT_MODE"
+done
+S5_INIT=''
+t_run s5_unit_mode
+assert_ne "no backend has no service artifact mode" 0 "$T_STATUS"
+S5_INIT=systemd
 
 t_summary

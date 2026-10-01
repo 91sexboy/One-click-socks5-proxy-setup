@@ -29,10 +29,10 @@ getent() {
 for _fam in debian el alpine; do
     S5_OS_FAMILY=$_fam
     printf '900\n' >"$S5_TEST_ROOT/groupgid"
-    s5_account_identity
+    s5_account_identity "$S5_ACCOUNT_UID" "$S5_ACCOUNT_GID"
     assert_eq "$_fam: a group mapping to the recorded GID passes identity" 0 "$?"
     printf '777\n' >"$S5_TEST_ROOT/groupgid"
-    s5_account_identity
+    s5_account_identity "$S5_ACCOUNT_UID" "$S5_ACCOUNT_GID"
     assert_ne "$_fam: a same-named group at a different GID fails identity" 0 "$?"
 done
 

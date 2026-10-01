@@ -87,6 +87,8 @@ S5_UNINSTALL_CONFIG_ID=''
 S5_UNINSTALL_BINARY_ID=''
 S5_UNINSTALL_STATE_ID=''
 S5_RCV_INIT=''
+S5_UNIT_TYPE=''
+S5_UNIT_MODE=''
 S5_RCV_FAMILY=''
 S5_STATE_PRELOADED=0
 
@@ -513,6 +515,16 @@ s5_map_arch() {
 
 # The selected backend owns one service-definition path. Writers also call this
 # boundary so standalone generation cannot reuse a previous backend's path.
+# s5_unit_mode: the type and mode of this backend's service artifact, in
+# S5_UNIT_TYPE and S5_UNIT_MODE.
+s5_unit_mode() {
+    case "$S5_INIT" in
+    systemd) S5_UNIT_TYPE='file'; S5_UNIT_MODE=644 ;;
+    openrc) S5_UNIT_TYPE='exec'; S5_UNIT_MODE=755 ;;
+    *) return 1 ;;
+    esac
+}
+
 s5_select_service_artifact() {
     S5_SERVICE_ARTIFACT=''
     # No default backend: an unset S5_INIT used to become systemd silently.
@@ -698,12 +710,8 @@ s5_ipv4_is_local() {
     # Stashed before the `set --` below, which destroys the positional parameters.
     _siil_want=${1:-}
     s5_ipv4_is_canonical "$_siil_want" || return 2
-    if [ "$#" -ge 2 ]; then
-        _siil=$2
-        [ -n "$_siil" ] || return 2
-    else
-        _siil=$(s5_local_ipv4) || return 2
-    fi
+    _siil=${2:-}
+    [ -n "$_siil" ] || return 2
     _siil_found=1
     set -f
     # Split the newline-separated list with pathname expansion disabled.
@@ -723,12 +731,8 @@ s5_ipv4_is_local() {
 # The first non-loopback address, named in the NAT advisory so the operator can
 # see what this host actually holds. Fails when there is nothing to name.
 s5_local_ipv4_hint() {
-    if [ "$#" -ge 1 ]; then
-        _slih=$1
-        [ -n "$_slih" ] || return 1
-    else
-        _slih=$(s5_local_ipv4) || return 1
-    fi
+    _slih=${1:-}
+    [ -n "$_slih" ] || return 1
     set -f
     # Word splitting is the point: one address per field, globbing disabled.
     # shellcheck disable=SC2086
@@ -1455,15 +1459,15 @@ s5_verify_binary_candidate() {
 }
 
 s5_publish_binary_candidate() {
-    [ "$1" = "$S5_BINARY_TEMP" ] || return 1
-    chmod 0755 "$1" || return 1
+    [ -n "$S5_BINARY_TEMP" ] || return 1
+    chmod 0755 "$S5_BINARY_TEMP" || return 1
     if [ "${S5_SKIP_OWNERSHIP:-0}" != 1 ]; then
-        chown root:root "$1" || return 1
+        chown root:root "$S5_BINARY_TEMP" || return 1
     fi
     # Arm fresh-install cleanup before the pathname becomes authoritative. Update
     # already has its rollback copy and S5_BINARY_REPLACED set.
     if [ "$S5_BINARY_REPLACED" != 1 ]; then S5_CREATED_BIN=1; fi
-    mv -f "$1" "$S5_BIN" || return 1
+    mv -f "$S5_BINARY_TEMP" "$S5_BIN" || return 1
     S5_BINARY_TEMP=''
     s5_record_digest binary "$S5_BIN" || return 1
     S5_BINARY_SHA256=$S5_RECORDED_DIGEST
@@ -1500,7 +1504,7 @@ s5_stage_engine() {
     S5_BINARY_TEMP=$(mktemp "$S5_PREFIX/.xray.XXXXXX") || return 1
     s5_fetch_binary "$S5_BINARY_TEMP" || return 1
     s5_verify_binary_candidate "$S5_BINARY_TEMP" || return 1
-    s5_publish_binary_candidate "$S5_BINARY_TEMP"
+    s5_publish_binary_candidate
 }
 
 s5_release_prefix_private() {
@@ -1636,75 +1640,96 @@ s5_account_create() {
     return 0
 }
 
-s5_account_identity() {
-    [ -n "$S5_ACCOUNT_UID" ] && [ -n "$S5_ACCOUNT_GID" ] || return 1
-    _saiu=$(id -u "$S5_SERVICE_USER" 2>/dev/null) || return 1
-    _saig=$(id -g "$S5_SERVICE_USER" 2>/dev/null) || return 1
-    [ "$_saiu" = "$S5_ACCOUNT_UID" ] && [ "$_saig" = "$S5_ACCOUNT_GID" ] || return 1
-    # The group is removed by name at uninstall, so on every backend -- not only
-    # Alpine -- the name must still resolve to the recorded GID. A group that drifted
-    # to a new GID, or a same-named group created by something else, must not be
-    # deleted: uninstall removes only the resources this installation recorded.
-    _saig_named=$(getent group "$S5_SERVICE_GROUP" 2>/dev/null | {
-        IFS=: read -r _sai_gn _sai_gp _sai_gid _sai_rest
-        printf '%s\n' "${_sai_gid:-}"
-    }) || return 1
-    [ "$_saig_named" = "$S5_ACCOUNT_GID" ]
+# s5_group_gid: the GID the service group name resolves to.
+s5_group_gid() {
+    getent group "$S5_SERVICE_GROUP" 2>/dev/null | awk -F: 'NR == 1 { print $3 }'
 }
 
+# s5_account_user_matches <uid> <gid>: the service user has exactly that identity.
+s5_account_user_matches() {
+    _saum_uid=$(id -u "$S5_SERVICE_USER" 2>/dev/null) || return 1
+    _saum_gid=$(id -g "$S5_SERVICE_USER" 2>/dev/null) || return 1
+    [ "$_saum_uid:$_saum_gid" = "$1:$2" ]
+}
+
+# s5_account_group_matches <gid>: the service group name resolves to that GID.
+# The group is removed by name, so on every backend -- not only Alpine -- the name
+# must still resolve to the recorded GID. A group that drifted to a new GID, or a
+# same-named group created by something else, must not be deleted: uninstall
+# removes only the resources this installation recorded.
+s5_account_group_matches() {
+    _sagm_gid=$(s5_group_gid) || return 1
+    [ -n "$_sagm_gid" ] && [ "$_sagm_gid" = "$1" ]
+}
+
+# s5_account_identity <uid> <gid>: both halves of the account match that record.
+s5_account_identity() {
+    [ -n "${1:-}" ] && [ -n "${2:-}" ] || return 1
+    s5_account_user_matches "$1" "$2" && s5_account_group_matches "$2"
+}
+
+# The one account removal, for install cleanup and uninstall alike. Each half that
+# is still present must match the recorded identity before it is deleted, so an
+# uninstall resumed between the two deletions finishes the second. Without a
+# record -- a cleanup before the account was read back -- only a half this run
+# created is removed. Returns 1 for an identity that no longer matches, having
+# said so, and 2 once a lookup or a deletion tool failed and was warned about.
 s5_account_remove() {
-    if [ -n "$S5_ACCOUNT_UID" ] && [ -n "$S5_ACCOUNT_GID" ]; then
-        s5_account_identity || {
-            s5_msg_warn account.remove.identity "$S5_ACCOUNT_UID" "$S5_ACCOUNT_GID"
-            s5_msg_err account.identity
-            return 1
-        }
-    fi
     if [ "$S5_CREATED_USER" = 1 ] || [ -n "$S5_ACCOUNT_UID" ]; then
-        # The creation flag is armed before its tool runs, so the account it
-        # names may never have been created.
         s5_getent_state passwd "$S5_SERVICE_USER"
         case $? in
         0)
+            if [ -n "$S5_ACCOUNT_UID" ] &&
+                ! s5_account_user_matches "$S5_ACCOUNT_UID" "$S5_ACCOUNT_GID"; then
+                s5_account_mismatch
+                return 1
+            fi
             s5_account_tool delete-user || {
                 s5_msg_warn account.remove.user "$S5_SERVICE_USER"
-                return 1
+                return 2
             }
             ;;
         1) ;;
-        *) s5_msg_warn account.remove.user.verify "$S5_SERVICE_USER"; return 1 ;;
+        *) s5_msg_warn account.remove.user.verify "$S5_SERVICE_USER"; return 2 ;;
         esac
         s5_getent_state passwd "$S5_SERVICE_USER"
         case $? in
         1) ;;
-        0) s5_msg_warn account.remove.user.exists "$S5_SERVICE_USER"; return 1 ;;
-        *) s5_msg_warn account.remove.user.verify "$S5_SERVICE_USER"; return 1 ;;
+        0) s5_msg_warn account.remove.user.exists "$S5_SERVICE_USER"; return 2 ;;
+        *) s5_msg_warn account.remove.user.verify "$S5_SERVICE_USER"; return 2 ;;
         esac
     fi
     if [ "$S5_CREATED_GROUP" = 1 ] || [ -n "$S5_ACCOUNT_GID" ]; then
         s5_getent_state group "$S5_SERVICE_GROUP"
         case $? in
         0)
-            if ! s5_account_tool delete-group; then
-                s5_msg_warn account.remove.group "$S5_SERVICE_GROUP"
+            if [ -n "$S5_ACCOUNT_GID" ] && ! s5_account_group_matches "$S5_ACCOUNT_GID"; then
+                s5_account_mismatch
                 return 1
             fi
+            s5_account_tool delete-group || {
+                s5_msg_warn account.remove.group "$S5_SERVICE_GROUP"
+                return 2
+            }
             ;;
         1) ;;
-        *) s5_msg_warn account.remove.group.before "$S5_SERVICE_GROUP"; return 1 ;;
+        *) s5_msg_warn account.remove.group.before "$S5_SERVICE_GROUP"; return 2 ;;
         esac
         s5_getent_state group "$S5_SERVICE_GROUP"
         case $? in
         1) ;;
-        0) s5_msg_warn account.remove.group.exists "$S5_SERVICE_GROUP"; return 1 ;;
-        *) s5_msg_warn account.remove.group.verify "$S5_SERVICE_GROUP"; return 1 ;;
+        0) s5_msg_warn account.remove.group.exists "$S5_SERVICE_GROUP"; return 2 ;;
+        *) s5_msg_warn account.remove.group.verify "$S5_SERVICE_GROUP"; return 2 ;;
         esac
     fi
     S5_CREATED_USER=0
     S5_CREATED_GROUP=0
-    S5_ACCOUNT_UID=''
-    S5_ACCOUNT_GID=''
     return 0
+}
+
+s5_account_mismatch() {
+    s5_msg_warn account.remove.identity "$S5_ACCOUNT_UID" "$S5_ACCOUNT_GID"
+    s5_msg_err account.identity
 }
 
 s5_write_config_candidate() {
@@ -1735,13 +1760,13 @@ s5_write_config_candidate() {
 }
 
 s5_write_unit() {
-    s5_select_service_artifact || return 1
+    s5_select_service_artifact && s5_unit_mode || return 1
     case "$S5_INIT" in
     openrc)
         if [ ! -d "$S5_INITSCRIPTDIR" ]; then
             s5_mkdir_parents "$S5_INITSCRIPTDIR" || return 1
         fi
-        s5_atomic_write "$S5_SERVICE_ARTIFACT" root:root 0755 <<UNIT
+        s5_atomic_write "$S5_SERVICE_ARTIFACT" root:root "0$S5_UNIT_MODE" <<UNIT
 #!/sbin/openrc-run
 
 name="$S5_PROJECT"
@@ -1767,7 +1792,7 @@ UNIT
         if [ ! -d "$S5_UNITDIR" ]; then
             s5_mkdir_parents "$S5_UNITDIR" || return 1
         fi
-        s5_atomic_write "$S5_SERVICE_ARTIFACT" root:root 0644 <<UNIT
+        s5_atomic_write "$S5_SERVICE_ARTIFACT" root:root "0$S5_UNIT_MODE" <<UNIT
 [Unit]
 Description=Xray mixed SOCKS5 and HTTP proxy
 After=network-online.target
@@ -1936,29 +1961,37 @@ s5_valid_distribution_tag() {
     s5_valid_decimal "$_svdt_revision"
 }
 
-s5_state_asset_valid() {
-    # schema, release, distribution tag, format, asset, asset size/SHA,
-    # binary size/SHA, architecture.
-    case "$1:$4" in
+# s5_asset_identity <prefix>: whether <prefix>schema, release, distribution_tag,
+# asset_format, asset, asset_size, asset_sha256, binary_size, binary_sha256 and
+# arch describe one asset this script can have installed. The loop assigns the
+# fields by name, which ShellCheck cannot see.
+# shellcheck disable=SC2154
+s5_asset_identity() {
+    for _said_key in schema release distribution_tag asset_format asset asset_size \
+        asset_sha256 binary_size binary_sha256 arch; do
+        eval "_said_$_said_key=\${$1$_said_key}"
+    done
+    case "$_said_schema:$_said_asset_format" in
     legacy:zip | 1:zip)
-        [ "$3" = "xray-$2" ] || return 1
-        case "${10}:$5" in
+        [ "$_said_distribution_tag" = "xray-$_said_release" ] || return 1
+        case "$_said_arch:$_said_asset" in
         amd64:Xray-linux-64.zip | arm64:Xray-linux-arm64-v8a.zip) ;;
         *) return 1 ;;
         esac
         ;;
     2:raw)
-        s5_valid_distribution_tag "$2" "$3" || return 1
-        case "${10}:$5" in
-        amd64:"xray-$2-linux-amd64" | arm64:"xray-$2-linux-arm64") ;;
+        s5_valid_distribution_tag "$_said_release" "$_said_distribution_tag" || return 1
+        case "$_said_arch:$_said_asset" in
+        amd64:"xray-$_said_release-linux-amd64" | arm64:"xray-$_said_release-linux-arm64") ;;
         *) return 1 ;;
         esac
-        [ "$6" = "$8" ] && [ "$7" = "$9" ] || return 1
+        [ "$_said_asset_size" = "$_said_binary_size" ] &&
+            [ "$_said_asset_sha256" = "$_said_binary_sha256" ] || return 1
         ;;
     *) return 1 ;;
     esac
-    s5_valid_decimal "$6" && s5_valid_sha256 "$7" &&
-        s5_valid_decimal "$8" && s5_valid_sha256 "$9"
+    s5_valid_decimal "$_said_asset_size" && s5_valid_sha256 "$_said_asset_sha256" &&
+        s5_valid_decimal "$_said_binary_size" && s5_valid_sha256 "$_said_binary_sha256"
 }
 
 s5_state_write() {
@@ -1998,10 +2031,9 @@ s5_state_write() {
         _ssw_binary_sha256=$S5_ASSET_SHA256
         ;;
     esac
+    _ssw_arch=$S5_ARCHNAME
     s5_valid_release "$_ssw_release" && s5_valid_commit "$_ssw_commit" || return 1
-    s5_state_asset_valid "$_ssw_schema" "$_ssw_release" "$_ssw_distribution_tag" \
-        "$_ssw_asset_format" "$_ssw_asset" "$_ssw_asset_size" "$_ssw_asset_sha256" \
-        "$_ssw_binary_size" "$_ssw_binary_sha256" "$S5_ARCHNAME" || return 1
+    s5_asset_identity _ssw_ || return 1
     [ "$S5_BINARY_SHA256" = "$_ssw_binary_sha256" ] || return 1
     [ "$(s5_bytecount "$S5_BIN" 2>/dev/null)" = "$_ssw_binary_size" ] || return 1
     [ "$(s5_sha256 "$S5_BIN" 2>/dev/null)" = "$S5_BINARY_SHA256" ] || return 1
@@ -2016,7 +2048,6 @@ s5_state_write() {
     # table writes it out.
     # shellcheck disable=SC2034
     _ssw_os=$S5_OS_ID-$S5_OS_VERSION_ID
-    _ssw_arch=$S5_ARCHNAME
     _ssw_family=$S5_OS_FAMILY
     _ssw_init=$S5_INIT
     _ssw_account_uid=$S5_ACCOUNT_UID
@@ -2085,11 +2116,8 @@ s5_verify_installed_artifacts() {
     s5_path_contract "$S5_CFG" file "root:$S5_SERVICE_GROUP" 640 || return 1
     s5_path_contract "$S5_STATEDIR" dir root:root 700 || return 1
     s5_path_contract "$S5_STATE" file root:root 600 || return 1
-    if [ "$S5_INIT" = openrc ]; then
-        s5_path_contract "$S5_SERVICE_ARTIFACT" exec root:root 755 || return 1
-    else
-        s5_path_contract "$S5_SERVICE_ARTIFACT" file root:root 644 || return 1
-    fi
+    s5_unit_mode || return 1
+    s5_path_contract "$S5_SERVICE_ARTIFACT" "$S5_UNIT_TYPE" root:root "$S5_UNIT_MODE" || return 1
     [ "$(s5_sha256 "$S5_SERVICE_ARTIFACT" 2>/dev/null)" = "$S5_UNIT_SHA256" ] || return 1
     [ "$(s5_sha256 "$S5_CFG" 2>/dev/null)" = "$S5_CONFIG_SHA256" ] || return 2
     [ "$(s5_bytecount "$S5_BIN" 2>/dev/null)" = "$S5_INSTALLED_BINARY_SIZE" ] || return 1
@@ -2126,9 +2154,7 @@ STATE_FIELDS
     S5_UNIT_SHA256=$_sload_unit_sha256
     [ "$_sload_engine" = xray ] || return 1
     s5_valid_release "$_sload_release" && s5_valid_commit "$_sload_commit" || return 1
-    s5_state_asset_valid "$_sload_schema" "$_sload_release" "$_sload_distribution_tag" \
-        "$_sload_asset_format" "$_sload_asset" "$_sload_asset_size" "$_sload_asset_sha256" \
-        "$_sload_binary_size" "$_sload_binary_sha256" "$S5_ARCHNAME" || return 1
+    s5_asset_identity _sload_ || return 1
     [ "$_sload_protocol" = mixed ] && [ "$_sload_auth" = password ] &&
         [ "$_sload_udp" = false ] || return 1
     [ "$_sload_status" = complete ] || return 4
@@ -2167,14 +2193,15 @@ STATE_FIELDS
     2) return 2 ;;
     *) return 1 ;;
     esac
-    s5_account_identity || return 1
+    s5_account_identity "$S5_ACCOUNT_UID" "$S5_ACCOUNT_GID" || return 1
     return 0
 }
 
+# s5_open_managed_state [update]: the command-facing state seam; callers do not
+# reimplement schema or release rules. Only update changes what it does: it keeps
+# the rollback traps and decides whether the binary must be replaced.
 s5_open_managed_state() {
-    # The capability is explicit even where current policy is identical. This is
-    # the command-facing state seam; callers do not reimplement schema/release rules.
-    case "$1" in inspect | operate | update | uninstall) ;; *) return 1 ;; esac
+    case "${1:-}" in '' | update) ;; *) return 1 ;; esac
     if [ -e "$S5_TXNDIR" ] || [ -L "$S5_TXNDIR" ]; then
         # Recovery restores files, copies the old executable back and restarts
         # the service, whichever command found the transaction. Under a
@@ -2184,7 +2211,7 @@ s5_open_managed_state() {
         s5_trap_rollback
         s5_transaction_recover
         _somr=$?
-        [ "$1" = update ] || s5_trap_lock_only
+        [ "${1:-}" = update ] || s5_trap_lock_only
         [ "$_somr" -eq 0 ] || return 5
     fi
     if [ "$S5_STATE_PRELOADED" = 1 ]; then
@@ -2196,7 +2223,7 @@ s5_open_managed_state() {
     S5_STATE_PRELOADED=0
     [ "$_som_status" -eq 0 ] || return "$_som_status"
     S5_UPDATE_NEEDS_BINARY=0
-    if [ "$1" = update ]; then
+    if [ "${1:-}" = update ]; then
         s5_asset_select || return 1
         if [ "$S5_INSTALLED_RELEASE" != "$S5_XRAY_VERSION" ] ||
             [ "$S5_INSTALLED_COMMIT" != "$S5_XRAY_COMMIT" ] ||
@@ -3016,32 +3043,20 @@ ROLLBACK_FIELDS
     [ "$_stvr_engine:$_stvr_protocol:$_stvr_auth:$_stvr_udp:$_stvr_status" = \
         xray:mixed:password:false:complete ] || return 1
     s5_valid_release "$_stvr_release" && s5_valid_commit "$_stvr_commit" || return 1
-    s5_state_asset_valid "$_stvr_schema" "$_stvr_release" "$_stvr_distribution_tag" \
-        "$_stvr_asset_format" "$_stvr_asset" "$_stvr_asset_size" "$_stvr_asset_sha256" \
-        "$_stvr_binary_size" "$_stvr_binary_sha256" "$_stvr_arch" || return 1
+    s5_asset_identity _stvr_ || return 1
     s5_valid_sha256 "$_stvr_config_sha256" && s5_valid_sha256 "$_stvr_unit_sha256" || return 1
     s5_valid_port "$_stvr_port" && s5_valid_stored_username "$_stvr_username" &&
         s5_ipv4_is_canonical "$_stvr_listen" || return 1
     [ "${_stvr_family:-debian}:$_stvr_init" = "$S5_OS_FAMILY:$S5_INIT" ] || return 1
     s5_valid_decimal "$_stvr_account_uid" && s5_valid_decimal "$_stvr_account_gid" || return 1
-    _stvr_saved_uid=$S5_ACCOUNT_UID
-    _stvr_saved_gid=$S5_ACCOUNT_GID
-    S5_ACCOUNT_UID=$_stvr_account_uid
-    S5_ACCOUNT_GID=$_stvr_account_gid
-    s5_account_identity
-    _stvr_account_status=$?
-    S5_ACCOUNT_UID=$_stvr_saved_uid
-    S5_ACCOUNT_GID=$_stvr_saved_gid
-    [ "$_stvr_account_status" -eq 0 ] || return 1
-    _stvr_unit_mode=644
-    _stvr_unit_type='file'
-    if [ "$S5_INIT" = openrc ]; then _stvr_unit_mode=755; _stvr_unit_type='exec'; fi
+    s5_account_identity "$_stvr_account_uid" "$_stvr_account_gid" || return 1
+    s5_unit_mode || return 1
     _stvr_unit=$S5_SERVICE_ARTIFACT
     if [ -f "$S5_TXNDIR/old.unit" ] && [ ! -L "$S5_TXNDIR/old.unit" ]; then
         s5_path_contract "$S5_TXNDIR/old.unit" file root:root 600 || return 1
         _stvr_unit=$S5_TXNDIR/old.unit
     else
-        s5_path_contract "$S5_SERVICE_ARTIFACT" "$_stvr_unit_type" root:root "$_stvr_unit_mode" || return 1
+        s5_path_contract "$S5_SERVICE_ARTIFACT" "$S5_UNIT_TYPE" root:root "$S5_UNIT_MODE" || return 1
     fi
     s5_path_contract "$S5_CFG" file "root:$S5_SERVICE_GROUP" 640 || return 1
     s5_path_contract "$S5_STATE" file root:root 600 || return 1
@@ -3399,8 +3414,7 @@ s5_accept_state() {
 # whether a recovery record or a missing state comes first.
 s5_open_locked() {
     s5_enter_locked "$1" || return 1
-    case "$1" in restart) _sol_cap=operate ;; *) _sol_cap=inspect ;; esac
-    s5_open_managed_state "$_sol_cap"
+    s5_open_managed_state
     s5_accept_state $?
 }
 
@@ -3820,16 +3834,12 @@ s5_uninstall_verify_accounts() {
         return $?
     fi
     if [ "$_suva_user" = 0 ]; then
-        _suva_uid=$(id -u "$S5_SERVICE_USER" 2>/dev/null) || return 1
-        _suva_gid=$(id -g "$S5_SERVICE_USER" 2>/dev/null) || return 1
-        [ "$_suva_uid:$_suva_gid" = "$S5_ACCOUNT_UID:$S5_ACCOUNT_GID" ] || return 1
+        s5_account_user_matches "$S5_ACCOUNT_UID" "$S5_ACCOUNT_GID" || return 1
     elif [ "$_suva_mode" = present ]; then
         return 1
     fi
     if [ "$_suva_group" = 0 ]; then
-        _suva_named_gid=$(getent group "$S5_SERVICE_GROUP" 2>/dev/null |
-            awk -F: 'NR==1 {print $3}') || return 1
-        [ "$_suva_named_gid" = "$S5_ACCOUNT_GID" ] || return 1
+        s5_account_group_matches "$S5_ACCOUNT_GID" || return 1
     elif [ "$_suva_mode" = present ]; then
         return 1
     fi
@@ -3860,9 +3870,7 @@ s5_uninstall_check_file() {
 }
 
 s5_uninstall_verify_recovery() {
-    _suvr_unit_mode=644
-    _suvr_unit_type='file'
-    if [ "$S5_INIT" = openrc ]; then _suvr_unit_mode=755; _suvr_unit_type='exec'; fi
+    s5_unit_mode || return 1
     # Directories that should remain are always checked before their contents. A
     # directory stays strict while its content exists and is optional from then
     # until its own removal.
@@ -3873,7 +3881,7 @@ s5_uninstall_verify_recovery() {
     s5_uninstall_check_path "$(s5_uninstall_expect config-removed state-finalizing)" \
         "$S5_SYSCONFDIR" dir "root:$S5_SERVICE_GROUP" 750 "$S5_UNINSTALL_CONFDIR_ID" || return 1
     s5_uninstall_check_file "$(s5_uninstall_expect disabled disabled)" \
-        "$S5_SERVICE_ARTIFACT" "$_suvr_unit_type" root:root "$_suvr_unit_mode" \
+        "$S5_SERVICE_ARTIFACT" "$S5_UNIT_TYPE" root:root "$S5_UNIT_MODE" \
         "$S5_UNIT_SHA256" "$S5_UNINSTALL_SERVICE_ID" || return 1
     s5_uninstall_check_file "$(s5_uninstall_expect service-artifact-removed service-artifact-removed)" \
         "$S5_CFG" file "root:$S5_SERVICE_GROUP" 640 \
@@ -3936,38 +3944,6 @@ s5_uninstall_checkpoint() {
     fi
 }
 
-s5_uninstall_remove_accounts() {
-    # At resume, one half may already be absent. The still-present half must match
-    # recorded identity before deletion; lookup errors remain fail closed. Returns
-    # 2 once a deletion tool has refused and said so: the identity was verified
-    # just before, so reporting it as changed would contradict that warning.
-    s5_getent_state passwd "$S5_SERVICE_USER"
-    _sura_user=$?
-    s5_getent_state group "$S5_SERVICE_GROUP"
-    _sura_group=$?
-    case "$_sura_user:$_sura_group" in
-    1:1) return 0 ;;
-    2:* | *:2) return 1 ;;
-    esac
-    if [ "$_sura_user" = 0 ]; then
-        _sura_uid=$(id -u "$S5_SERVICE_USER" 2>/dev/null) || return 1
-        _sura_gid=$(id -g "$S5_SERVICE_USER" 2>/dev/null) || return 1
-        [ "$_sura_uid" = "$S5_ACCOUNT_UID" ] && [ "$_sura_gid" = "$S5_ACCOUNT_GID" ] || return 1
-        s5_account_tool delete-user || { s5_msg_warn account.remove.user "$S5_SERVICE_USER"; return 2; }
-    fi
-    s5_getent_state group "$S5_SERVICE_GROUP"
-    case $? in
-    0)
-        _sura_gid=$(getent group "$S5_SERVICE_GROUP" 2>/dev/null | awk -F: 'NR==1 {print $3}') || return 1
-        [ "$_sura_gid" = "$S5_ACCOUNT_GID" ] || return 1
-        s5_account_tool delete-group || { s5_msg_warn account.remove.group "$S5_SERVICE_GROUP"; return 2; } ;;
-    1) ;;
-    *) return 1 ;;
-    esac
-    s5_getent_state passwd "$S5_SERVICE_USER"; [ "$?" = 1 ] || return 1
-    s5_getent_state group "$S5_SERVICE_GROUP"; [ "$?" = 1 ] || return 1
-}
-
 # s5_uninstall_step <phase>: the work a phase leaves to do. Its checkpoint names
 # the next phase, so a crash after the work and before the checkpoint repeats
 # work that is safe to repeat.
@@ -3999,8 +3975,7 @@ s5_uninstall_step() {
         s5_svc reload || { s5_msg_err service.reload; return 1; }
         ;;
     manager-reloaded)
-        s5_uninstall_remove_accounts
-        case $? in 0) ;; 2) return 1 ;; *) s5_msg_err account.identity; return 1 ;; esac
+        s5_account_remove || return 1
         ;;
     account-removed)
         s5_remove_owned_file "$S5_STATE" || return 1
@@ -4059,7 +4034,7 @@ s5_cmd_uninstall() {
             { s5_fail_locked state.invalid "$S5_UNINSTALL_STATE"; return 1; }
         s5_uninstall_verify_recovery || { s5_fail_locked uninstall.residue "$S5_UNINSTALL_STATE"; return 1; }
     else
-        s5_open_managed_state uninstall
+        s5_open_managed_state
         _scu_state=$?
         if [ "$_scu_state" = 3 ]; then
             if s5_namespace_absent; then
@@ -4073,7 +4048,8 @@ s5_cmd_uninstall() {
         s5_accept_state "$_scu_state" || return 1
         s5_confirm uninstall s5_lock_release || return 1
         s5_uninstall_preflight || { s5_fail_locked; return 1; }
-        s5_account_identity || { s5_fail_locked account.identity; return 1; }
+        s5_account_identity "$S5_ACCOUNT_UID" "$S5_ACCOUNT_GID" ||
+            { s5_fail_locked account.identity; return 1; }
         s5_uninstall_capture_identities || { s5_fail_locked uninstall.identity; return 1; }
         S5_UNINSTALL_PHASE=prepared
         s5_uninstall_checkpoint prepared || { s5_fail_locked; return 1; }

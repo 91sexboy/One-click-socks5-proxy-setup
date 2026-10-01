@@ -575,6 +575,26 @@ test_alpine_group_warning() {
     rm -f "$S5_TEST_ROOT/fail-groupdel"
 }
 
+# One removal serves install cleanup and uninstall. A half already gone is
+# skipped, a present half is deleted only while it matches the record, and a
+# mismatch is named rather than deleted.
+test_account_remove_halves() {
+    t_xray_fixture 23456
+    S5_ACCOUNT_UID=900
+    S5_ACCOUNT_GID=900
+    printf '900\n' >"$S5_TEST_ROOT/group-exists"
+    rm -f "$S5_TEST_ROOT/user-exists"
+    t_run s5_account_remove
+    assert_eq "a resumed removal finishes the remaining group" 0 "$T_STATUS"
+    assert_file_absent "the remaining group is removed" "$S5_TEST_ROOT/group-exists"
+    printf '777\n' >"$S5_TEST_ROOT/group-exists"
+    t_run s5_account_remove
+    assert_eq "a group at another GID is refused as an identity mismatch" 1 "$T_STATUS"
+    assert_contains "the mismatch is named" 'account identity mismatch: recorded 900/900' "$T_OUT"
+    assert_file_exists "a mismatched group is left in place" "$S5_TEST_ROOT/group-exists"
+    rm -f "$S5_TEST_ROOT/group-exists"
+}
+
 # c. A signal just after an account tool succeeds must still let cleanup find
 # the account, so the next install is not refused by its own leftover.
 s5t_account_signal() {
@@ -659,7 +679,7 @@ test_install_exit_handler() {
 test_sha256_unit_failure() { s5t_digest_failure_install unit; }
 test_sha256_config_install_failure() { s5t_digest_failure_install config; }
 
-SCENARIOS='account_signal install_exit_handler cleanup_reload_order fresh_step_messages alpine_group_warning cleanup_stop_failure account_creation_failure account_lifecycle install openrc_logging_warning config_corrupt binary_corrupt unit_corrupt account_corrupt cleanup_temps openrc_runtime locks raw_command_cleanup raw_release_failure raw_candidate_failure raw_signal fresh_stage_failure_cleanup sha256_unit_failure sha256_config_install_failure'
+SCENARIOS='account_signal account_remove_halves install_exit_handler cleanup_reload_order fresh_step_messages alpine_group_warning cleanup_stop_failure account_creation_failure account_lifecycle install openrc_logging_warning config_corrupt binary_corrupt unit_corrupt account_corrupt cleanup_temps openrc_runtime locks raw_command_cleanup raw_release_failure raw_candidate_failure raw_signal fresh_stage_failure_cleanup sha256_unit_failure sha256_config_install_failure'
 if [ "$#" -eq 0 ]; then
     # Expand the fixed scenario words into the default argument list.
     # shellcheck disable=SC2086
