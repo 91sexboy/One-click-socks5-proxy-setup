@@ -2747,7 +2747,7 @@ s5_on_signal() {
 }
 
 # The signal traps of a command that can change the installation. Signal
-# handling only; install adds its own EXIT trap.
+# handling only: the command's own return paths run s5_cleanup explicitly.
 s5_trap_rollback() {
     trap 's5_on_signal 129' HUP
     trap 's5_on_signal 130' INT
@@ -3023,7 +3023,7 @@ s5_restore_transaction() {
     return 0
 }
 
-# Explicit failure and EXIT cleanup share the same recovery policy. A failed
+# Explicit failure and signal cleanup share the same recovery policy. A failed
 # restore leaves the publication flag set so later cleanup cannot discard backups.
 s5_update_rollback() {
     s5_transaction_verify_rollback || {
@@ -3222,7 +3222,7 @@ STOPPING
     S5_CONFIG_REPLACED=1
     if ! mv -f "$_siinc" "$S5_CFG"; then
         # One rollback point: restoring and restarting here, and then again
-        # in the EXIT cleanup, restarted the service twice.
+        # in the command's failure cleanup, restarted the service twice.
         S5_CONFIG_REPLACED=0
         rm -f "$_siinc"
         s5_update_abort transaction.publish "$S5_CFG"
@@ -3281,8 +3281,10 @@ s5_cmd_install() {
     s5_install_runtime_dependencies install || return 1
     s5_precheck_tools install || return 1
     s5_lock_acquire || return 1
+    # Signals only: every return below cleans up explicitly, as the lock-only
+    # commands do, so an EXIT trap would add a second path to the same cleanup
+    # and displace the EXIT handler of whatever sourced the script.
     s5_trap_rollback
-    trap 's5_cleanup' EXIT
     s5_msg_print install.start >&2
     if [ -f "$S5_STATE" ]; then
         s5_install_update
@@ -3293,20 +3295,24 @@ s5_cmd_install() {
             [ -e "$S5_UNINSTALL_FINAL" ] || [ -L "$S5_UNINSTALL_FINAL" ] ||
             ! s5_namespace_absent; then
             s5_msg_err state.invalid "$S5_STATE"
-            return 1
+            _sci_status=1
+        elif s5_confirm_install; then
+            s5_install_new
+            _sci_status=$?
+        else
+            _sci_status=1
         fi
-        s5_confirm_install || return 1
-        s5_install_new
-        _sci_status=$?
         _sci_update=0
     fi
     if [ "$_sci_status" -ne 0 ]; then
         s5_cleanup
-        trap - EXIT HUP INT TERM
+        trap - HUP INT TERM
         return 1
     fi
-    s5_lock_release || return 1
-    trap - EXIT HUP INT TERM
+    s5_lock_release
+    _sci_status=$?
+    trap - HUP INT TERM
+    [ "$_sci_status" -eq 0 ] || return 1
     s5_warn_openrc_logging
     if [ "$_sci_update" = 1 ]; then s5_msg_print install.updated; else s5_msg_print install.done; fi
     if [ -t 1 ]; then

@@ -136,6 +136,9 @@ def rollback_exit(case, source, shell):
 . "$S5_REPO_ROOT/tests/lib/xray-fixture.sh"
 t_xray_fixture
 t_xray_install
+# The test root outlives this shell: it is inspected after the command returns,
+# and the temporary directory around it is removed by the Python side.
+trap - EXIT
 printf 'root=%s\n' "$S5_TEST_ROOT"
 s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
 s5_prompt_port() { S5_PORT=24567; }
@@ -190,10 +193,10 @@ s5_lock_release
             first.communicate("resume\n", timeout=5)
             case.assertNotEqual(first.returncode, 0, "failed update reported success")
             case.assertIsNone(second.poll(), "second lock holder exited too soon")
-            case.assertEqual(config.stat().st_ino, inode, "EXIT cleanup rewrote config without holding the lock")
-            case.assertEqual(transcript.read_bytes(), events, "EXIT cleanup restarted service without the lock")
+            case.assertEqual(config.stat().st_ino, inode, "failure cleanup rewrote config without holding the lock")
+            case.assertEqual(transcript.read_bytes(), events, "failure cleanup restarted service without the lock")
             case.assertTrue(all((transaction / name).read_bytes() == data for name, data in backups.items()),
-                            "EXIT cleanup removed recovery evidence without the lock")
+                            "failure cleanup removed recovery evidence without the lock")
             second.communicate("release\n", timeout=5)
             case.assertEqual(second.returncode, 0, "second command could not release its lock")
         finally:

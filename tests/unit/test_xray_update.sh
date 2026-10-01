@@ -99,9 +99,9 @@ test_listener_failure() {
 test_rejected_command() {
     t_xray_fixture 23999
     t_xray_install
-    # Unlike the direct-update case, the command's EXIT trap must run. A rejected
-    # candidate has full backups but no published config: cleanup must not replace
-    # even a byte-identical live file, nor restart a service it never stopped.
+    # Unlike the direct-update case, the command's own failure cleanup must run. A
+    # rejected candidate has full backups but no published config: cleanup must not
+    # replace even a byte-identical live file, nor restart a service it never stopped.
     _upinode=$(stat -c '%i' "$S5_CFG")
     _upcfg=$(t_sha256 "$S5_CFG")
     _upstate=$(t_sha256 "$S5_STATE")
@@ -109,7 +109,7 @@ test_rejected_command() {
     s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
     printf 1 >"$S5_TEST_ROOT/cfgtest"
     s5_prompt_port() { S5_PORT=24999; return 0; }
-    # The subshell fires the real EXIT trap without replacing the harness trap.
+    # The subshell keeps the command's traps and doubles out of the harness.
     ( s5_cmd_install ) >"$S5_TEST_ROOT/cmdinstall.log" 2>&1
     _upstatus=$?
     assert_ne "a rejected candidate fails the install command" 0 "$_upstatus"
@@ -266,9 +266,9 @@ test_restore_failure() {
         ) >"$S5_TEST_ROOT/restore.log" 2>&1
         _restore_rc=$?
         assert_ne "$_restore_target restore failure fails the command" 0 "$_restore_rc"
-        assert_eq "$_restore_target failure preserves old config through EXIT cleanup" \
+        assert_eq "$_restore_target failure preserves old config through failure cleanup" \
             "$_restore_cfg" "$(t_sha256 "$S5_TXNDIR/old.config.json" 2>/dev/null)"
-        assert_eq "$_restore_target failure preserves old state through EXIT cleanup" \
+        assert_eq "$_restore_target failure preserves old state through failure cleanup" \
             "$_restore_state" "$(t_sha256 "$S5_TXNDIR/old.state" 2>/dev/null)"
         assert_eq "$_restore_target restore failure never restarts an unrestored service" 0 \
             "$(grep -c 'systemctl restart' "$S5_TEST_ROOT/transcript" || true)"
@@ -422,7 +422,7 @@ s5t_txn_case() {
     _txn_status=$?
     if [ "$_txn_fault" = publish ]; then
         # The failed rename used to restore and start the service itself, and
-        # then the EXIT cleanup rolled back and restarted it again.
+        # then the failure cleanup rolled back and restarted it again.
         assert_eq "a failed publication starts the service exactly once" \
             "$((_txn_starts + 1))" "$(grep -cE '^systemctl (start|restart) ' "$S5_TEST_ROOT/transcript" || true)"
     fi
@@ -510,7 +510,7 @@ test_rollback_restart_failure() { s5t_txn_case restart; }
 test_rollback_exit() {
     t_run python3 "$S5_REPO_ROOT/tests/lib/lock_reclaim.py" "$S5_REPO_ROOT/socks5.sh" \
         "${S5_TEST_SHELL:-sh}" rollback-exit
-    assert_eq "EXIT cannot retry rollback while another command holds the lock" 0 "$T_STATUS"
+    assert_eq "failure cleanup cannot retry rollback while another command holds the lock" 0 "$T_STATUS"
     assert_contains "the competing operation retained its lock and recovery evidence" \
         'rollback stops before releasing operation lock' "$T_OUT"
 }
@@ -1897,7 +1897,6 @@ for _raw_fault in success config-failure before-rename after-rename; do
     if [ "$_raw_fault" = config-failure ]; then printf '23\n' >"$S5_TEST_ROOT/cfgtest"; fi
     (
         trap 's5_on_signal 143' TERM
-        trap 's5_cleanup' EXIT
         mv() {
             if [ "${3:-}" = "$S5_BIN" ] && [ ! -e "$S5_TEST_ROOT/rename-injected" ]; then
                 case "$_raw_fault" in
@@ -1911,7 +1910,7 @@ for _raw_fault in success config-failure before-rename after-rename; do
             fi
             command mv "$@"
         }
-        s5_install_update
+        s5_install_update || { s5_cleanup; exit 1; }
     ) >"$S5_TEST_ROOT/raw-update.log" 2>&1
     _raw_status=$?
     if [ "$_raw_fault" = success ]; then

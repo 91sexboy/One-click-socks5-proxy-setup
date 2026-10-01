@@ -338,7 +338,7 @@ assert_mode "failed update restores prefix traversal" 755 "$S5_PREFIX"
 assert_eq "failed update removes prefix candidate" 0 "$(t_candidate_count)"
 assert_contains "failed update preserves the installed binary" 'existing' "$(cat "$S5_BIN")"
 
-# Unified signal/EXIT cleanup tracks the same candidate path without a FIFO or
+# Unified signal and failure cleanup tracks the same candidate path without a FIFO or
 # external work directory.
 t_raw_fixture
 mkdir -p "$S5_PREFIX"
