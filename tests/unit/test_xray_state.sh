@@ -408,4 +408,26 @@ assert_file_absent "the committed transaction is cleaned up" "$S5_TXNDIR"
 assert_eq "a committed recovery loads the state once, and the next opening again" \
     "$(printf 'load\nfirst\nload')" "$(cat "$S5_TEST_ROOT/state-loads")"
 
+# Uninstall walks its phases in one order, written out here independently of the
+# script's table, and every recorded phase maps a resource onto what recovery
+# expects of it: present before its removal begins, optional while it may be
+# under way, absent once it is done.
+_phase_walk=prepared
+_phase=prepared
+while _phase=$(s5_uninstall_phase_after "$_phase"); do _phase_walk="$_phase_walk $_phase"; done
+assert_eq "uninstall passes through its phases in order" \
+    'prepared stopped disabled service-artifact-removed config-removed binary-removed manager-reloaded account-removed state-finalizing complete' \
+    "$_phase_walk"
+_phase_expect=''
+for S5_UNINSTALL_PHASE in $_phase_walk; do
+    _phase_expect="$_phase_expect $(s5_uninstall_expect config-removed state-finalizing)"
+done
+assert_eq "a configuration directory is strict, then optional, then gone" \
+    ' present present present present optional optional optional optional optional absent' "$_phase_expect"
+S5_UNINSTALL_PHASE=no-such-phase
+t_run s5_uninstall_expect disabled disabled
+assert_ne "an unknown phase has no expectation" 0 "$T_STATUS"
+t_run s5_uninstall_phase_valid no-such-phase
+assert_ne "an unknown phase is invalid" 0 "$T_STATUS"
+
 t_summary

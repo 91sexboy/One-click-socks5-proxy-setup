@@ -118,6 +118,12 @@ S5_RECOVERY_TABLE="$S5_RECOVERY_TABLE service_id:S5_UNINSTALL_SERVICE_ID"
 S5_RECOVERY_TABLE="$S5_RECOVERY_TABLE config_id:S5_UNINSTALL_CONFIG_ID"
 S5_RECOVERY_TABLE="$S5_RECOVERY_TABLE binary_id:S5_UNINSTALL_BINARY_ID"
 S5_RECOVERY_TABLE="$S5_RECOVERY_TABLE state_id:S5_UNINSTALL_STATE_ID"
+# The uninstall phases in the order uninstall passes through them. Each phase
+# names the step that is done or under way, so a recorded phase says exactly
+# what recovery still has to do.
+S5_UNINSTALL_PHASES='prepared stopped disabled service-artifact-removed config-removed'
+S5_UNINSTALL_PHASES="$S5_UNINSTALL_PHASES binary-removed manager-reloaded account-removed"
+S5_UNINSTALL_PHASES="$S5_UNINSTALL_PHASES state-finalizing complete"
 # The rollback copies a transaction may hold; with the markers below they are
 # the only names the transaction directory may contain.
 S5_TXN_BACKUPS='old.config.json old.state old.xray old.unit'
@@ -3676,11 +3682,49 @@ s5_remove_owned_dir() {
 }
 
 s5_uninstall_phase_valid() {
-    case "$1" in
-    prepared | stopped | disabled | service-artifact-removed | config-removed | \
-        binary-removed | manager-reloaded | account-removed | state-finalizing | complete) return 0 ;;
-    *) return 1 ;;
-    esac
+    s5_uninstall_phase_index "$1" >/dev/null
+}
+
+# s5_uninstall_phase_index <phase>: the phase's position in S5_UNINSTALL_PHASES.
+s5_uninstall_phase_index() {
+    _supi_n=0
+    for _supi_phase in $S5_UNINSTALL_PHASES; do
+        _supi_n=$((_supi_n + 1))
+        if [ "$_supi_phase" = "$1" ]; then
+            printf '%s' "$_supi_n"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# s5_uninstall_phase_after <phase>: the phase that follows it.
+s5_uninstall_phase_after() {
+    _supa_found=0
+    for _supa_phase in $S5_UNINSTALL_PHASES; do
+        if [ "$_supa_found" = 1 ]; then
+            printf '%s' "$_supa_phase"
+            return 0
+        fi
+        [ "$_supa_phase" != "$1" ] || _supa_found=1
+    done
+    return 1
+}
+
+# s5_uninstall_expect <from> <until>: what the recorded phase says of a resource
+# whose removal may have begun at phase <from> and is finished after <until>:
+# present before <from>, optional through <until>, absent afterwards.
+s5_uninstall_expect() {
+    _sue_now=$(s5_uninstall_phase_index "$S5_UNINSTALL_PHASE") || return 1
+    _sue_from=$(s5_uninstall_phase_index "$1") || return 1
+    _sue_until=$(s5_uninstall_phase_index "$2") || return 1
+    if [ "$_sue_now" -lt "$_sue_from" ]; then
+        printf present
+    elif [ "$_sue_now" -le "$_sue_until" ]; then
+        printf optional
+    else
+        printf absent
+    fi
 }
 
 s5_path_identity() {
@@ -3792,90 +3836,60 @@ s5_uninstall_verify_accounts() {
     return 0
 }
 
+# s5_uninstall_check_path <expectation> <path> <type> <owner> <mode> <identity>:
+# a resource recovery verifies by contract and recorded identity alone.
+s5_uninstall_check_path() {
+    case "$1" in
+    present) ;;
+    optional) [ -e "$2" ] || [ -L "$2" ] || return 0 ;;
+    absent) s5_uninstall_expect_absent "$2"; return $? ;;
+    *) return 1 ;;
+    esac
+    s5_path_contract "$2" "$3" "$4" "$5" && s5_path_identity_matches "$2" "$6"
+}
+
+# s5_uninstall_check_file <expectation> <path> <type> <owner> <mode> <sha> <identity>:
+# a resource recovery also verifies by content.
+s5_uninstall_check_file() {
+    case "$1" in
+    present) shift; s5_uninstall_verify_file "$@" ;;
+    optional) shift; s5_uninstall_verify_optional_file "$@" ;;
+    absent) s5_uninstall_expect_absent "$2" ;;
+    *) return 1 ;;
+    esac
+}
+
 s5_uninstall_verify_recovery() {
     _suvr_unit_mode=644
     _suvr_unit_type='file'
     if [ "$S5_INIT" = openrc ]; then _suvr_unit_mode=755; _suvr_unit_type='exec'; fi
-    # Directories that should remain are always checked before their contents.
-    case "$S5_UNINSTALL_PHASE" in
-    prepared | stopped | disabled | service-artifact-removed | config-removed | binary-removed | manager-reloaded | \
-    account-removed | state-finalizing)
-        s5_path_contract "$S5_STATEDIR" dir root:root 700 &&
-            s5_path_identity_matches "$S5_STATEDIR" "$S5_UNINSTALL_STATEDIR_ID" || return 1 ;;
-    complete)
-        if [ -e "$S5_STATEDIR" ] || [ -L "$S5_STATEDIR" ]; then
-            s5_path_contract "$S5_STATEDIR" dir root:root 700 &&
-                s5_path_identity_matches "$S5_STATEDIR" "$S5_UNINSTALL_STATEDIR_ID" || return 1
-        fi ;;
+    # Directories that should remain are always checked before their contents. A
+    # directory stays strict while its content exists and is optional from then
+    # until its own removal.
+    s5_uninstall_check_path "$(s5_uninstall_expect complete complete)" \
+        "$S5_STATEDIR" dir root:root 700 "$S5_UNINSTALL_STATEDIR_ID" || return 1
+    s5_uninstall_check_path "$(s5_uninstall_expect binary-removed state-finalizing)" \
+        "$S5_PREFIX" dir root:root 755 "$S5_UNINSTALL_PREFIX_ID" || return 1
+    s5_uninstall_check_path "$(s5_uninstall_expect config-removed state-finalizing)" \
+        "$S5_SYSCONFDIR" dir "root:$S5_SERVICE_GROUP" 750 "$S5_UNINSTALL_CONFDIR_ID" || return 1
+    s5_uninstall_check_file "$(s5_uninstall_expect disabled disabled)" \
+        "$S5_SERVICE_ARTIFACT" "$_suvr_unit_type" root:root "$_suvr_unit_mode" \
+        "$S5_UNIT_SHA256" "$S5_UNINSTALL_SERVICE_ID" || return 1
+    s5_uninstall_check_file "$(s5_uninstall_expect service-artifact-removed service-artifact-removed)" \
+        "$S5_CFG" file "root:$S5_SERVICE_GROUP" 640 \
+        "$S5_CONFIG_SHA256" "$S5_UNINSTALL_CONFIG_ID" || return 1
+    s5_uninstall_check_file "$(s5_uninstall_expect config-removed config-removed)" \
+        "$S5_BIN" exec root:root 755 \
+        "$S5_INSTALLED_BINARY_SHA256" "$S5_UNINSTALL_BINARY_ID" || return 1
+    # Account removal can crash between user and group deletion.
+    case "$(s5_uninstall_expect manager-reloaded manager-reloaded)" in
+    present) s5_uninstall_verify_accounts present || return 1 ;;
+    optional) s5_uninstall_verify_accounts partial || return 1 ;;
+    absent) s5_uninstall_verify_accounts absent || return 1 ;;
+    *) return 1 ;;
     esac
-    case "$S5_UNINSTALL_PHASE" in
-    prepared | stopped | disabled | service-artifact-removed | config-removed)
-        s5_path_contract "$S5_PREFIX" dir root:root 755 &&
-            s5_path_identity_matches "$S5_PREFIX" "$S5_UNINSTALL_PREFIX_ID" || return 1 ;;
-    binary-removed | manager-reloaded | account-removed | state-finalizing)
-        if [ -e "$S5_PREFIX" ] || [ -L "$S5_PREFIX" ]; then
-            s5_path_contract "$S5_PREFIX" dir root:root 755 &&
-                s5_path_identity_matches "$S5_PREFIX" "$S5_UNINSTALL_PREFIX_ID" || return 1
-        fi ;;
-    *) s5_uninstall_expect_absent "$S5_PREFIX" || return 1 ;;
-    esac
-    case "$S5_UNINSTALL_PHASE" in
-    prepared | stopped | disabled | service-artifact-removed)
-        s5_path_contract "$S5_SYSCONFDIR" dir "root:$S5_SERVICE_GROUP" 750 &&
-            s5_path_identity_matches "$S5_SYSCONFDIR" "$S5_UNINSTALL_CONFDIR_ID" || return 1 ;;
-    config-removed | binary-removed | manager-reloaded | account-removed | state-finalizing)
-        if [ -e "$S5_SYSCONFDIR" ] || [ -L "$S5_SYSCONFDIR" ]; then
-            s5_path_contract "$S5_SYSCONFDIR" dir "root:$S5_SERVICE_GROUP" 750 &&
-                s5_path_identity_matches "$S5_SYSCONFDIR" "$S5_UNINSTALL_CONFDIR_ID" || return 1
-        fi ;;
-    *) s5_uninstall_expect_absent "$S5_SYSCONFDIR" || return 1 ;;
-    esac
-    case "$S5_UNINSTALL_PHASE" in
-    prepared | stopped)
-        s5_uninstall_verify_file "$S5_SERVICE_ARTIFACT" "$_suvr_unit_type" root:root \
-            "$_suvr_unit_mode" "$S5_UNIT_SHA256" "$S5_UNINSTALL_SERVICE_ID" || return 1 ;;
-    disabled)
-        s5_uninstall_verify_optional_file "$S5_SERVICE_ARTIFACT" "$_suvr_unit_type" root:root \
-            "$_suvr_unit_mode" "$S5_UNIT_SHA256" "$S5_UNINSTALL_SERVICE_ID" || return 1 ;;
-    *) s5_uninstall_expect_absent "$S5_SERVICE_ARTIFACT" || return 1 ;;
-    esac
-    case "$S5_UNINSTALL_PHASE" in
-    prepared | stopped | disabled)
-        s5_uninstall_verify_file "$S5_CFG" file "root:$S5_SERVICE_GROUP" 640 \
-            "$S5_CONFIG_SHA256" "$S5_UNINSTALL_CONFIG_ID" || return 1 ;;
-    service-artifact-removed)
-        s5_uninstall_verify_optional_file "$S5_CFG" file "root:$S5_SERVICE_GROUP" 640 \
-            "$S5_CONFIG_SHA256" "$S5_UNINSTALL_CONFIG_ID" || return 1 ;;
-    *) s5_uninstall_expect_absent "$S5_CFG" || return 1 ;;
-    esac
-    case "$S5_UNINSTALL_PHASE" in
-    prepared | stopped | disabled | service-artifact-removed)
-        s5_uninstall_verify_file "$S5_BIN" exec root:root 755 \
-            "$S5_INSTALLED_BINARY_SHA256" "$S5_UNINSTALL_BINARY_ID" || return 1 ;;
-    config-removed)
-        s5_uninstall_verify_optional_file "$S5_BIN" exec root:root 755 \
-            "$S5_INSTALLED_BINARY_SHA256" "$S5_UNINSTALL_BINARY_ID" || return 1 ;;
-    *) s5_uninstall_expect_absent "$S5_BIN" || return 1 ;;
-    esac
-    case "$S5_UNINSTALL_PHASE" in
-    prepared | stopped | disabled | service-artifact-removed | config-removed | binary-removed)
-        s5_uninstall_verify_accounts present || return 1 ;;
-    manager-reloaded)
-        # Account removal can crash between user and group deletion.
-        s5_uninstall_verify_accounts partial || return 1 ;;
-    *) s5_uninstall_verify_accounts absent || return 1 ;;
-    esac
-    case "$S5_UNINSTALL_PHASE" in
-    prepared | stopped | disabled | service-artifact-removed | config-removed | binary-removed | manager-reloaded)
-        s5_path_contract "$S5_STATE" file root:root 600 &&
-            s5_path_identity_matches "$S5_STATE" "$S5_UNINSTALL_STATE_ID" || return 1 ;;
-    account-removed)
-        if [ -e "$S5_STATE" ] || [ -L "$S5_STATE" ]; then
-            s5_path_contract "$S5_STATE" file root:root 600 &&
-                s5_path_identity_matches "$S5_STATE" "$S5_UNINSTALL_STATE_ID" || return 1
-        fi ;;
-    *) s5_uninstall_expect_absent "$S5_STATE" || return 1 ;;
-    esac
+    s5_uninstall_check_path "$(s5_uninstall_expect account-removed account-removed)" \
+        "$S5_STATE" file root:root 600 "$S5_UNINSTALL_STATE_ID" || return 1
     return 0
 }
 
@@ -3954,67 +3968,75 @@ s5_uninstall_remove_accounts() {
     s5_getent_state group "$S5_SERVICE_GROUP"; [ "$?" = 1 ] || return 1
 }
 
+# s5_uninstall_step <phase>: the work a phase leaves to do. Its checkpoint names
+# the next phase, so a crash after the work and before the checkpoint repeats
+# work that is safe to repeat.
+s5_uninstall_step() {
+    case "$1" in
+    prepared)
+        # Preflight approved only installer-owned temporary patterns; remove
+        # them before the durable artifact phases begin.
+        s5_cleanup_own_temps "$S5_SYSCONFDIR" || return 1
+        s5_cleanup_own_temps "$S5_STATEDIR" || return 1
+        s5_cleanup_own_temps "$S5_PREFIX" binaries || return 1
+        s5_cleanup_transaction || return 1
+        s5_svc stop || { s5_msg_err service.stop; return 1; }
+        s5_wait_stopped || { s5_msg_err service.stop; return 1; }
+        ;;
+    stopped)
+        s5_svc disable || { s5_msg_err service.disable; return 1; }
+        ;;
+    disabled)
+        s5_remove_owned_file "$S5_SERVICE_ARTIFACT" || return 1
+        ;;
+    service-artifact-removed)
+        s5_remove_owned_file "$S5_CFG" || return 1
+        ;;
+    config-removed)
+        s5_remove_owned_file "$S5_BIN" || return 1
+        ;;
+    binary-removed)
+        s5_svc reload || { s5_msg_err service.reload; return 1; }
+        ;;
+    manager-reloaded)
+        s5_uninstall_remove_accounts
+        case $? in 0) ;; 2) return 1 ;; *) s5_msg_err account.identity; return 1 ;; esac
+        ;;
+    account-removed)
+        s5_remove_owned_file "$S5_STATE" || return 1
+        ;;
+    state-finalizing)
+        s5_cleanup_transaction || return 1
+        s5_remove_owned_dir "$S5_SYSCONFDIR" || return 1
+        s5_remove_owned_dir "$S5_PREFIX" || return 1
+        ;;
+    *) return 1 ;;
+    esac
+}
+
 s5_uninstall_run() {
-    while :; do
-        case "$S5_UNINSTALL_PHASE" in
-        prepared)
-            # Preflight approved only installer-owned temporary patterns; remove
-            # them before the durable artifact phases begin.
-            s5_cleanup_own_temps "$S5_SYSCONFDIR" || return 1
-            s5_cleanup_own_temps "$S5_STATEDIR" || return 1
-            s5_cleanup_own_temps "$S5_PREFIX" binaries || return 1
-            s5_cleanup_transaction || return 1
-            s5_svc stop || { s5_msg_err service.stop; return 1; }
-            s5_wait_stopped || { s5_msg_err service.stop; return 1; }
-            s5_uninstall_checkpoint stopped || return 1 ;;
-        stopped)
-            s5_svc disable || { s5_msg_err service.disable; return 1; }
-            s5_uninstall_checkpoint disabled || return 1 ;;
-        disabled)
-            s5_remove_owned_file "$S5_SERVICE_ARTIFACT" || return 1
-            s5_uninstall_checkpoint service-artifact-removed || return 1 ;;
-        service-artifact-removed)
-            s5_remove_owned_file "$S5_CFG" || return 1
-            s5_uninstall_checkpoint config-removed || return 1 ;;
-        config-removed)
-            s5_remove_owned_file "$S5_BIN" || return 1
-            s5_uninstall_checkpoint binary-removed || return 1 ;;
-        binary-removed)
-            s5_svc reload || { s5_msg_err service.reload; return 1; }
-            s5_uninstall_checkpoint manager-reloaded || return 1 ;;
-        manager-reloaded)
-            s5_uninstall_remove_accounts
-            case $? in 0) ;; 2) return 1 ;; *) s5_msg_err account.identity; return 1 ;; esac
-            s5_uninstall_checkpoint account-removed || return 1 ;;
-        account-removed)
-            s5_remove_owned_file "$S5_STATE" || return 1
-            s5_uninstall_checkpoint state-finalizing || return 1 ;;
-        state-finalizing)
-            s5_cleanup_transaction || return 1
-            s5_remove_owned_dir "$S5_SYSCONFDIR" || return 1
-            s5_remove_owned_dir "$S5_PREFIX" || return 1
-            s5_uninstall_checkpoint complete || return 1 ;;
-        complete)
-            # Move the last ownership proof outside the directory being removed.
-            # The rename makes every crash window resumable: before it, the state
-            # record exists; after it, the final marker exists; after marker
-            # removal, the namespace is already absent.
-            if [ -f "$S5_UNINSTALL_STATE" ] && [ ! -L "$S5_UNINSTALL_STATE" ]; then
-                if [ -e "$S5_UNINSTALL_FINAL" ] || [ -L "$S5_UNINSTALL_FINAL" ]; then
-                    s5_msg_err uninstall.residue "$S5_UNINSTALL_FINAL"
-                    return 1
-                fi
-                mv "$S5_UNINSTALL_STATE" "$S5_UNINSTALL_FINAL" || return 1
-            fi
-            if [ -n "${S5_UNINSTALL_INJECT:-}" ]; then
-                "$S5_UNINSTALL_INJECT" complete-moved || return 1
-            fi
-            s5_remove_owned_dir "$S5_STATEDIR" || return 1
-            s5_remove_owned_file "$S5_UNINSTALL_FINAL" || return 1
-            return 0 ;;
-        *) return 1 ;;
-        esac
+    while [ "$S5_UNINSTALL_PHASE" != complete ]; do
+        s5_uninstall_step "$S5_UNINSTALL_PHASE" || return 1
+        _surun_next=$(s5_uninstall_phase_after "$S5_UNINSTALL_PHASE") || return 1
+        s5_uninstall_checkpoint "$_surun_next" || return 1
     done
+    # Move the last ownership proof outside the directory being removed.
+    # The rename makes every crash window resumable: before it, the state
+    # record exists; after it, the final marker exists; after marker
+    # removal, the namespace is already absent.
+    if [ -f "$S5_UNINSTALL_STATE" ] && [ ! -L "$S5_UNINSTALL_STATE" ]; then
+        if [ -e "$S5_UNINSTALL_FINAL" ] || [ -L "$S5_UNINSTALL_FINAL" ]; then
+            s5_msg_err uninstall.residue "$S5_UNINSTALL_FINAL"
+            return 1
+        fi
+        mv "$S5_UNINSTALL_STATE" "$S5_UNINSTALL_FINAL" || return 1
+    fi
+    if [ -n "${S5_UNINSTALL_INJECT:-}" ]; then
+        "$S5_UNINSTALL_INJECT" complete-moved || return 1
+    fi
+    s5_remove_owned_dir "$S5_STATEDIR" || return 1
+    s5_remove_owned_file "$S5_UNINSTALL_FINAL" || return 1
+    return 0
 }
 
 s5_namespace_absent() {
