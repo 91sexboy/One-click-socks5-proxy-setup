@@ -1,6 +1,8 @@
 #!/bin/sh
-# Shared cleanup seam for the systemd gate and its nonprivileged process test.
-# The caller supplies work and lifecycle_cleanup_namespace (external teardown).
+# The shared cleanup seam of the systemd gate, the memory report and the
+# nonprivileged process test. The caller supplies work and
+# lifecycle_cleanup_namespace (external teardown), and may supply
+# lifecycle_cleanup_children for helpers of its own to stop before the target.
 lifecycle_cleanup_init() {
     target_pid=''
     trap 'lifecycle_cleanup "$?"; exit "$?"' EXIT
@@ -14,6 +16,9 @@ lifecycle_cleanup() {
     _lc_status=${1:-0}
     # Don't re-enter if a second signal arrives while stopping the target.
     trap '' HUP INT TERM
+    if command -v lifecycle_cleanup_children >/dev/null 2>&1; then
+        lifecycle_cleanup_children || true
+    fi
     lifecycle_stop_target
     if lifecycle_cleanup_namespace; then :; else
         _lc_failure=$?
@@ -36,14 +41,16 @@ lifecycle_stop_target() {
     [ -n "${target_pid:-}" ] || return 0
     _lst_pid=$target_pid
     target_pid=''
-    kill -TERM "$_lst_pid" 2>/dev/null || true
-    _lst_tries=0
-    while kill -0 "$_lst_pid" 2>/dev/null && [ "$_lst_tries" -lt 30 ]; do
-        sleep 0.1
-        _lst_tries=$((_lst_tries + 1))
-    done
-    if kill -0 "$_lst_pid" 2>/dev/null; then
-        kill -KILL "$_lst_pid" 2>/dev/null || true
-    fi
-    wait "$_lst_pid" 2>/dev/null || true
+    lifecycle_stop_child "$_lst_pid"
 }
+
+# lifecycle_stop_child <pid>: TERM a direct child, KILL it after three seconds,
+# and reap it.
+lifecycle_stop_child() {
+    kill -TERM "$1" 2>/dev/null || true
+    lifecycle_wait_until 30 0.1 lifecycle_child_gone "$1" ||
+        kill -KILL "$1" 2>/dev/null || true
+    wait "$1" 2>/dev/null || true
+}
+
+lifecycle_child_gone() { ! kill -0 "$1" 2>/dev/null; }

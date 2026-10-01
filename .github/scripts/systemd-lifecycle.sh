@@ -9,8 +9,8 @@
 set -eu
 # shellcheck source=.github/scripts/lifecycle-common.sh
 . "$(dirname "$0")/lifecycle-common.sh"
-# shellcheck source=.github/scripts/lifecycle-target.sh
-. "$(dirname "$0")/lifecycle-target.sh"
+# shellcheck source=.github/scripts/lifecycle-cleanup.sh
+. "$(dirname "$0")/lifecycle-cleanup.sh"
 printf 'lifecycle: start\n'
 work=$(mktemp -d)
 printf 'lifecycle: workdir-ready\n'
@@ -118,10 +118,7 @@ sudo sh .github/scripts/run-socks5.sh restart \
     "$work/answers.empty" "$work/failed-restart.log" "$work/pass"
 sudo systemctl is-active --quiet xray-socks5.service
 printf 'lifecycle: failed-restart-ok\n'
-python3 tests/protocol/duplex_target.py --host 0.0.0.0 --host6 :: --ready-file "$work/target.port" --count-file "$work/count" --report-file "$work/report" >"$work/target.log" 2>&1 &
-target_pid=$!
-lifecycle_wait_until 50 0.1 test -s "$work/target.port" || true
-target_port=$(cat "$work/target.port")
+lifecycle_start_duplex_target "$work"
 test "$(sudo python3 -c 'import json; print(json.load(open("/etc/xray-socks5/config.json"))["inbounds"][0]["listen"])')" = 0.0.0.0
 sudo env PROXY_HOST=192.0.2.1 PASSFILE="$work/pass" PORT=23456 TARGET_PORT="$target_port" \
     REPORT="$work/report" OUT="$work/probe" \

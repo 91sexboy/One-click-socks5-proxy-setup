@@ -103,12 +103,9 @@ test_cleanup_temps() {
     assert_file_absent "cleanup ignores a matching name in the caller's cwd" "$S5_SYSCONFDIR/.s5tmp.cwdcase"
 }
 
-test_openrc_logging_warning() {
-    t_xray_fixture 23456
-    S5_INIT=openrc
-    S5_OS_FAMILY=alpine
-    s5_select_service_artifact
-    s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
+# OpenRC's commands routed through the systemctl double, so they share its
+# transcript and service state.
+s5t_openrc_via_systemctl() {
     t_stub rc-service <<'RCSERVICE'
 #!/bin/sh
 exec "$S5_TEST_ROOT/bin/systemctl" "$2"
@@ -117,6 +114,15 @@ RCSERVICE
 #!/bin/sh
 exec "$S5_TEST_ROOT/bin/systemctl" "$1"
 RCUPDATE
+}
+
+test_openrc_logging_warning() {
+    t_xray_fixture 23456
+    S5_INIT=openrc
+    S5_OS_FAMILY=alpine
+    s5_select_service_artifact
+    s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
+    s5t_openrc_via_systemctl
 
     t_run s5_cmd_install
     assert_eq "OpenRC install succeeds without a syslog endpoint" 0 "$T_STATUS"
@@ -134,14 +140,7 @@ RCUPDATE
     s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
     mkdir -p "$S5_ROOTDIR/dev"
     : >"$S5_ROOTDIR/dev/log"
-    t_stub rc-service <<'RCSERVICE'
-#!/bin/sh
-exec "$S5_TEST_ROOT/bin/systemctl" "$2"
-RCSERVICE
-    t_stub rc-update <<'RCUPDATE'
-#!/bin/sh
-exec "$S5_TEST_ROOT/bin/systemctl" "$1"
-RCUPDATE
+    s5t_openrc_via_systemctl
     t_run s5_cmd_install
     assert_eq "OpenRC install succeeds with /dev/log present" 0 "$T_STATUS"
     assert_not_contains "OpenRC install does not warn when /dev/log exists" \
@@ -205,12 +204,7 @@ test_locks() {
 }
 
 s5t_raw_command_fixture() {
-    t_xray_fixture 23456 real-download
-    S5_TEST_ASSET_PATH=$S5_TEST_ROOT/asset-xray
-    export S5_TEST_ASSET_PATH
-    s5_file_type_command() {
-        printf '%s\n' 'ELF 64-bit LSB executable, x86-64, statically linked'
-    }
+    t_raw_fixture 23456
     s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
 }
 
@@ -428,14 +422,7 @@ is-active|status)
 esac
 exit 0
 MANAGER
-    t_stub rc-service <<'RCSERVICE'
-#!/bin/sh
-exec "$S5_TEST_ROOT/bin/systemctl" "$2"
-RCSERVICE
-    t_stub rc-update <<'RCUPDATE'
-#!/bin/sh
-exec "$S5_TEST_ROOT/bin/systemctl" "$1"
-RCUPDATE
+    s5t_openrc_via_systemctl
     S5_VERIFY_TEMP=$S5_TEST_ROOT/verify-temp
     printf '%s\n' "$S5_PASSWORD" >"$S5_VERIFY_TEMP"
     chmod 0600 "$S5_VERIFY_TEMP"
@@ -445,57 +432,66 @@ RCUPDATE
     return "$_scrstatus"
 }
 
+# Language changes one assertion only, the retained-resources diagnosis, so every
+# backend and fault runs in English and one retaining case also runs in Chinese.
 test_cleanup_stop_failure() {
+    _cscases=''
     for _csbackend in systemd openrc; do
         for _csfault in stop-failure active unknown start-failure stopped; do
-            for _cslang in en zh; do
-                t_xray_fixture 23456
-                S5_INIT=$_csbackend
-                if [ "$S5_INIT" = openrc ]; then S5_OS_FAMILY=alpine; fi
-                S5_LANG=$_cslang
-                s5_select_service_artifact
-                t_run s5t_cleanup_run "$_csfault"
-                _cscase="$_csbackend/$_csfault/$_cslang"
-                assert_ne "$_cscase remains an installation failure" 0 "$T_STATUS"
-                if [ "$_csfault" != start-failure ]; then
-                    assert_file_exists "$_cscase failed verification after starting" "$S5_TEST_ROOT/verification-failed"
-                fi
-                assert_file_exists "$_cscase attempts native stop" "$S5_TEST_ROOT/stop-attempted"
-                assert_file_exists "$_cscase stops under its owned lock" "$S5_TEST_ROOT/stop-under-lock"
-                if [ "$_csfault" = stopped ]; then
-                    assert_file_absent "$_cscase proves the service stopped" "$S5_TEST_ROOT/svc_active"
-                    assert_eq "$_cscase clears service ownership" 0 "$(cat "$S5_TEST_ROOT/service-owned")"
-                    for _cspath in "$S5_CFG" "$S5_BIN" "$S5_SERVICE_ARTIFACT" "$S5_TEST_ROOT/user-exists" "$S5_TEST_ROOT/group-exists"; do
-                        assert_file_absent "$_cscase removes the stopped installation" "$_cspath"
-                    done
-                    if [ "$S5_INIT" = openrc ]; then
-                        assert_file_absent "$_cscase removes its stopped supervisor pid" "$S5_PIDFILE"
-                        assert_file_absent "$_cscase removes its stopped child pid" "$S5_OPENRC_OPTION_DIR/child_pid"
-                    fi
-                else
-                    assert_file_exists "$_cscase still has a live service" "$S5_TEST_ROOT/svc_active"
-                    assert_eq "$_cscase retains service ownership" 1 "$(cat "$S5_TEST_ROOT/service-owned")"
-                    for _cspath in "$S5_CFG" "$S5_BIN" "$S5_SERVICE_ARTIFACT" "$S5_TEST_ROOT/user-exists" "$S5_TEST_ROOT/group-exists"; do
-                        assert_file_exists "$_cscase retains live resources" "$_cspath"
-                    done
-                    assert_mode "$_cscase keeps the retained config private" 640 "$S5_CFG"
-                    if [ "$S5_INIT" = openrc ]; then
-                        assert_eq "$_cscase preserves supervisor tracking" 100 "$(cat "$S5_PIDFILE" 2>/dev/null)"
-                        assert_eq "$_cscase preserves child tracking" 101 "$(cat "$S5_OPENRC_OPTION_DIR/child_pid" 2>/dev/null)"
-                    fi
-                    case "$_cslang" in
-                    en) _csdiagnosis='installation files and account were retained' ;;
-                    zh) _csdiagnosis='已保留安装文件和账户' ;;
-                    esac
-                    assert_contains "$_cscase explains retained resources" "$_csdiagnosis" "$T_OUT"
-                    assert_not_contains "$_cscase does not disable the live service" 'disable' "$(cat "$S5_TEST_ROOT/manager-calls")"
-                    assert_not_contains "$_cscase does not remove OpenRC boot registration" 'del' "$(cat "$S5_TEST_ROOT/manager-calls")"
-                fi
-                assert_file_absent "$_cscase releases its lock" "$S5_LOCKDIR"
-                assert_file_absent "$_cscase removes the verification secret" "$S5_TEST_ROOT/verify-temp"
-                assert_not_contains "$_cscase does not expose the password" "$S5_PASSWORD" "$T_OUT"
-            done
+            _cscases="$_cscases $_csbackend:$_csfault:en"
         done
+    done
+    for _csspec in $_cscases systemd:active:zh; do
+        _csbackend=${_csspec%%:*}
+        _csfault=${_csspec#*:}
+        _csfault=${_csfault%:*}
+        _cslang=${_csspec##*:}
+        t_xray_fixture 23456
+        S5_INIT=$_csbackend
+        if [ "$S5_INIT" = openrc ]; then S5_OS_FAMILY=alpine; fi
+        S5_LANG=$_cslang
+        s5_select_service_artifact
+        t_run s5t_cleanup_run "$_csfault"
+        _cscase="$_csbackend/$_csfault/$_cslang"
+        assert_ne "$_cscase remains an installation failure" 0 "$T_STATUS"
+        if [ "$_csfault" != start-failure ]; then
+            assert_file_exists "$_cscase failed verification after starting" "$S5_TEST_ROOT/verification-failed"
+        fi
+        assert_file_exists "$_cscase attempts native stop" "$S5_TEST_ROOT/stop-attempted"
+        assert_file_exists "$_cscase stops under its owned lock" "$S5_TEST_ROOT/stop-under-lock"
+        if [ "$_csfault" = stopped ]; then
+            assert_file_absent "$_cscase proves the service stopped" "$S5_TEST_ROOT/svc_active"
+            assert_eq "$_cscase clears service ownership" 0 "$(cat "$S5_TEST_ROOT/service-owned")"
+            for _cspath in "$S5_CFG" "$S5_BIN" "$S5_SERVICE_ARTIFACT" "$S5_TEST_ROOT/user-exists" "$S5_TEST_ROOT/group-exists"; do
+                assert_file_absent "$_cscase removes the stopped installation" "$_cspath"
+            done
+            if [ "$S5_INIT" = openrc ]; then
+                assert_file_absent "$_cscase removes its stopped supervisor pid" "$S5_PIDFILE"
+                assert_file_absent "$_cscase removes its stopped child pid" "$S5_OPENRC_OPTION_DIR/child_pid"
+            fi
+        else
+            assert_file_exists "$_cscase still has a live service" "$S5_TEST_ROOT/svc_active"
+            assert_eq "$_cscase retains service ownership" 1 "$(cat "$S5_TEST_ROOT/service-owned")"
+            for _cspath in "$S5_CFG" "$S5_BIN" "$S5_SERVICE_ARTIFACT" "$S5_TEST_ROOT/user-exists" "$S5_TEST_ROOT/group-exists"; do
+                assert_file_exists "$_cscase retains live resources" "$_cspath"
+            done
+            assert_mode "$_cscase keeps the retained config private" 640 "$S5_CFG"
+            if [ "$S5_INIT" = openrc ]; then
+                assert_eq "$_cscase preserves supervisor tracking" 100 "$(cat "$S5_PIDFILE" 2>/dev/null)"
+                assert_eq "$_cscase preserves child tracking" 101 "$(cat "$S5_OPENRC_OPTION_DIR/child_pid" 2>/dev/null)"
+            fi
+            case "$_cslang" in
+            en) _csdiagnosis='installation files and account were retained' ;;
+            zh) _csdiagnosis='已保留安装文件和账户' ;;
+            esac
+            assert_contains "$_cscase explains retained resources" "$_csdiagnosis" "$T_OUT"
+            assert_not_contains "$_cscase does not disable the live service" 'disable' "$(cat "$S5_TEST_ROOT/manager-calls")"
+            assert_not_contains "$_cscase does not remove OpenRC boot registration" 'del' "$(cat "$S5_TEST_ROOT/manager-calls")"
+        fi
+        assert_file_absent "$_cscase releases its lock" "$S5_LOCKDIR"
+        assert_file_absent "$_cscase removes the verification secret" "$S5_TEST_ROOT/verify-temp"
+        assert_not_contains "$_cscase does not expose the password" "$S5_PASSWORD" "$T_OUT"
+
     done
 }
 
@@ -573,6 +569,26 @@ test_alpine_group_warning() {
     assert_contains "a refused Alpine group deletion is warned about" \
         '[!] could not remove service group: xray-socks5' "$T_OUT"
     rm -f "$S5_TEST_ROOT/fail-groupdel"
+}
+
+# One removal serves install cleanup and uninstall. A half already gone is
+# skipped, a present half is deleted only while it matches the record, and a
+# mismatch is named rather than deleted.
+test_account_remove_halves() {
+    t_xray_fixture 23456
+    S5_ACCOUNT_UID=900
+    S5_ACCOUNT_GID=900
+    printf '900\n' >"$S5_TEST_ROOT/group-exists"
+    rm -f "$S5_TEST_ROOT/user-exists"
+    t_run s5_account_remove
+    assert_eq "a resumed removal finishes the remaining group" 0 "$T_STATUS"
+    assert_file_absent "the remaining group is removed" "$S5_TEST_ROOT/group-exists"
+    printf '777\n' >"$S5_TEST_ROOT/group-exists"
+    t_run s5_account_remove
+    assert_eq "a group at another GID is refused as an identity mismatch" 1 "$T_STATUS"
+    assert_contains "the mismatch is named" 'account identity mismatch: recorded 900/900' "$T_OUT"
+    assert_file_exists "a mismatched group is left in place" "$S5_TEST_ROOT/group-exists"
+    rm -f "$S5_TEST_ROOT/group-exists"
 }
 
 # c. A signal just after an account tool succeeds must still let cleanup find
@@ -659,25 +675,6 @@ test_install_exit_handler() {
 test_sha256_unit_failure() { s5t_digest_failure_install unit; }
 test_sha256_config_install_failure() { s5t_digest_failure_install config; }
 
-SCENARIOS='account_signal install_exit_handler cleanup_reload_order fresh_step_messages alpine_group_warning cleanup_stop_failure account_creation_failure account_lifecycle install openrc_logging_warning config_corrupt binary_corrupt unit_corrupt account_corrupt cleanup_temps openrc_runtime locks raw_command_cleanup raw_release_failure raw_candidate_failure raw_signal fresh_stage_failure_cleanup sha256_unit_failure sha256_config_install_failure'
-if [ "$#" -eq 0 ]; then
-    # Expand the fixed scenario words into the default argument list.
-    # shellcheck disable=SC2086
-    set -- $SCENARIOS
-fi
-for scenario do
-    _scenario_known=0
-    for _scenario_name in $SCENARIOS; do
-        if [ "$scenario" = "$_scenario_name" ]; then _scenario_known=1; break; fi
-    done
-    if [ "$_scenario_known" = 1 ]; then
-        if ! command -v "test_$scenario" >/dev/null 2>&1; then
-            t_bad "missing install scenario: $scenario"
-        else
-            "test_$scenario"
-        fi
-    else
-        t_bad "unknown install scenario: $scenario"
-    fi
-done
+SCENARIOS='account_signal account_remove_halves install_exit_handler cleanup_reload_order fresh_step_messages alpine_group_warning cleanup_stop_failure account_creation_failure account_lifecycle install openrc_logging_warning config_corrupt binary_corrupt unit_corrupt account_corrupt cleanup_temps openrc_runtime locks raw_command_cleanup raw_release_failure raw_candidate_failure raw_signal fresh_stage_failure_cleanup sha256_unit_failure sha256_config_install_failure'
+t_run_scenarios install "$@"
 t_summary

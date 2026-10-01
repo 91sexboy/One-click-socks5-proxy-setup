@@ -14,7 +14,7 @@ import unittest
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[2]
 SHELL = shlex.split(os.environ.get("S5_TEST_SHELL", "sh"))
-HELPER = ROOT / ".github/scripts/lifecycle-target.sh"
+HELPER = ROOT / ".github/scripts/lifecycle-cleanup.sh"
 SCENARIOS = ("normal", "error", "TERM", "HUP", "INT", "exited", "unstarted", "stubborn", "repeated",
              "namespace_failure", "namespace_primary_error", "removal_failure")
 
@@ -49,6 +49,8 @@ while True: time.sleep(0.05)
 ''')
         script = root / "driver.sh"
         script.write_text('''set -eu
+# The cleanup seam builds on the common helpers, which every gate sources first.
+. "${1%/*}/lifecycle-common.sh"
 . "$1"
 work=$2
 mode=$3
@@ -123,7 +125,7 @@ class CleanupTests(unittest.TestCase):
 def main():
     global HELPER
     if len(sys.argv) > 1:
-        HELPER = Path(sys.argv[1]) / ".github/scripts/lifecycle-target.sh"
+        HELPER = Path(sys.argv[1]) / ".github/scripts/lifecycle-cleanup.sh"
     result = unittest.TextTestRunner().run(unittest.defaultTestLoader.loadTestsFromTestCase(CleanupTests))
     if result.wasSuccessful():
         print("lifecycle owned-child cleanup: %d scenarios passed; unrelated process preserved" % len(SCENARIOS))

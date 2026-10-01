@@ -794,24 +794,7 @@ test_uninstall_final_window() {
 
 s5t_make_older_state() {
     t_xray_state_schema1
-    _mos_oldbin=$S5_TEST_ROOT/older-xray
-    printf '#!/bin/sh\nprintf older\\n\n' >"$_mos_oldbin"
-    chmod 0755 "$_mos_oldbin"
-    cp "$_mos_oldbin" "$S5_BIN"
-    _mos_sha=$(t_sha256 "$S5_BIN")
-    _mos_size=$(wc -c <"$S5_BIN" | tr -d '[:space:]')
-    awk -F '\t' -v sha="$_mos_sha" -v size="$_mos_size" '
-        BEGIN { OFS="\t" }
-        $1 == "release" { $2="v25.1.1" }
-        $1 == "commit" { $2="1111111111111111111111111111111111111111" }
-        $1 == "archive_size" { $2="123456" }
-        $1 == "archive_sha256" { $2="2222222222222222222222222222222222222222222222222222222222222222" }
-        $1 == "binary_size" { $2=size }
-        $1 == "binary_sha256" { $2=sha }
-        { print }
-    ' "$S5_STATE" >"$S5_STATE.next"
-    mv "$S5_STATE.next" "$S5_STATE"
-    chmod 0600 "$S5_STATE"
+    t_xray_older_state binary
 }
 
 test_older_release_operations() {
@@ -979,24 +962,8 @@ test_failed_unit_operations() {
 test_older_release_update() {
     t_xray_fixture 23999
     t_xray_install
-    t_xray_state_schema1
-    _oru_oldbin=$S5_TEST_ROOT/older-xray
-    printf '#!/bin/sh\nprintf older\\n\n' >"$_oru_oldbin"
-    chmod 0755 "$_oru_oldbin"
-    cp "$_oru_oldbin" "$S5_BIN"
+    s5t_make_older_state
     _oru_oldsha=$(t_sha256 "$S5_BIN")
-    awk -F '\t' -v sha="$_oru_oldsha" -v size="$(wc -c <"$S5_BIN" | tr -d '[:space:]')" '
-        BEGIN { OFS="\t" }
-        $1 == "release" { $2="v25.1.1" }
-        $1 == "commit" { $2="1111111111111111111111111111111111111111" }
-        $1 == "archive_size" { $2="123456" }
-        $1 == "archive_sha256" { $2="2222222222222222222222222222222222222222222222222222222222222222" }
-        $1 == "binary_size" { $2=size }
-        $1 == "binary_sha256" { $2=sha }
-        { print }
-    ' "$S5_STATE" >"$S5_STATE.next"
-    mv "$S5_STATE.next" "$S5_STATE"
-    chmod 0600 "$S5_STATE"
     _oru_downloaded=0
     s5_download_engine() {
         _oru_downloaded=1
@@ -1064,16 +1031,7 @@ test_older_release_download_failure() {
     t_xray_state_schema1
     _ord_bin=$(t_sha256 "$S5_BIN")
     _ord_cfg=$(t_sha256 "$S5_CFG")
-    awk -F '\t' '
-        BEGIN { OFS="\t" }
-        $1 == "release" { $2="v25.1.1" }
-        $1 == "commit" { $2="1111111111111111111111111111111111111111" }
-        $1 == "archive_size" { $2="123456" }
-        $1 == "archive_sha256" { $2="2222222222222222222222222222222222222222222222222222222222222222" }
-        { print }
-    ' "$S5_STATE" >"$S5_STATE.next"
-    mv "$S5_STATE.next" "$S5_STATE"
-    chmod 0600 "$S5_STATE"
+    t_xray_older_state
     _ord_state=$(t_sha256 "$S5_STATE")
     s5_download_engine() { printf 'candidate bytes\n' >"$S5_BIN"; return 1; }
     s5_prompt_port() { S5_PORT=23999; return 0; }
@@ -1230,7 +1188,7 @@ test_transaction_all_commands() {
     printf 'committed\n' >"$S5_TXN_COMMITTED"
     chmod 0600 "$S5_TXN_COMMITTED"
     printf 'drift\n' >>"$S5_CFG"
-    t_run s5_open_managed_state inspect
+    t_run s5_open_managed_state
     assert_eq "committed cleanup refuses invalid new state" 5 "$T_STATUS"
     assert_file_exists "committed cleanup preserves old config backup on drift" "$S5_TXNDIR/old.config.json"
     assert_file_exists "committed cleanup preserves old state backup on drift" "$S5_TXNDIR/old.state"
@@ -1243,16 +1201,7 @@ test_sha256_binary_update_failure() {
     t_xray_state_schema1
     _sbu_old_bin=$(t_sha256 "$S5_BIN")
     _sbu_old_cfg=$(t_sha256 "$S5_CFG")
-    awk -F '\t' '
-        BEGIN { OFS="\t" }
-        $1 == "release" { $2="v25.1.1" }
-        $1 == "commit" { $2="1111111111111111111111111111111111111111" }
-        $1 == "archive_size" { $2="123456" }
-        $1 == "archive_sha256" { $2="2222222222222222222222222222222222222222222222222222222222222222" }
-        { print }
-    ' "$S5_STATE" >"$S5_STATE.next"
-    mv "$S5_STATE.next" "$S5_STATE"
-    chmod 0600 "$S5_STATE"
+    t_xray_older_state
     _sbu_old_state=$(t_sha256 "$S5_STATE")
     _sbu_real_sha=/usr/bin/sha256sum
     [ -x "$_sbu_real_sha" ] || _sbu_real_sha=/bin/sha256sum
@@ -1448,27 +1397,7 @@ test_update_commit_cleanup_failure() {
 }
 
 test_rollback_cleanup_interruption_recovery() {
-    t_xray_fixture 23456
-    S5_INIT=openrc
-    S5_OS_FAMILY=alpine
-    s5_select_service_artifact
-    t_stub rc-service <<'RCSERVICE'
-#!/bin/sh
-case "$2" in
-start|restart)
-    port=$(sed -n 's/^[[:space:]]*"port":[[:space:]]*\([0-9][0-9]*\),*/\1/p' \
-        "$S5_STUB_CFG" | head -n 1)
-    printf '%s\n' "$port" >"$S5_TEST_ROOT/svc_active"
-    ;;
-stop) rm -f "$S5_TEST_ROOT/svc_active" ;;
-status) [ -f "$S5_TEST_ROOT/svc_active" ] && exit 0 || exit 3 ;;
-esac
-exit 0
-RCSERVICE
-    t_stub rc-update <<'RCUPDATE'
-#!/bin/sh
-exit 0
-RCUPDATE
+    t_xray_openrc_fixture 23456
     t_xray_install
     mkdir -m 0700 "$S5_TXNDIR"
     cp "$S5_CFG" "$S5_TXNDIR/old.config.json"
@@ -1507,27 +1436,7 @@ RCUPDATE
 }
 
 test_openrc_committed_unit_cleanup_recovery() {
-    t_xray_fixture 23456
-    S5_INIT=openrc
-    S5_OS_FAMILY=alpine
-    s5_select_service_artifact
-    t_stub rc-service <<'RCSERVICE'
-#!/bin/sh
-case "$2" in
-start|restart)
-    port=$(sed -n 's/^[[:space:]]*"port":[[:space:]]*\([0-9][0-9]*\),*/\1/p' \
-        "$S5_STUB_CFG" | head -n 1)
-    printf '%s\n' "$port" >"$S5_TEST_ROOT/svc_active"
-    ;;
-stop) rm -f "$S5_TEST_ROOT/svc_active" ;;
-status) [ -f "$S5_TEST_ROOT/svc_active" ] && exit 0 || exit 3 ;;
-esac
-exit 0
-RCSERVICE
-    t_stub rc-update <<'RCUPDATE'
-#!/bin/sh
-exit 0
-RCUPDATE
+    t_xray_openrc_fixture 23456
     t_xray_install
 
     # A committed transaction never rolls back. This is the durable shape after
@@ -1545,27 +1454,7 @@ RCUPDATE
 }
 
 test_openrc_unit_migration() {
-    t_xray_fixture 23456
-    S5_INIT=openrc
-    S5_OS_FAMILY=alpine
-    s5_select_service_artifact
-    t_stub rc-service <<'RCSERVICE'
-#!/bin/sh
-case "$2" in
-start|restart)
-    port=$(sed -n 's/^[[:space:]]*"port":[[:space:]]*\([0-9][0-9]*\),*/\1/p' \
-        "$S5_STUB_CFG" | head -n 1)
-    printf '%s\n' "$port" >"$S5_TEST_ROOT/svc_active"
-    ;;
-stop) rm -f "$S5_TEST_ROOT/svc_active" ;;
-status) [ -f "$S5_TEST_ROOT/svc_active" ] && exit 0 || exit 3 ;;
-esac
-exit 0
-RCSERVICE
-    t_stub rc-update <<'RCUPDATE'
-#!/bin/sh
-exit 0
-RCUPDATE
+    t_xray_openrc_fixture 23456
     t_xray_install
     # Synthesize a self-consistent pre-fix installation: both the published unit
     # and the authoritative state digest describe the historical one-respawn
@@ -1622,27 +1511,7 @@ s5t_openrc_update_fault() {
 
 test_openrc_update_messages() {
     for _oum_fault in marker unit; do
-        t_xray_fixture 23456
-        S5_INIT=openrc
-        S5_OS_FAMILY=alpine
-        s5_select_service_artifact
-        t_stub rc-service <<'RCSERVICE'
-#!/bin/sh
-case "$2" in
-start|restart)
-    port=$(sed -n 's/^[[:space:]]*"port":[[:space:]]*\([0-9][0-9]*\),*/\1/p' \
-        "$S5_STUB_CFG" | head -n 1)
-    printf '%s\n' "$port" >"$S5_TEST_ROOT/svc_active"
-    ;;
-stop) rm -f "$S5_TEST_ROOT/svc_active" ;;
-status) [ -f "$S5_TEST_ROOT/svc_active" ] && exit 0 || exit 3 ;;
-esac
-exit 0
-RCSERVICE
-        t_stub rc-update <<'RCUPDATE'
-#!/bin/sh
-exit 0
-RCUPDATE
+        t_xray_openrc_fixture 23456
         t_xray_install
         s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
         T_OUT=$( ( s5t_openrc_update_fault "$_oum_fault" ) 2>&1) && T_STATUS=0 || T_STATUS=$?
@@ -1661,27 +1530,7 @@ RCUPDATE
 }
 
 test_openrc_unit_migration_rollback() {
-    t_xray_fixture 23456
-    S5_INIT=openrc
-    S5_OS_FAMILY=alpine
-    s5_select_service_artifact
-    t_stub rc-service <<'RCSERVICE'
-#!/bin/sh
-case "$2" in
-start|restart)
-    port=$(sed -n 's/^[[:space:]]*"port":[[:space:]]*\([0-9][0-9]*\),*/\1/p' \
-        "$S5_STUB_CFG" | head -n 1)
-    printf '%s\n' "$port" >"$S5_TEST_ROOT/svc_active"
-    ;;
-stop) rm -f "$S5_TEST_ROOT/svc_active" ;;
-status) [ -f "$S5_TEST_ROOT/svc_active" ] && exit 0 || exit 3 ;;
-esac
-exit 0
-RCSERVICE
-    t_stub rc-update <<'RCUPDATE'
-#!/bin/sh
-exit 0
-RCUPDATE
+    t_xray_openrc_fixture 23456
     t_xray_install
     sed 's/^respawn_max=2$/respawn_max=1/' "$S5_SERVICE_ARTIFACT" \
         >"$S5_TEST_ROOT/legacy.unit"
@@ -1714,27 +1563,7 @@ RCUPDATE
 }
 
 test_openrc_unit_transaction_recovery() {
-    t_xray_fixture 23456
-    S5_INIT=openrc
-    S5_OS_FAMILY=alpine
-    s5_select_service_artifact
-    t_stub rc-service <<'RCSERVICE'
-#!/bin/sh
-case "$2" in
-start|restart)
-    port=$(sed -n 's/^[[:space:]]*"port":[[:space:]]*\([0-9][0-9]*\),*/\1/p' \
-        "$S5_STUB_CFG" | head -n 1)
-    printf '%s\n' "$port" >"$S5_TEST_ROOT/svc_active"
-    ;;
-stop) rm -f "$S5_TEST_ROOT/svc_active" ;;
-status) [ -f "$S5_TEST_ROOT/svc_active" ] && exit 0 || exit 3 ;;
-esac
-exit 0
-RCSERVICE
-    t_stub rc-update <<'RCUPDATE'
-#!/bin/sh
-exit 0
-RCUPDATE
+    t_xray_openrc_fixture 23456
     t_xray_install
 
     # Construct the durable shape left by a hard interruption after publishing a
@@ -1783,27 +1612,7 @@ RCUPDATE
 }
 
 test_openrc_logging_warning() {
-    t_xray_fixture 23456
-    S5_INIT=openrc
-    S5_OS_FAMILY=alpine
-    s5_select_service_artifact
-    t_stub rc-service <<'RCSERVICE'
-#!/bin/sh
-case "$2" in
-start|restart)
-    port=$(sed -n 's/^[[:space:]]*"port":[[:space:]]*\([0-9][0-9]*\),*/\1/p' \
-        "$S5_STUB_CFG" | head -n 1)
-    printf '%s\n' "$port" >"$S5_TEST_ROOT/svc_active"
-    ;;
-stop) rm -f "$S5_TEST_ROOT/svc_active" ;;
-status) [ -f "$S5_TEST_ROOT/svc_active" ] && exit 0 || exit 3 ;;
-esac
-exit 0
-RCSERVICE
-    t_stub rc-update <<'RCUPDATE'
-#!/bin/sh
-exit 0
-RCUPDATE
+    t_xray_openrc_fixture 23456
     t_xray_install
     s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
     t_run s5_cmd_install
@@ -1817,23 +1626,7 @@ RCUPDATE
     t_xray_assert_healthy
 }
 
-SCENARIOS='failed_unit_operations readonly_recovery_signal cleanup_entry_order owned_dir_symlink openrc_update_messages update_listener_unverified rollback_binary_restore_failure rollback_cleanup_interruption_recovery openrc_committed_unit_cleanup_recovery openrc_unit_migration openrc_unit_migration_rollback openrc_unit_transaction_recovery openrc_logging_warning uninstall_confirmation uninstall_messages family update owned_port rejected_candidate listener_failure rejected_command publish_signal config_symlink uninstall_leftovers uninstall_residue verifier_cleanup txn_mkdir_failure txn_copy_failure txn_chmod_failure stop_failure wait_stopped_failure publication_failure new_start_failure dataplane_failure state_write_failure rollback_restart_failure restore_failure uninstall_unknown rollback_exit uninstall_group_residue uninstall_resume uninstall_signal_resume uninstall_resume_drift uninstall_phase_gap_resume uninstall_final_window older_release_operations older_release_update binary_ready_gate older_release_download_failure transaction_contract_drift unit_replacing_requires_stopping_marker rollback_backup_drift uninstall_directory_drift transaction_all_commands transaction_unknown_residue sha256_binary_update_failure sha256_config_update_failure update_commit_cleanup_failure existing_stage_failure existing_stage_cleanup_failure existing_stage_cleanup_restore_failure'
-if [ "$#" -eq 0 ]; then
-    # Expand the fixed scenario words into the default argument list.
-    # shellcheck disable=SC2086
-    set -- $SCENARIOS
-fi
-for scenario do
-    _scenario_known=0
-    for _scenario_name in $SCENARIOS; do
-        if [ "$scenario" = "$_scenario_name" ]; then _scenario_known=1; break; fi
-    done
-    if [ "$_scenario_known" = 1 ]; then
-        "test_$scenario"
-    else
-        t_bad "unknown update scenario: $scenario"
-    fi
-done
+SCENARIOS='failed_unit_operations readonly_recovery_signal cleanup_entry_order owned_dir_symlink openrc_update_messages update_listener_unverified rollback_binary_restore_failure rollback_cleanup_interruption_recovery openrc_committed_unit_cleanup_recovery openrc_unit_migration openrc_unit_migration_rollback openrc_unit_transaction_recovery openrc_logging_warning uninstall_confirmation uninstall_messages family update owned_port rejected_candidate listener_failure rejected_command publish_signal config_symlink uninstall_leftovers uninstall_residue verifier_cleanup txn_mkdir_failure txn_copy_failure txn_chmod_failure stop_failure wait_stopped_failure publication_failure new_start_failure dataplane_failure state_write_failure rollback_restart_failure restore_failure uninstall_unknown rollback_exit uninstall_group_residue uninstall_resume uninstall_signal_resume uninstall_resume_drift uninstall_phase_gap_resume uninstall_final_window older_release_operations older_release_update binary_ready_gate older_release_download_failure transaction_contract_drift unit_replacing_requires_stopping_marker rollback_backup_drift uninstall_directory_drift transaction_all_commands transaction_unknown_residue sha256_binary_update_failure sha256_config_update_failure update_commit_cleanup_failure existing_stage_failure existing_stage_cleanup_failure existing_stage_cleanup_restore_failure schema1_provenance_preserved legacy_normalizes_without_relabelling raw_zip_upgrade'
 
 # A configuration-only update must retain the acquisition provenance loaded from
 # state. It may refresh service/config/account fields, but identical executable
@@ -1877,18 +1670,11 @@ test_legacy_normalizes_without_relabelling() {
     assert_eq "legacy ZIP digest is preserved" "$_lnr_sha" "$(t_state_get archive_sha256)"
 }
 
-test_schema1_provenance_preserved
-test_legacy_normalizes_without_relabelling
-
 # Exercise the actual raw download/publication path during an old ZIP upgrade,
 # including signals immediately before and after rename, not a downloader stub.
+test_raw_zip_upgrade() {
 for _raw_fault in success config-failure before-rename after-rename; do
-    t_xray_fixture 23999 real-download
-    S5_TEST_ASSET_PATH=$S5_TEST_ROOT/asset-xray
-    export S5_TEST_ASSET_PATH
-    s5_file_type_command() {
-        printf '%s\n' 'ELF 64-bit LSB executable, x86-64, statically linked'
-    }
+    t_raw_fixture 23999
     t_xray_install
     s5t_make_older_state
     _raw_oldstate=$(t_sha256 "$S5_STATE")
@@ -1934,5 +1720,7 @@ for _raw_fault in success config-failure before-rename after-rename; do
         "$(find "$S5_PREFIX" -name '.xray.*' | wc -l | tr -d '[:space:]')"
     t_xray_assert_healthy
 done
+}
 
+t_run_scenarios update "$@"
 t_summary

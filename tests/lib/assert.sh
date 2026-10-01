@@ -123,9 +123,33 @@ t_sha256() {
 
 # t_state_get <key> : read one field from the installed state file. A test-only
 # query helper; state loading in production uses one validated snapshot
-# (s5_state_parse), so this lives here rather than in socks5.sh.
+# (s5_state_parse_file), so this lives here rather than in socks5.sh.
 t_state_get() {
     awk -F '\t' -v k="$1" '$1 == k { print $2; exit }' "$S5_STATE" 2>/dev/null
+}
+
+# t_run_scenarios <file label> [scenario...]: run test_<scenario> for each named
+# scenario, or every one in $SCENARIOS when none is named. A name outside the
+# list, or one with no function, is a failure rather than a silent skip.
+t_run_scenarios() {
+    _trs_label=$1
+    shift
+    if [ "$#" -eq 0 ]; then
+        # Expand the fixed scenario words into the default argument list.
+        # shellcheck disable=SC2086
+        set -- $SCENARIOS
+    fi
+    for _trs_name do
+        case " $SCENARIOS " in
+        *" $_trs_name "*) ;;
+        *) t_bad "unknown $_trs_label scenario: $_trs_name"; continue ;;
+        esac
+        if command -v "test_$_trs_name" >/dev/null 2>&1; then
+            "test_$_trs_name"
+        else
+            t_bad "missing $_trs_label scenario: $_trs_name"
+        fi
+    done
 }
 
 t_source_production() {

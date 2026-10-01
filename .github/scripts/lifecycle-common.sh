@@ -31,6 +31,26 @@ lifecycle_wait_until() {
     return 1
 }
 
+# lifecycle_start_duplex_target <dir>: start the duplex target on every address,
+# so one listener answers at both the permitted 192.0.2.1 and the denied
+# 127.0.0.1 -- the boundary case needs a live listener at the denied address, or
+# a refusal would only prove that nothing was listening there. Waits for its
+# port in <dir>/target.port and sets target_pid and target_port.
+lifecycle_start_duplex_target() {
+    python3 tests/protocol/duplex_target.py --host 0.0.0.0 --host6 :: \
+        --ready-file "$1/target.port" --count-file "$1/count" \
+        --report-file "$1/report" >"$1/target.log" 2>&1 &
+    target_pid=$!
+    # The port is checked once more after the wait: it can arrive during the
+    # final sleep, which an exhausted wait does not observe.
+    lifecycle_wait_until 50 0.1 test -s "$1/target.port" || true
+    if ! test -s "$1/target.port"; then
+        printf 'the duplex target never reported its port\n' >&2
+        return 1
+    fi
+    target_port=$(cat "$1/target.port")
+}
+
 lifecycle_no_credential_in() {
     _lcn_file=$1
     _lcn_secret=$2

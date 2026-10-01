@@ -250,9 +250,7 @@ s5t_state_expect "external executable edit is refused" 1
 # the historical digest in state is a different value from the candidate's and
 # the two can be told apart.
 s5t_state_reset
-printf '#!/bin/sh\nprintf older\\n\n' >"$S5_TEST_ROOT/older-xray"
-cp "$S5_TEST_ROOT/older-xray" "$S5_BIN"
-chmod 755 "$S5_PREFIX" "$S5_BIN"
+chmod 755 "$S5_PREFIX"
 chmod 750 "$S5_SYSCONFDIR"
 chmod 640 "$S5_CFG"
 chmod 700 "$S5_STATEDIR"
@@ -260,16 +258,8 @@ chmod 600 "$S5_STATE"
 chmod 644 "$S5_SERVICE_ARTIFACT"
 printf '900\n' >"$S5_TEST_ROOT/user-exists"
 printf '900\n' >"$S5_TEST_ROOT/group-exists"
-awk -F '\t' -v sha="$(t_sha256 "$S5_BIN")" \
-    -v size="$(wc -c <"$S5_BIN" | tr -d '[:space:]')" 'BEGIN { OFS="\t" }
-    $1 == "release" { $2="v25.1.1" }
-    $1 == "commit" { $2="1111111111111111111111111111111111111111" }
-    $1 == "archive_size" { $2="123456" }
-    $1 == "archive_sha256" { $2="2222222222222222222222222222222222222222222222222222222222222222" }
-    $1 == "binary_size" { $2=size }
-    $1 == "binary_sha256" { $2=sha }
-    { print }
-' "$S5_TEST_ROOT/valid-state" >"$S5_STATE"
+t_xray_older_state binary
+chmod 755 "$S5_BIN"
 s5t_state_expect "a supported older installed release remains loadable" 0
 assert_eq "the state seam reports the installed release" v25.1.1 "$S5_INSTALLED_RELEASE"
 assert_eq "the state seam reports the installed binary digest" \
@@ -380,5 +370,69 @@ S5_ASSET_SIZE=bad
 t_run s5_state_write
 assert_ne "state writer refuses malformed archive metadata" 0 "$T_STATUS"
 assert_file_absent "malformed archive metadata writes no state" "$S5_STATE"
+
+# The schema-2 writer stores exactly its keys, in order. The list is written out
+# here rather than read from the script, so a reordered constant is caught.
+t_xray_fixture 23456
+t_xray_install
+assert_eq "an installed state stores the schema-2 keys in order" \
+    'schema engine release commit distribution_tag asset_format asset asset_size asset_sha256 binary_size binary_sha256 protocol auth udp listen port username os arch family init account_uid account_gid config_sha256 unit_sha256 status' \
+    "$(cut -f1 "$S5_STATE" | tr '\n' ' ' | sed 's/ $//')"
+
+# A committed transaction is recovered after one validated state load, and the
+# command that found it reuses that load instead of parsing the state again. The
+# next opening, with no transaction left, loads afresh.
+mkdir "$S5_TXNDIR"
+chmod 0700 "$S5_TXNDIR"
+printf 'committed\n' >"$S5_TXN_COMMITTED"
+chmod 0600 "$S5_TXN_COMMITTED"
+: >"$S5_TEST_ROOT/state-loads"
+(
+    s5_state_load() { printf 'load\n' >>"$S5_TEST_ROOT/state-loads"; return 0; }
+    s5_open_managed_state || exit 1
+    printf 'first\n' >>"$S5_TEST_ROOT/state-loads"
+    s5_open_managed_state
+) >"$S5_TEST_ROOT/state-loads.log" 2>&1
+assert_eq "a committed recovery and the opening that found it succeed" 0 "$?"
+assert_file_absent "the committed transaction is cleaned up" "$S5_TXNDIR"
+assert_eq "a committed recovery loads the state once, and the next opening again" \
+    "$(printf 'load\nfirst\nload')" "$(cat "$S5_TEST_ROOT/state-loads")"
+
+# Uninstall walks its phases in one order, written out here independently of the
+# script's table, and every recorded phase maps a resource onto what recovery
+# expects of it: present before its removal begins, optional while it may be
+# under way, absent once it is done.
+_phase_walk=prepared
+_phase=prepared
+while _phase=$(s5_uninstall_phase_after "$_phase"); do _phase_walk="$_phase_walk $_phase"; done
+assert_eq "uninstall passes through its phases in order" \
+    'prepared stopped disabled service-artifact-removed config-removed binary-removed manager-reloaded account-removed state-finalizing complete' \
+    "$_phase_walk"
+_phase_expect=''
+for S5_UNINSTALL_PHASE in $_phase_walk; do
+    _phase_expect="$_phase_expect $(s5_uninstall_expect config-removed state-finalizing)"
+done
+assert_eq "a configuration directory is strict, then optional, then gone" \
+    ' present present present present optional optional optional optional optional absent' "$_phase_expect"
+S5_UNINSTALL_PHASE=no-such-phase
+t_run s5_uninstall_expect disabled disabled
+assert_ne "an unknown phase has no expectation" 0 "$T_STATUS"
+t_run s5_uninstall_phase_valid no-such-phase
+assert_ne "an unknown phase is invalid" 0 "$T_STATUS"
+
+# The state seam distinguishes only update from everything else, and the service
+# artifact's type and mode come from the backend alone.
+t_run s5_open_managed_state inspect
+assert_ne "the state seam refuses a capability it does not have" 0 "$T_STATUS"
+for _unit_case in systemd:file:644 openrc:exec:755; do
+    S5_INIT=${_unit_case%%:*}
+    s5_unit_mode
+    assert_eq "$S5_INIT selects its service artifact's type and mode" \
+        "${_unit_case#*:}" "$S5_UNIT_TYPE:$S5_UNIT_MODE"
+done
+S5_INIT=''
+t_run s5_unit_mode
+assert_ne "no backend has no service artifact mode" 0 "$T_STATUS"
+S5_INIT=systemd
 
 t_summary

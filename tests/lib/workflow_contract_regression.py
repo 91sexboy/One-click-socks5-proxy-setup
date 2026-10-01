@@ -138,6 +138,10 @@ class WorkflowContractTests(unittest.TestCase):
             'quota-container-env': lambda jobs: next(step for step in jobs['openrc-integration']['steps'] if 'run' in step)['env'].pop('ALPINE_QUOTA_BLIND'),
             'hostile-container-forward': lambda jobs: next(step for step in jobs['openrc-integration']['steps'] if 'run' in step).update({'run': UNFORWARDED_RUN}),
             'quota-container-forward': lambda jobs: next(step for step in jobs['openrc-integration']['steps'] if 'run' in step).update({'run': UNFORWARDED_QUOTA_RUN}),
+            'reinstall': lambda jobs: jobs['xray-mixed']['steps'].insert(1, {'name': 'Install', 'run': 'sudo apt-get update && sudo apt-get install -y python3 curl'}),
+            'runner-tools': lambda jobs: jobs['memory-report']['steps'].pop(1),
+            'syntax-per-leg': lambda jobs: jobs['unit']['steps'].insert(1, {'name': 'Syntax', 'run': 'sh -n socks5.sh'}),
+            'syntax-shell': lambda jobs: next(step for step in jobs['syntax']['steps'] if step.get('name') == 'Syntax').update({'run': 'sh -n socks5.sh\ndash -n socks5.sh\nbash -n socks5.sh'}),
         }
         # A mutation rejected for an unrelated reason proves nothing about the
         # clause it targets, which is how a collapsed container command passed
@@ -169,6 +173,10 @@ class WorkflowContractTests(unittest.TestCase):
                 'openrc-integration: hostile curl flag not forwarded to the container',
             'quota-container-forward':
                 'openrc-integration: quota-blind flag not forwarded to the container',
+            'reinstall': 'xray-mixed: reinstalls preinstalled curl python3',
+            'runner-tools': 'expected one executable entrypoint: sh .github/scripts/require-runner-tools.sh',
+            'syntax-per-leg': 'unit: syntax runs once, in its own job',
+            'syntax-shell': 'expected one executable entrypoint: busybox sh -n socks5.sh',
         }
         self.assertEqual(set(messages), set(mutations))
         for label, mutate in mutations.items():
@@ -197,9 +205,9 @@ class WorkflowContractTests(unittest.TestCase):
                 step = next(step for step in changed['jobs']['unit']['steps']
                             if 'sh tests/run.sh' in step.get('run', ''))
                 if label == 'wrong-step':
-                    syntax = next(item for item in changed['jobs']['unit']['steps']
-                                  if item.get('name') == 'Syntax')
-                    syntax['run'] = replacement
+                    other = next(item for item in changed['jobs']['unit']['steps']
+                                 if item.get('name') == 'Install BusyBox')
+                    other['run'] = replacement
                     step['run'] = 'printf "unit suite displaced\n"'
                 else:
                     step['run'] = replacement

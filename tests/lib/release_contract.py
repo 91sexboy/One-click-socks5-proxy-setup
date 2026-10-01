@@ -57,7 +57,7 @@ FILES = ('socks5.sh', '.github/workflows/ci.yml',
 # leaves stale bytes that fail as a lifecycle mystery rather than a pin mismatch.
 PIN_MIRRORS = ('.github/scripts/alpine-lifecycle.sh',
                '.github/scripts/systemd-lifecycle.sh',
-               'tests/unit/test_xray_docs.sh')
+               'tests/unit/test_xray_workflow.sh')
 
 
 class ContractError(ValueError):

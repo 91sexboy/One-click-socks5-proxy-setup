@@ -37,10 +37,7 @@ def run_cohort(count, worker_limit=None, fail_connection=False):
     workers = []
     lock = threading.Lock()
     active, peak, opened = 0, 0, 0
-    duplex_target.STOP.clear()
-    duplex_target.ACCEPTED = 0
-    duplex_target.FRAMES = 0
-    duplex_target.COHORTS.clear()
+    duplex_target.reset_state()
     for key in xray_mixed.STATS:
         xray_mixed.STATS[key] = 0
 
@@ -63,8 +60,7 @@ def run_cohort(count, worker_limit=None, fail_connection=False):
                 continue
             except OSError:
                 return
-            with duplex_target.COUNT_LOCK:
-                duplex_target.ACCEPTED += 1
+            duplex_target.record_accept(None, None)
             thread = threading.Thread(target=worker, args=(sock,), daemon=True)
             workers.append(thread)
             thread.start()

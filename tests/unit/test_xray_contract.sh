@@ -485,6 +485,20 @@ include evil'
 t_run s5_config_render
 assert_ne "multiline listen is refused" 0 "$T_STATUS"
 
+# Splitting never expands a field into file names, whatever the working directory
+# holds, and a credential's character set is a bracket expression of its own.
+: >"$S5_TEST_ROOT/glob-match"
+assert_eq "a split field is never globbed" '*' \
+    "$(cd "$S5_TEST_ROOT" && s5_split_words "$S5_WORD_IFS" '* second' s5_first_word)"
+assert_eq "fields split at the given separator" '4' \
+    "$(s5_split_words . 1.2.3.4 sh -c 'printf %s "$#"' sh)"
+for _cred_bad in 'abc*' 'abc]' 'ab-c' 'a b c'; do
+    s5_valid_username "$_cred_bad"
+    assert_ne "a username with '$_cred_bad' is refused" 0 "$?"
+done
+s5_valid_stored_username 'ab-c'
+assert_eq "a stored username keeps its historical hyphen" 0 "$?"
+
 # A catalog miss must not be silent. Every key but the bilingual lang.* pair
 # renders through `case "$S5_LANG"`, so an unset language used to return the empty
 # string with status 0 -- a mistyped key made a fatal error print nothing while
@@ -723,6 +737,7 @@ service.dataplane|23456|||authenticated proxy traffic could not be verified on p
 state.write|/state|||could not write the state file: /state.|无法写入 state 文件：/state。
 uninstall.progress|/uninstall|||could not record uninstall progress: /uninstall.|无法记录卸载进度：/uninstall。
 uninstall.identity||||could not record the identity of the installed paths; nothing was removed.|无法记录已安装路径的身份；未删除任何内容。
+show.nat.forward||||The links below work only if something upstream forwards inbound connections for that address to this machine; otherwise set S5_SERVER_IPV4 and S5_SERVER_PORT to the address and port your clients actually use.|只有当上级把发往该地址的入站连接转发到本机时，下面的链接才可用；否则请用 S5_SERVER_IPV4 和 S5_SERVER_PORT 指定客户端真正使用的地址和端口。
 cleanup.residue|/prefix/.xray.old|||kept a temporary file this run did not create: /prefix/.xray.old; remove it manually once it is no longer needed.|保留了不属于本次运行的临时文件：/prefix/.xray.old；确认不再需要后可手动删除。
 CATALOG
 

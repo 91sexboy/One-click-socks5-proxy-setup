@@ -287,13 +287,9 @@ lifecycle_process_clean "$live_pid" "$work" "$work/pass" "$work/pass.update"
 # address so it answers at both the permitted 192.0.2.1 and the denied
 # 127.0.0.1, which is what makes a boundary bypass visible.
 sh .github/scripts/add-test-target-addresses.sh
-python3 tests/protocol/duplex_target.py --host 0.0.0.0 --host6 :: \
-    --ready-file "$work/target.port" \
-    --count-file "$work/count" --report-file "$work/report" >"$work/target.log" 2>&1 &
-lifecycle_wait_until 50 0.2 test -s "$work/target.port" || true
-test -s "$work/target.port"
+lifecycle_start_duplex_target "$work"
 test "$(python3 -c 'import json; print(json.load(open("/etc/xray-socks5/config.json"))["inbounds"][0]["listen"])')" = 0.0.0.0
-PROXY_HOST=192.0.2.1 PASSFILE="$work/pass.update" PORT=23456 TARGET_PORT="$(cat "$work/target.port")" \
+PROXY_HOST=192.0.2.1 PASSFILE="$work/pass.update" PORT=23456 TARGET_PORT="$target_port" \
     REPORT="$work/report" OUT="$work/probe" \
     sh tests/protocol/run_xray_mixed.sh
 sh .github/scripts/run-socks5.sh uninstall \

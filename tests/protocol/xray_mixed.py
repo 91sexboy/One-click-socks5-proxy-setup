@@ -144,6 +144,22 @@ def socks5_authenticate(sock, creds, deadline):
     return read_exact(sock, 2, deadline) == b"\x01\x00"
 
 
+def socks5_connect_request(target, atyp):
+    return b"\x05\x01\x00" + socks5_target_address(atyp, target.host) + struct.pack("!H", target.port)
+
+
+def socks5_skip_bound_address(sock, address_type, deadline, where=""):
+    """Consume the BND.ADDR and BND.PORT that follow a granted CONNECT reply."""
+    if address_type == 1:
+        read_exact(sock, 6, deadline)
+    elif address_type == 3:
+        read_exact(sock, read_exact(sock, 1, deadline)[0] + 2, deadline)
+    elif address_type == 4:
+        read_exact(sock, 18, deadline)
+    else:
+        fail("SOCKS5 returned an unknown address type" + where)
+
+
 def socks5_connect(proxy, target, creds, atyp="ipv4"):
     sock = connect(proxy)
     try:
@@ -152,19 +168,11 @@ def socks5_connect(proxy, target, creds, atyp="ipv4"):
             fail("SOCKS5 did not select username/password authentication")
         if not socks5_authenticate(sock, creds, deadline):
             fail("SOCKS5 credentials were rejected")
-        sock.sendall(b"\x05\x01\x00" + socks5_target_address(atyp, target.host) + struct.pack("!H", target.port))
+        sock.sendall(socks5_connect_request(target, atyp))
         head = read_exact(sock, 4, deadline)
         if head[0] != 5 or head[1] != 0:
             fail("SOCKS5 CONNECT was refused")
-        if head[3] == 1:
-            read_exact(sock, 6, deadline)
-        elif head[3] == 3:
-            length = read_exact(sock, 1, deadline)[0]
-            read_exact(sock, length + 2, deadline)
-        elif head[3] == 4:
-            read_exact(sock, 18, deadline)
-        else:
-            fail("SOCKS5 returned an unknown address type")
+        socks5_skip_bound_address(sock, head[3], deadline)
         return sock
     except BaseException:
         sock.close()
@@ -376,19 +384,24 @@ def exchange(sock, cid, nonce, count=4, idle=False, spacing=0.0, server_seq=0):
         fail("unsolicited server frames stopped progressing in the final window")
 
 
+def framed_tunnel(sock, cid, count, idle=False, spacing=0.0):
+    """Run one framed exchange over an opened tunnel, then close and count it."""
+    nonce = new_nonce()
+    try:
+        sock.sendall(make_frame(FRAME_HELLO, cid, 0, nonce, b"hello"))
+        exchange(sock, cid, nonce, count=count, idle=idle, spacing=spacing)
+    finally:
+        sock.close()
+    with STATS_LOCK:
+        STATS["tunnels"] += 1
+
+
 def tunnel_once(protocol, proxy, target, creds, cid, atyp="ipv4"):
     if protocol == "socks5":
         sock = socks5_connect(proxy, target, creds, atyp)
     else:
         sock = http_connect(proxy, target, creds)
-    nonce = new_nonce()
-    try:
-        sock.sendall(make_frame(FRAME_HELLO, cid, 0, nonce, b"hello"))
-        exchange(sock, cid, nonce, count=4, idle=True)
-    finally:
-        sock.close()
-    with STATS_LOCK:
-        STATS["tunnels"] += 1
+    framed_tunnel(sock, cid, count=4, idle=True)
 
 
 def longlived_tunnel(proxy, target, creds, cid, frames=24, spacing=0.5):
@@ -402,18 +415,10 @@ def longlived_tunnel(proxy, target, creds, cid, frames=24, spacing=0.5):
     payload, and the target's unsolicited server frames must keep arriving, which
     the `spacing` between frames stretches across the tunnel's whole lifetime.
 
-    Counted into STATS exactly as tunnel_once counts a tunnel, so the target's
+    Counted into STATS by the same framed_tunnel as tunnel_once, so the target's
     totals still reconcile in run_xray_mixed.sh.
     """
-    sock = socks5_connect(proxy, target, creds, "ipv4")
-    nonce = new_nonce()
-    try:
-        sock.sendall(make_frame(FRAME_HELLO, cid, 0, nonce, b"hello"))
-        exchange(sock, cid, nonce, count=frames, spacing=spacing)
-    finally:
-        sock.close()
-    with STATS_LOCK:
-        STATS["tunnels"] += 1
+    framed_tunnel(socks5_connect(proxy, target, creds, "ipv4"), cid, count=frames, spacing=spacing)
 
 
 def concurrency(protocol, proxy, target, creds, count, timeout=15):
@@ -522,22 +527,11 @@ def socks5_denied_destination(proxy, target, creds, timeout=8, atyp="ipv4"):
             return True
         if not socks5_authenticate(sock, creds, deadline):
             fail("SOCKS5 rejected correct credentials on the boundary probe")
-        sock.sendall(
-            b"\x05\x01\x00"
-            + socks5_target_address(atyp, target.host)
-            + struct.pack("!H", target.port)
-        )
+        sock.sendall(socks5_connect_request(target, atyp))
         reply = read_exact(sock, 4, deadline)
         if reply[0] != 5 or reply[1] != 0:
             return True
-        if reply[3] == 1:
-            read_exact(sock, 6, deadline)
-        elif reply[3] == 3:
-            read_exact(sock, read_exact(sock, 1, deadline)[0] + 2, deadline)
-        elif reply[3] == 4:
-            read_exact(sock, 18, deadline)
-        else:
-            fail("SOCKS5 returned an unknown address type on the boundary probe")
+        socks5_skip_bound_address(sock, reply[3], deadline, " on the boundary probe")
         nonce = new_nonce()
         sock.sendall(make_frame(FRAME_HELLO, BOUNDARY_CID, 0, nonce, b"hello"))
         sock.sendall(make_frame(FRAME_CLIENT, BOUNDARY_CID, 0, nonce, b"probe"))

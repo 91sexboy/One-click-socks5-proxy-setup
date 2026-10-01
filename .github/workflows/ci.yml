@@ -91,6 +91,22 @@ jobs:
           python3 tests/lib/workflow_contract_regression.py
           python3 -O tests/lib/workflow_contract_regression.py
 
+  # Parsing socks5.sh does not depend on the shell a unit leg runs the suite
+  # under, so it runs once per commit rather than on every leg.
+  syntax:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - name: Install BusyBox
+        run: sudo apt-get update && sudo apt-get install -y busybox
+      - name: Syntax
+        run: |
+          sh -n socks5.sh
+          dash -n socks5.sh
+          bash -n socks5.sh
+          busybox sh -n socks5.sh
+
   unit:
     runs-on: ${{ matrix.shell.runner }}
     timeout-minutes: 20
@@ -111,14 +127,10 @@ jobs:
             command: busybox sh
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-      - name: Install shell implementations
-        run: sudo apt-get update && sudo apt-get install -y dash busybox
-      - name: Syntax
-        run: |
-          sh -n socks5.sh
-          dash -n socks5.sh
-          bash -n socks5.sh
-          busybox sh -n socks5.sh
+      # dash is the runner's /bin/sh and bash its login shell; only BusyBox is
+      # missing from the image.
+      - name: Install BusyBox
+        run: sudo apt-get update && sudo apt-get install -y busybox
       - name: Unit suite
         env:
           S5_TEST_SHELL: ${{ matrix.shell.command }}
@@ -191,8 +203,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-      - name: Install protocol tools
-        run: sudo apt-get update && sudo apt-get install -y python3 curl file iproute2
+      - name: Check the preinstalled runtime tools
+        run: sh .github/scripts/require-runner-tools.sh
       - name: Add the test target addresses
         run: sudo sh .github/scripts/add-test-target-addresses.sh
       - name: Run mixed protocol and duplex checks
@@ -208,16 +220,7 @@ jobs:
           # shellcheck source=/dev/null
           . .github/scripts/lifecycle-common.sh
           lifecycle_write_fixtures "$root"
-          # Bound on every address so the same target answers at both the
-          # permitted 192.0.2.1 and the denied 127.0.0.1. The boundary case needs a
-          # live listener at the denied address, or a refusal would only prove that
-          # nothing was listening there.
-          python3 tests/protocol/duplex_target.py --host 0.0.0.0 --host6 :: \
-            --ready-file "$root/target.port" --count-file "$root/count" --report-file "$root/report" &
-          target_pid=$!
-          for n in $(seq 1 50); do test -s "$root/target.port" && break; sleep 0.1; done
-          test -s "$root/target.port"
-          target_port=$(cat "$root/target.port")
+          lifecycle_start_duplex_target "$root"
           OUTDIR="$root/out" PASSFILE="$root/pass" PORT=23456 ARCH=amd64 \
             sh tests/protocol/start_engine.sh >"$root/engine.log" 2>&1 &
           engine_pid=$!
@@ -234,6 +237,9 @@ jobs:
             exit 1
           fi
           ready_port=$(cat "$root/out/ready")
+          # lifecycle_start_duplex_target set target_port; ShellCheck does not
+          # follow the sourced helper.
+          # shellcheck disable=SC2154
           PASSFILE="$root/pass" PORT="$ready_port" TARGET_PORT="$target_port" \
             REPORT="$root/report" OUT="$root/probe" \
             sh tests/protocol/run_xray_mixed.sh
@@ -243,8 +249,8 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-      - name: Install runtime dependencies
-        run: sudo apt-get update && sudo apt-get install -y python3 curl file iproute2
+      - name: Check the preinstalled runtime tools
+        run: sh .github/scripts/require-runner-tools.sh
       - name: Add the test target addresses
         run: sudo sh .github/scripts/add-test-target-addresses.sh
       - name: Run real systemd lifecycle
@@ -296,8 +302,8 @@ jobs:
         mutation: [fail, skip, unreachable, swallow]
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-      - name: Install runtime dependencies
-        run: sudo apt-get update && sudo apt-get install -y python3 curl file iproute2
+      - name: Check the preinstalled runtime tools
+        run: sh .github/scripts/require-runner-tools.sh
       - name: Add the test target addresses
         run: sudo sh .github/scripts/add-test-target-addresses.sh
       - name: Exercise native assertion reachability and failure propagation
@@ -312,7 +318,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: ["alpine:3.20", "alpine:3.24"]
+        # What the mutations prove -- that a broken assertion call is caught --
+        # does not depend on the Alpine version; openrc-integration runs the
+        # full gate on every supported image.
+        image: ["alpine:3.24"]
         mutation: [fail, skip, unreachable, swallow]
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
@@ -340,8 +349,8 @@ jobs:
             arch: arm64
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-      - name: Install memory tools
-        run: sudo apt-get update && sudo apt-get install -y python3 curl file iproute2
+      - name: Check the preinstalled runtime tools
+        run: sh .github/scripts/require-runner-tools.sh
       - name: Add the test target addresses
         run: sudo sh .github/scripts/add-test-target-addresses.sh
       - name: Prove descriptor-local peaks with a released high then low workload

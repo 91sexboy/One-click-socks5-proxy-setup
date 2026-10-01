@@ -1,7 +1,8 @@
 #!/bin/sh
-# Memory evidence contracts remain separate from native workflow execution.
+# The memory-report gate: what it samples and asserts, and that it refuses to run
+# outside GitHub Actions.
 
-S5T_NAME=test_xray_memory_contract
+S5T_NAME=test_xray_memory_report
 . "${S5_REPO_ROOT}/tests/lib/assert.sh"
 ROOT=${S5_REPO_ROOT}
 t_mktestroot
@@ -41,8 +42,12 @@ assert_contains "paired comparison uses the installed verified binary" \
     '--binary /usr/local/libexec/xray-socks5/xray' "$memory_text"
 assert_eq "the memory job drives the permitted target" 1 \
     "$(grep -c 'target-host 192.0.2.1' "$ROOT/.github/scripts/memory-report.sh")"
-assert_eq "the memory target answers at denied addresses too" 1 \
-    "$(grep -c 'duplex_target.py --host 0.0.0.0 --host6 ::' "$ROOT/.github/scripts/memory-report.sh")"
+assert_eq "the memory job starts the shared duplex target" 1 \
+    "$(grep -c 'lifecycle_start_duplex_target "$root"' "$ROOT/.github/scripts/memory-report.sh")"
+assert_eq "the memory job writes no wait loop of its own" 0 \
+    "$(grep -c 'seq 1' "$ROOT/.github/scripts/memory-report.sh")"
+assert_contains "the memory job cleans up through the shared seam" \
+    'lifecycle_cleanup_init' "$memory_text"
 assert_contains "memory uses shared install credentials" 'lifecycle_write_fixtures "$root"' "$memory_text"
 assert_contains "install credential checks cover every credential form" \
     'lifecycle_generation_absent "$root/install.log" "$root/pass" sudo' "$memory_text"

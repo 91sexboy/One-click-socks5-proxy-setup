@@ -60,6 +60,25 @@ def write_metrics(count_path, report_path):
             write_text(report_path, json.dumps(data, sort_keys=True) + "\n")
 
 
+def reset_state():
+    """Start a fresh target in this process: no stop request and no counts."""
+    global ACCEPTED, FRAMES
+    STOP.clear()
+    with COUNT_LOCK:
+        ACCEPTED = 0
+        FRAMES = 0
+        COHORTS.clear()
+        CLOSES.clear()
+
+
+def record_accept(count_path, report_path):
+    """Count one accepted tunnel and flush the counters it changed."""
+    global ACCEPTED
+    with COUNT_LOCK:
+        ACCEPTED += 1
+        write_metrics(count_path, report_path)
+
+
 def read_exact(sock, size):
     data = bytearray()
     while len(data) < size:
@@ -221,7 +240,6 @@ def make_listeners(host, port, host6):
 
 
 def serve(listeners, count_path, report_path):
-    global ACCEPTED
     while not STOP.is_set():
         try:
             ready = select.select(listeners, [], [], 0.5)[0]
@@ -232,9 +250,7 @@ def serve(listeners, count_path, report_path):
                 sock, _ = listener.accept()
             except OSError:
                 continue
-            with COUNT_LOCK:
-                ACCEPTED += 1
-                write_metrics(count_path, report_path)
+            record_accept(count_path, report_path)
             thread = threading.Thread(
                 target=serve_connection, args=(sock, count_path, report_path), daemon=True
             )

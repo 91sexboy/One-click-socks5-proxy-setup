@@ -5,6 +5,7 @@ import argparse
 import bisect
 import collections
 import copy
+import functools
 import hashlib
 import importlib.util
 import json
@@ -38,6 +39,10 @@ POLICY = {"levels": {"0": {"bufferSize": 4}}}
 STAGES = {"idle": 0, "held1": 1, "held32": 32, "held128": 128,
           "duplex": 32, "slow": 32, "recovery": 0}
 WINDOW_SECONDS = 30
+# One observation every five seconds. At one per second a single slow snapshot on
+# a loaded runner failed the whole comparison; five seconds is far more than one
+# snapshot takes and still gives each stage seven observations.
+SAMPLE_SECONDS = 5
 
 
 def profile_config(source, profile, port):
@@ -316,7 +321,8 @@ class TunnelLoad:
                 "traffic_seconds": self.finished - self.started}
 
 
-def observe(reader, check, duration=WINDOW_SECONDS, interval=1, clock=time.monotonic, wait=time.sleep):
+def observe(reader, check, duration=WINDOW_SECONDS, interval=SAMPLE_SECONDS, clock=time.monotonic,
+            wait=time.sleep):
     if duration <= 0 or interval <= 0:
         raise ValueError("observation window and interval must be positive")
     start = clock()
@@ -355,7 +361,7 @@ def assess(trials, architecture):
                 if not math.isfinite(stage[key]) or stage[key] < 0:
                     raise ValueError("comparison metric is missing, negative or non-finite")
             if (not WINDOW_SECONDS <= stage["seconds"] < WINDOW_SECONDS + 1
-                    or stage["observation_count"] != WINDOW_SECONDS + 1
+                    or stage["observation_count"] != WINDOW_SECONDS // SAMPLE_SECONDS + 1
                     or stage["oom"] != 0 or stage["oom_kill"] != 0):
                 raise ValueError("comparison observation window or OOM evidence failed")
             if name in ("duplex", "slow") and (stage["verified_bytes"] <= 0 or stage["cpu_usec"] <= 0):
@@ -421,6 +427,12 @@ def summarize(observations, traffic, initial_cpu):
     return result
 
 
+def check_owned(service, load):
+    """Fail the observation as soon as the service or the load it drives fails."""
+    service.check()
+    load.check()
+
+
 def run_trial(binary, config, target_port, pair, profile, gid, port):
     with tempfile.TemporaryDirectory(prefix="xray-memory-", dir="/run") as directory:
         work = Path(directory)
@@ -448,10 +460,7 @@ def run_trial(binary, config, target_port, pair, profile, gid, port):
                                     xray_mixed.Endpoint("192.0.2.1", target_port), credentials, count, mode) as load:
                         initial_cpu = reader.snapshot()["cpu_usec"]
                         load.start()
-                        def check():
-                            service.check()
-                            load.check()
-                        observations = observe(reader, check)
+                        observations = observe(reader, functools.partial(check_owned, service, load))
                     stages[name] = summarize(observations, load.stats(), initial_cpu)
                 service.check()
         return {"pair": pair, "profile": profile, "restarts": 0, "stages": stages}
@@ -524,7 +533,7 @@ def main():
     report = {"format_version": 1, "architecture": architecture, "kernel": os.uname().release,
               "xray_version": version.group(1), "binary_sha256": binary_hash,
               "elapsed_seconds": time.monotonic() - started, "warmup_seconds": 5,
-              "window_seconds": WINDOW_SECONDS, "sampling_interval_seconds": 1,
+              "window_seconds": WINDOW_SECONDS, "sampling_interval_seconds": SAMPLE_SECONDS,
               "payload_bytes": len(TunnelLoad.payload), "pipeline_frames": 8,
               "slow_read_delay_seconds": 0.05, "slow_receive_buffer_request_bytes": 32768,
               "profiles": {"baseline": "upstream-default", "buffer4k": {"buffer_size_kib": 4}},

@@ -49,7 +49,7 @@ class ComparisonTests(unittest.TestCase):
                 stages = {}
                 for name in ("idle", "held1", "held32", "held128", "duplex", "slow", "recovery"):
                     stages[name] = {
-                        "seconds": 30, "observation_count": 31,
+                        "seconds": 30, "observation_count": 7,
                         "rss_median_kib": memory + 200, "rss_anon_median_kib": memory,
                         "cgroup_peak_bytes": memory * 1024, "cpu_usec": 3000,
                         "verified_bytes": 3000 if name in ("duplex", "slow") else 0,
@@ -123,7 +123,7 @@ class ComparisonTests(unittest.TestCase):
             def snapshot(self):
                 return {"cpu_usec": int(clock.now * 1000), "cgroup_oom": 0, "cgroup_oom_kill": 0}
         checks = []
-        values = comparison.observe(Reader(), lambda: checks.append(clock.now), duration=3,
+        values = comparison.observe(Reader(), lambda: checks.append(clock.now), duration=3, interval=1,
                                     clock=clock.time, wait=clock.wait)
         self.assertEqual([value["elapsed_seconds"] for value in values], [0, 1, 2, 3])
         self.assertEqual([value["cpu_usec"] for value in values], [0, 1000, 2000, 3000])
@@ -131,11 +131,11 @@ class ComparisonTests(unittest.TestCase):
         def broken():
             raise RuntimeError("owned service failed")
         with self.assertRaises(RuntimeError):
-            comparison.observe(Reader(), broken, duration=3, clock=clock.time, wait=clock.wait)
+            comparison.observe(Reader(), broken, duration=3, interval=1, clock=clock.time, wait=clock.wait)
         def late_wait(duration):
             clock.now += duration + 2
         with self.assertRaises(TimeoutError):
-            comparison.observe(Reader(), lambda: None, duration=3, clock=clock.time, wait=late_wait)
+            comparison.observe(Reader(), lambda: None, duration=3, interval=1, clock=clock.time, wait=late_wait)
         for location in ("check", "snapshot"):
             with self.subTest(delayed=location):
                 clock.now = 0
@@ -151,13 +151,37 @@ class ComparisonTests(unittest.TestCase):
                             delay_last_read()
                         return super().snapshot()
                 with self.assertRaises(TimeoutError):
-                    comparison.observe(SlowReader(), slow_check, duration=3,
+                    comparison.observe(SlowReader(), slow_check, duration=3, interval=1,
                                        clock=clock.time, wait=clock.wait)
+
+    def test_default_window_samples_every_five_seconds(self):
+        # The default cadence tolerates a snapshot that takes seconds, not one
+        # that takes a whole interval: 4.9 s of delay passes, 5 s does not.
+        class Clock:
+            now = 0.0
+            def time(self):
+                return self.now
+            def wait(self, duration):
+                self.now += duration
+        clock = Clock()
+        class Reader:
+            delay = 0.0
+            def snapshot(self):
+                clock.now += self.delay
+                return {"cpu_usec": 0, "cgroup_oom": 0, "cgroup_oom_kill": 0}
+        reader = Reader()
+        reader.delay = 4.9
+        values = comparison.observe(reader, lambda: None, clock=clock.time, wait=clock.wait)
+        self.assertEqual(len(values), 7)
+        clock.now = 0.0
+        reader.delay = 5.0
+        with self.assertRaises(TimeoutError):
+            comparison.observe(reader, lambda: None, clock=clock.time, wait=clock.wait)
 
     def run_traffic(self, mode, corrupt=False, fail_connect=False):
         sys.path.insert(0, str(ROOT / "tests/protocol"))
         import duplex_target
-        duplex_target.STOP.clear()
+        duplex_target.reset_state()
         listener = socket.socket()
         listener.bind(("127.0.0.1", 0))
         listener.listen(8)
