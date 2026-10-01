@@ -584,8 +584,10 @@ for _init_case in systemd:debian-12 openrc:alpine-3.20; do
         assert_ne "$_init_mode refuses an unbooted $_init_backend" 0 "$T_STATUS"
         assert_contains "unbooted $_init_backend is diagnosed before installation" 'no supported service manager was found' "$T_OUT"
     done
-    rm -f "$S5_TEST_ROOT/init-download" "$S5_TEST_ROOT/init-account" "$S5_TEST_ROOT/init-unit"
+    rm -f "$S5_TEST_ROOT/init-download" "$S5_TEST_ROOT/init-account" "$S5_TEST_ROOT/init-unit" \
+        "$S5_TEST_ROOT/init-provision"
     T_OUT=$( (
+        s5_install_runtime_dependencies() { : >"$S5_TEST_ROOT/init-provision"; return 1; }
         s5_download_engine() { : >"$S5_TEST_ROOT/init-download"; return 1; }
         s5_account_create() { : >"$S5_TEST_ROOT/init-account"; return 1; }
         s5_write_unit() { : >"$S5_TEST_ROOT/init-unit"; return 1; }
@@ -593,6 +595,7 @@ for _init_case in systemd:debian-12 openrc:alpine-3.20; do
     ) 2>&1) && T_STATUS=0 || T_STATUS=$?
     assert_ne "install command refuses unbooted $_init_backend" 0 "$T_STATUS"
     assert_contains "install command reports the init refusal" 'no supported service manager was found' "$T_OUT"
+    assert_file_absent "unbooted $_init_backend never provisions packages" "$S5_TEST_ROOT/init-provision"
     assert_file_absent "unbooted $_init_backend never reaches download" "$S5_TEST_ROOT/init-download"
     assert_file_absent "unbooted $_init_backend never creates an account" "$S5_TEST_ROOT/init-account"
     assert_file_absent "unbooted $_init_backend never writes a service artifact" "$S5_TEST_ROOT/init-unit"
@@ -610,6 +613,28 @@ for _init_case in systemd:debian-12 openrc:alpine-3.20; do
     done
 done
 S5_OSRELEASE="$ROOT/tests/fixtures/os-release/debian-12"
+
+# A check changes nothing. apk add used to run inside s5_precheck, so every caller
+# of the check inherited a package installation; install now provisions on its
+# own, after the host checks pass and before it requires the tools the packages
+# supply.
+: >"$S5_TEST_ROOT/provision.log"
+T_OUT=$( (
+    s5_install_runtime_dependencies() { printf '%s\n' "$1" >>"$S5_TEST_ROOT/provision.log"; return 0; }
+    S5_OSRELEASE="$ROOT/tests/fixtures/os-release/alpine-3.20"
+    for _prov_mode in install update status restart uninstall; do
+        s5_precheck "$_prov_mode"
+    done
+) 2>&1)
+assert_eq "no precheck mode provisions packages" '' "$(cat "$S5_TEST_ROOT/provision.log")"
+T_OUT=$( (
+    s5_precheck_host() { printf 'host:%s\n' "$1"; return 0; }
+    s5_install_runtime_dependencies() { printf 'provision:%s\n' "$1"; return 0; }
+    s5_precheck_tools() { printf 'tools:%s\n' "$1"; return 1; }
+    s5_cmd_install
+) 2>/dev/null)
+assert_eq "install provisions between the host and tool checks" \
+    "$(printf 'host:install\nprovision:install\ntools:install')" "$T_OUT"
 
 # Redirected prompts cannot rely on terminal echo to supply their line breaks.
 _prompt_output=$S5_TEST_ROOT/prompt.out

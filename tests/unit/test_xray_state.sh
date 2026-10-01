@@ -287,7 +287,7 @@ s5_service_state() { return 1; }
 s5_listener_state() { return 1; }
 s5_lock_acquire() { S5_LOCK_HELD=1; return 0; }
 s5_lock_release() { S5_LOCK_HELD=0; return 0; }
-s5_precheck() { return 0; }
+s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
 t_run s5_cmd_status
 assert_contains "status reports the installed historical release"     'Xray version: v25.1.1' "$T_OUT"
 assert_not_contains "status does not substitute the current candidate release"     "Xray version: $S5_XRAY_VERSION" "$T_OUT"

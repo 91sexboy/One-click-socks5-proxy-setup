@@ -103,6 +103,7 @@ s5t_cli '1
 ' language
 assert_eq "the language command changes the saved choice" 0 "$T_STATUS"
 assert_eq "changing language asks exactly once" 1 "$(s5t_prompt_count "$T_OUT")"
+assert_contains "the language command confirms the save" '语言设置已保存。' "$T_OUT"
 s5t_cli '' help
 assert_eq "the changed language needs no further input" 0 "$T_STATUS"
 assert_eq "the changed language is remembered without a prompt" 0 "$(s5t_prompt_count "$T_OUT")"
@@ -125,6 +126,7 @@ s5t_cli '2
 ' language
 assert_ne "an unprivileged language change cannot claim it was saved" 0 "$T_STATUS"
 assert_contains "an unsaved preference is reported" 'could not save the language preference' "$T_OUT"
+assert_not_contains "an unsaved preference is never confirmed as saved" 'language preference saved' "$T_OUT"
 CLI_ASSUME_ROOT=1
 s5t_cli '' help
 assert_contains "an unprivileged change leaves the shared preference intact" '用法：sh socks5.sh' "$T_OUT"

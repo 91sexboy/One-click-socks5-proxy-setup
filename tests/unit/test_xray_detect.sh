@@ -117,7 +117,8 @@ from pathlib import Path
 
 
 def unused(source):
-    lines = source.split('\n')
+    # A long requirement list continues over backslash-newlines; read it whole.
+    lines = re.sub(r'\\\n\s*', ' ', source).split('\n')
     required = set()
     for line in lines:
         match = re.match(r'\s*s5_require_commands (.*?)\|\|', line)

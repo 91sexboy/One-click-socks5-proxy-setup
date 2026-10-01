@@ -18,11 +18,11 @@ umask 077
 work=$(mktemp -d)
 capacity_mounted=0
 alpine_cleanup() {
-  if [ "$capacity_mounted" = 1 ]; then
-    rc-service xray-socks5 stop >/dev/null 2>&1 || true
-    umount /usr/local/libexec || true
-  fi
-  rm -rf "$work"
+    if [ "$capacity_mounted" = 1 ]; then
+        rc-service xray-socks5 stop >/dev/null 2>&1 || true
+        umount /usr/local/libexec || true
+    fi
+    rm -rf "$work"
 }
 trap alpine_cleanup EXIT
 trap 'exit 129' HUP
@@ -31,50 +31,50 @@ trap 'exit 143' TERM
 lifecycle_write_fixtures "$work"
 original_path=$PATH
 if [ "${ALPINE_HOSTILE_CURL:-0}" = 1 ]; then
-  mkdir "$work/hostile-bin"
-  ALPINE_HOSTILE_CURL_LOG=$work/hostile-curl.calls
-  export ALPINE_HOSTILE_CURL_LOG
-  cat >"$work/hostile-bin/curl" <<'HOSTILE_CURL'
+    mkdir "$work/hostile-bin"
+    ALPINE_HOSTILE_CURL_LOG=$work/hostile-curl.calls
+    export ALPINE_HOSTILE_CURL_LOG
+    cat >"$work/hostile-bin/curl" <<'HOSTILE_CURL'
 #!/bin/sh
 printf 'called\n' >>"$ALPINE_HOSTILE_CURL_LOG"
 exit 99
 HOSTILE_CURL
-  chmod 0755 "$work/hostile-bin/curl"
-  PATH=$work/hostile-bin:$PATH
-  export PATH
+    chmod 0755 "$work/hostile-bin/curl"
+    PATH=$work/hostile-bin:$PATH
+    export PATH
 fi
 if apk info -e unzip >/dev/null 2>&1; then
-  printf 'base image unexpectedly contains the unzip package\n' >&2
-  exit 1
+    printf 'base image unexpectedly contains the unzip package\n' >&2
+    exit 1
 fi
 pkgs_before_install=$(apk info | sort | sha256sum)
 # A bare Alpine container has no syslog endpoint. The installer must expose that
 # fact rather than letting logger discard Xray diagnostics silently.
 test ! -e /dev/log
 sh .github/scripts/run-socks5.sh install \
-  "$work/answers" "$work/install.log" "$work/pass"
+    "$work/answers" "$work/install.log" "$work/pass"
 test "$(grep -cF '/dev/log' "$work/install.log")" = 1
 if apk info -e unzip >/dev/null 2>&1; then
-  printf 'raw installation added an unnecessary unzip package\n' >&2
-  exit 1
+    printf 'raw installation added an unnecessary unzip package\n' >&2
+    exit 1
 fi
 test "$(stat -c "%U:%G %a" /etc/init.d/xray-socks5)" = "root:root 755"
 test "$(stat -c "%U:%G %a" /etc/xray-socks5/config.json)" = "root:xray-socks5 640"
 test "$(stat -c "%U:%G %a" /var/lib/xray-socks5/state)" = "root:root 600"
 test "$(wc -c </usr/local/libexec/xray-socks5/xray | tr -cd '0-9')" = 36577406
 test "$(sha256sum /usr/local/libexec/xray-socks5/xray | awk '{print $1}')" = \
-  8255dd939c34cf966cc91517b6324dd3c8d0bcf49ffac8beca049a38c46845ed
+    8255dd939c34cf966cc91517b6324dd3c8d0bcf49ffac8beca049a38c46845ed
 if [ "${ALPINE_HOSTILE_CURL:-0}" = 1 ]; then
-  test ! -e "$ALPINE_HOSTILE_CURL_LOG"
-  if "$work/hostile-bin/curl" --version >/dev/null 2>&1; then
-    printf "the hostile curl wrapper unexpectedly succeeded\n" >&2
-    exit 1
-  fi
-  test -s "$ALPINE_HOSTILE_CURL_LOG"
-  rm -f "$ALPINE_HOSTILE_CURL_LOG"
-  PATH=$original_path
-  unset ALPINE_HOSTILE_CURL_LOG original_path
-  export PATH
+    test ! -e "$ALPINE_HOSTILE_CURL_LOG"
+    if "$work/hostile-bin/curl" --version >/dev/null 2>&1; then
+        printf "the hostile curl wrapper unexpectedly succeeded\n" >&2
+        exit 1
+    fi
+    test -s "$ALPINE_HOSTILE_CURL_LOG"
+    rm -f "$ALPINE_HOSTILE_CURL_LOG"
+    PATH=$original_path
+    unset ALPINE_HOSTILE_CURL_LOG original_path
+    export PATH
 fi
 
 # Exercise upgrade, not only fresh generation: make the installed OpenRC
@@ -85,7 +85,7 @@ cat "$work/legacy.unit" >/etc/init.d/xray-socks5
 chmod 0755 /etc/init.d/xray-socks5
 legacy_unit_sha=$(sha256sum /etc/init.d/xray-socks5 | awk '{print $1}')
 awk -F '\t' -v h="$legacy_unit_sha" 'BEGIN {OFS="\t"} $1=="unit_sha256" {$2=h} {print}' \
-  /var/lib/xray-socks5/state >"$work/legacy.state"
+    /var/lib/xray-socks5/state >"$work/legacy.state"
 cat "$work/legacy.state" >/var/lib/xray-socks5/state
 chmod 0600 /var/lib/xray-socks5/state
 grep -qxF 'respawn_max=1' /etc/init.d/xray-socks5
@@ -95,7 +95,7 @@ grep -qxF "unit_sha256	$legacy_unit_sha" /var/lib/xray-socks5/state
 # in-place update. Rotate the credentials, keep the port, migrate the service
 # policy, and require the new identity/digest in config and state.
 sh .github/scripts/run-socks5.sh install \
-  "$work/answers.update" "$work/update.log" "$work/pass.update" "$work/pass"
+    "$work/answers.update" "$work/update.log" "$work/pass.update" "$work/pass"
 test "$(grep -cF '/dev/log' "$work/update.log")" = 1
 test ! -e /dev/log
 grep -qxF 'respawn_max=2' /etc/init.d/xray-socks5
@@ -106,11 +106,11 @@ sh .github/scripts/lifecycle-update-assert.sh
 rc-service xray-socks5 status
 pkgs_after_install=$(apk info | sort | sha256sum)
 printf 'openrc: package-set before-install=%s after-install=%s\n' \
-  "$pkgs_before_install" "$pkgs_after_install"
+    "$pkgs_before_install" "$pkgs_after_install"
 sh .github/scripts/run-socks5.sh status \
-  "$work/answers.empty" "$work/status.log" "$work/pass.update" "$work/pass"
+    "$work/answers.empty" "$work/status.log" "$work/pass.update" "$work/pass"
 sh .github/scripts/run-socks5.sh restart \
-  "$work/answers.empty" "$work/restart.log" "$work/pass.update" "$work/pass"
+    "$work/answers.empty" "$work/restart.log" "$work/pass.update" "$work/pass"
 rc-service xray-socks5 status
 # Healthy, stopped and unverified status are informational; only an explicit
 # OpenRC crash is nonzero, so this healthy case needs output evidence.
@@ -125,15 +125,15 @@ test "$crash_pid" -gt 0
 kill -9 "$crash_pid"
 new_pid=0
 crash_recovered() {
-  new_pid=$(cat /run/openrc/options/xray-socks5/child_pid 2>/dev/null || printf 0)
-  test "$new_pid" != "$crash_pid" && test "$new_pid" -gt 0
+    new_pid=$(cat /run/openrc/options/xray-socks5/child_pid 2>/dev/null || printf 0)
+    test "$new_pid" != "$crash_pid" && test "$new_pid" -gt 0
 }
 # The assertions below remain authoritative after the final sleep.
 lifecycle_wait_until 45 1 crash_recovered || true
 test "$new_pid" != "$crash_pid"
 test "$new_pid" -gt 0
 listener_recovered() {
-  ss -H -ltnp 2>/dev/null | grep -q "pid=$new_pid,"
+    ss -H -ltnp 2>/dev/null | grep -q "pid=$new_pid,"
 }
 lifecycle_wait_until 45 1 listener_recovered || true
 ss -H -ltnp | grep -q "pid=$new_pid,"
@@ -159,21 +159,21 @@ crash_pid=$new_pid
 kill -9 "$crash_pid"
 rc_status=0
 openrc_state_is() {
-  rc_status=0
-  rc-service xray-socks5 status >/dev/null 2>&1 || rc_status=$?
-  test "$rc_status" = "$1"
+    rc_status=0
+    rc-service xray-socks5 status >/dev/null 2>&1 || rc_status=$?
+    test "$rc_status" = "$1"
 }
 lifecycle_wait_until 20 1 openrc_state_is 3 || true
 if ! openrc_state_is 3; then
-  printf 'a spent respawn budget left rc-service status %s, expected 3\n' "$rc_status" >&2
-  exit 1
+    printf 'a spent respawn budget left rc-service status %s, expected 3\n' "$rc_status" >&2
+    exit 1
 fi
 test "$(( $(date +%s) - crash_window_started ))" -lt 60
 sh .github/scripts/run-socks5.sh status \
-  "$work/answers.empty" "$work/spent-status.log" "$work/pass.update" "$work/pass"
+    "$work/answers.empty" "$work/spent-status.log" "$work/pass.update" "$work/pass"
 grep -qF 'service: stopped; port: 23456;' "$work/spent-status.log"
 sh .github/scripts/run-socks5.sh restart \
-  "$work/answers.empty" "$work/spent-restart.log" "$work/pass.update" "$work/pass"
+    "$work/answers.empty" "$work/spent-restart.log" "$work/pass.update" "$work/pass"
 rc-service xray-socks5 status
 printf 'openrc: spent-budget-stopped-ok\n'
 
@@ -190,19 +190,19 @@ kill -9 "$supervisor_pid"
 kill -9 "$crash_pid"
 lifecycle_wait_until 20 1 openrc_state_is 64 || true
 if ! openrc_state_is 64; then
-  printf 'a dead supervisor left rc-service status %s, expected 64\n' "$rc_status" >&2
-  exit 1
+    printf 'a dead supervisor left rc-service status %s, expected 64\n' "$rc_status" >&2
+    exit 1
 fi
 crashed_status=0
 sh .github/scripts/run-socks5.sh status \
-  "$work/answers.empty" "$work/crashed-status.log" "$work/pass.update" "$work/pass" ||
-  crashed_status=$?
+    "$work/answers.empty" "$work/crashed-status.log" "$work/pass.update" "$work/pass" ||
+    crashed_status=$?
 lifecycle_assert_exited_status "$crashed_status" "$work/crashed-status.log" unsupervised 23456
 grep -qxF 'Xray is not listening on port 23456.' "$work/crashed-status.log"
 test ! -e /run/xray-socks5.lock
 printf 'openrc: unsupervised-status-ok\n'
 sh .github/scripts/run-socks5.sh restart \
-  "$work/answers.empty" "$work/crashed-restart.log" "$work/pass.update" "$work/pass"
+    "$work/answers.empty" "$work/crashed-restart.log" "$work/pass.update" "$work/pass"
 rc-service xray-socks5 status
 restarted_pid=$(cat /run/openrc/options/xray-socks5/child_pid)
 test "$restarted_pid" -gt 0
@@ -217,15 +217,15 @@ printf "{broken\n" >/etc/xray-socks5/config.json
 # supervise-daemon attempt.
 broken_status=0
 /usr/local/libexec/xray-socks5/xray run -c /etc/xray-socks5/config.json \
-  >"$work/broken.log" 2>&1 || broken_status=$?
+    >"$work/broken.log" 2>&1 || broken_status=$?
 if test "$broken_status" != 23; then
-  printf "a broken config exited %s, expected 23\n" "$broken_status" >&2
-  cat "$work/broken.log" >&2
-  exit 1
+    printf "a broken config exited %s, expected 23\n" "$broken_status" >&2
+    cat "$work/broken.log" >&2
+    exit 1
 fi
 rc-service xray-socks5 stop
 mv /usr/local/libexec/xray-socks5/xray \
-  /usr/local/libexec/xray-socks5/.xray-exit23-real
+    /usr/local/libexec/xray-socks5/.xray-exit23-real
 attempts=/run/xray-socks5-exit23-attempts
 : >"$attempts"
 chown xray-socks5:xray-socks5 "$attempts"
@@ -241,35 +241,35 @@ chmod 0755 /usr/local/libexec/xray-socks5/xray
 rc-service xray-socks5 start || true
 
 three_attempts_and_stopped() {
-  test "$(cat "$attempts" 2>/dev/null || printf 0)" = 3 &&
-    ! rc-service xray-socks5 status >/dev/null 2>&1
+    test "$(cat "$attempts" 2>/dev/null || printf 0)" = 3 &&
+        ! rc-service xray-socks5 status >/dev/null 2>&1
 }
 lifecycle_wait_until 20 1 three_attempts_and_stopped || true
 if ! three_attempts_and_stopped; then
-  printf "bad-config attempts=%s; expected exactly 3 and stopped\n" \
-    "$(cat "$attempts" 2>/dev/null || printf 0)" >&2
-  exit 1
+    printf "bad-config attempts=%s; expected exactly 3 and stopped\n" \
+        "$(cat "$attempts" 2>/dev/null || printf 0)" >&2
+    exit 1
 fi
 for n in $(seq 1 5); do
-  if ss -H -ltn 2>/dev/null | grep -q ":23456 "; then
-    printf "a broken config produced a listener\n" >&2
-    exit 1
-  fi
-  if rc-service xray-socks5 status >/dev/null 2>&1; then
-    printf "a broken config brought the service back up\n" >&2
-    exit 1
-  fi
-  test "$(cat "$attempts")" = 3
-  sleep 1
+    if ss -H -ltn 2>/dev/null | grep -q ":23456 "; then
+        printf "a broken config produced a listener\n" >&2
+        exit 1
+    fi
+    if rc-service xray-socks5 status >/dev/null 2>&1; then
+        printf "a broken config brought the service back up\n" >&2
+        exit 1
+    fi
+    test "$(cat "$attempts")" = 3
+    sleep 1
 done
 if rc-service xray-socks5 status >/dev/null 2>&1; then
-  printf "a broken config was active after the stable window\n" >&2
-  exit 1
+    printf "a broken config was active after the stable window\n" >&2
+    exit 1
 fi
 printf 'openrc: bad-config attempts=%s, stopped, and stable\n' "$(cat "$attempts")"
 rm -f /usr/local/libexec/xray-socks5/xray
 mv /usr/local/libexec/xray-socks5/.xray-exit23-real \
-  /usr/local/libexec/xray-socks5/xray
+    /usr/local/libexec/xray-socks5/xray
 rm -f "$attempts"
 # Redirection truncates in place, so the config keeps the owner and
 # mode the installer gave it. BusyBox cp replaces the destination and
@@ -288,16 +288,16 @@ lifecycle_process_clean "$live_pid" "$work" "$work/pass" "$work/pass.update"
 # 127.0.0.1, which is what makes a boundary bypass visible.
 sh .github/scripts/add-test-target-addresses.sh
 python3 tests/protocol/duplex_target.py --host 0.0.0.0 --host6 :: \
-  --ready-file "$work/target.port" \
-  --count-file "$work/count" --report-file "$work/report" >"$work/target.log" 2>&1 &
+    --ready-file "$work/target.port" \
+    --count-file "$work/count" --report-file "$work/report" >"$work/target.log" 2>&1 &
 lifecycle_wait_until 50 0.2 test -s "$work/target.port" || true
 test -s "$work/target.port"
 test "$(python3 -c 'import json; print(json.load(open("/etc/xray-socks5/config.json"))["inbounds"][0]["listen"])')" = 0.0.0.0
 PROXY_HOST=192.0.2.1 PASSFILE="$work/pass.update" PORT=23456 TARGET_PORT="$(cat "$work/target.port")" \
-  REPORT="$work/report" OUT="$work/probe" \
-  sh tests/protocol/run_xray_mixed.sh
+    REPORT="$work/report" OUT="$work/probe" \
+    sh tests/protocol/run_xray_mixed.sh
 sh .github/scripts/run-socks5.sh uninstall \
-  "$work/answers.uninstall" "$work/uninstall.log" "$work/pass.update" "$work/pass"
+    "$work/answers.uninstall" "$work/uninstall.log" "$work/pass.update" "$work/pass"
 test "$(apk info | sort | sha256sum)" = "$pkgs_after_install"
 test ! -e /etc/xray-socks5
 test ! -e /var/lib/xray-socks5
@@ -306,11 +306,11 @@ test ! -e /etc/init.d/xray-socks5
 test ! -e /run/xray-socks5.pid
 if getent passwd xray-socks5 >/dev/null 2>&1 || getent group xray-socks5 >/dev/null 2>&1; then exit 1; fi
 sh .github/scripts/run-socks5.sh uninstall \
-  "$work/answers.uninstall" "$work/uninstall-second.log" "$work/pass.update" "$work/pass"
+    "$work/answers.uninstall" "$work/uninstall-second.log" "$work/pass.update" "$work/pass"
 python3 tests/protocol/terminal_install.py \
-  "$work/answers.reinstall" "$work/pass" 23456 0 >"$work/reinstall.log"
+    "$work/answers.reinstall" "$work/pass" 23456 0 >"$work/reinstall.log"
 sh .github/scripts/run-socks5.sh uninstall \
-  "$work/answers.uninstall" "$work/uninstall-reinstall.log" "$work/pass"
+    "$work/answers.uninstall" "$work/uninstall-reinstall.log" "$work/pass"
 # The Alpine 3.22 quota-blind row runs the production writer seam with a
 # deterministic short-write injection. The focused asset suite proves that
 # statfs can report ample capacity while direct raw download writing fails and
@@ -318,31 +318,31 @@ sh .github/scripts/run-socks5.sh uninstall \
 # Run it only after uninstall so any namespace residue is attributable to the
 # regression itself rather than the real lifecycle above.
 if [ "${ALPINE_QUOTA_BLIND:-0}" = 1 ]; then
-  S5_REPO_ROOT=$PWD sh tests/unit/test_xray_asset.sh \
-    >"$work/quota-blind.log" 2>&1
-  grep -Eq '^TESTS [1-9][0-9]* 0$' "$work/quota-blind.log"
-  grep -qxF 'SKIPS 0' "$work/quota-blind.log"
-  lifecycle_generation_absent "$work/quota-blind.log" "$work/pass"
-  lifecycle_generation_absent "$work/quota-blind.log" "$work/pass.update"
-  test ! -e /usr/local/libexec/xray-socks5
-  test ! -e /etc/xray-socks5
-  test ! -e /var/lib/xray-socks5
-  test ! -e /etc/init.d/xray-socks5
-  test ! -e /run/xray-socks5.pid
-  if getent passwd xray-socks5 >/dev/null 2>&1 ||
-      getent group xray-socks5 >/dev/null 2>&1; then
-    exit 1
-  fi
-  if find /usr/local/libexec -type f -name '.xray.*' -print -quit 2>/dev/null |
-      grep -q .; then
-    printf 'quota-blind regression left a prefix-local candidate\n' >&2
-    exit 1
-  fi
-  if find /tmp /var/tmp -maxdepth 1 -type d -name 's5test.*' -print -quit 2>/dev/null |
-      grep -q .; then
-    printf 'quota-blind regression left test or short-write scratch\n' >&2
-    exit 1
-  fi
+    S5_REPO_ROOT=$PWD sh tests/unit/test_xray_asset.sh \
+        >"$work/quota-blind.log" 2>&1
+    grep -Eq '^TESTS [1-9][0-9]* 0$' "$work/quota-blind.log"
+    grep -qxF 'SKIPS 0' "$work/quota-blind.log"
+    lifecycle_generation_absent "$work/quota-blind.log" "$work/pass"
+    lifecycle_generation_absent "$work/quota-blind.log" "$work/pass.update"
+    test ! -e /usr/local/libexec/xray-socks5
+    test ! -e /etc/xray-socks5
+    test ! -e /var/lib/xray-socks5
+    test ! -e /etc/init.d/xray-socks5
+    test ! -e /run/xray-socks5.pid
+    if getent passwd xray-socks5 >/dev/null 2>&1 ||
+            getent group xray-socks5 >/dev/null 2>&1; then
+        exit 1
+    fi
+    if find /usr/local/libexec -type f -name '.xray.*' -print -quit 2>/dev/null |
+            grep -q .; then
+        printf 'quota-blind regression left a prefix-local candidate\n' >&2
+        exit 1
+    fi
+    if find /tmp /var/tmp -maxdepth 1 -type d -name 's5test.*' -print -quit 2>/dev/null |
+            grep -q .; then
+        printf 'quota-blind regression left test or short-write scratch\n' >&2
+        exit 1
+    fi
 fi
 sh socks5.sh help </dev/null >"$work/help-after-uninstall.log"
 grep -q 'Usage: sh socks5.sh' "$work/help-after-uninstall.log"
@@ -355,16 +355,16 @@ mkdir -p /usr/local/libexec
 mount -t tmpfs -o size=40m,mode=755 tmpfs /usr/local/libexec
 capacity_mounted=1
 sh .github/scripts/run-socks5.sh install \
-  "$work/answers.reinstall" "$work/capacity-success.log" "$work/pass"
+    "$work/answers.reinstall" "$work/capacity-success.log" "$work/pass"
 sh .github/scripts/run-socks5.sh uninstall \
-  "$work/answers.uninstall" "$work/capacity-success-uninstall.log" "$work/pass"
+    "$work/answers.uninstall" "$work/capacity-success-uninstall.log" "$work/pass"
 umount /usr/local/libexec
 capacity_mounted=0
 mount -t tmpfs -o size=32m,mode=755 tmpfs /usr/local/libexec
 capacity_mounted=1
 capacity_status=0
 sh .github/scripts/run-socks5.sh install \
-  "$work/answers.reinstall" "$work/capacity.log" "$work/pass" || capacity_status=$?
+    "$work/answers.reinstall" "$work/capacity.log" "$work/pass" || capacity_status=$?
 umount /usr/local/libexec
 capacity_mounted=0
 test "$capacity_status" -ne 0

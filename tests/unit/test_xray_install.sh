@@ -108,7 +108,7 @@ test_openrc_logging_warning() {
     S5_INIT=openrc
     S5_OS_FAMILY=alpine
     s5_select_service_artifact
-    s5_precheck() { return 0; }
+    s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
     t_stub rc-service <<'RCSERVICE'
 #!/bin/sh
 exec "$S5_TEST_ROOT/bin/systemctl" "$2"
@@ -131,7 +131,7 @@ RCUPDATE
     S5_INIT=openrc
     S5_OS_FAMILY=alpine
     s5_select_service_artifact
-    s5_precheck() { return 0; }
+    s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
     mkdir -p "$S5_ROOTDIR/dev"
     : >"$S5_ROOTDIR/dev/log"
     t_stub rc-service <<'RCSERVICE'
@@ -148,7 +148,7 @@ RCUPDATE
         '/dev/log' "$T_OUT"
 
     t_xray_fixture 23456
-    s5_precheck() { return 0; }
+    s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
     t_run s5_cmd_install
     assert_eq "systemd install succeeds without /dev/log" 0 "$T_STATUS"
     assert_not_contains "systemd install never emits the OpenRC logging warning" \
@@ -211,7 +211,7 @@ s5t_raw_command_fixture() {
     s5_file_type_command() {
         printf '%s\n' 'ELF 64-bit LSB executable, x86-64, statically linked'
     }
-    s5_precheck() { return 0; }
+    s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
 }
 
 s5t_raw_command_run() {
@@ -384,7 +384,7 @@ delgroup xray-socks5' ;;
 }
 
 s5t_cleanup_run() {
-    s5_precheck() { return 0; }
+    s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
     sleep() { :; }
     s5_verify_dataplane() {
         : >"$S5_TEST_ROOT/verification-failed"
@@ -583,8 +583,7 @@ s5t_account_signal() {
     user) useradd() { "$S5_TEST_ROOT/bin/useradd" "$@" && s5t_signal_self; } ;;
     esac
     trap 's5_on_signal 143' TERM
-    trap 's5_cleanup' EXIT
-    s5_install_new
+    s5_install_new || { s5_cleanup; return 1; }
 }
 
 s5t_signal_self() {
@@ -628,10 +627,39 @@ test_cleanup_reload_order() {
     done
 }
 
+# install cleans up on each of its own return paths and sets no EXIT trap. A
+# declined or refused install used to return with the lock still held and leave
+# its release to an EXIT trap, which also replaced the EXIT handler of whatever
+# sourced the script.
+test_install_exit_handler() {
+    for _ieh_case in declined refused failed; do
+        t_xray_fixture 23456
+        s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
+        (
+            trap 'printf "caller-exit\n"' EXIT
+            case "$_ieh_case" in
+            declined) s5_confirm_install() { return 1; } ;;
+            refused) s5_namespace_absent() { return 1; } ;;
+            failed)
+                s5_confirm_install() { return 0; }
+                s5_install_new() { return 1; }
+                ;;
+            esac
+            s5_cmd_install
+            printf 'returned=%s\n' "$?"
+            if [ -e "$S5_LOCKDIR" ]; then printf 'lock-held\n'; fi
+        ) >"$S5_TEST_ROOT/exit-handler.log" 2>&1
+        _ieh_out=$(cat "$S5_TEST_ROOT/exit-handler.log")
+        assert_contains "a $_ieh_case install fails to its caller" 'returned=1' "$_ieh_out"
+        assert_not_contains "a $_ieh_case install releases its lock before returning" 'lock-held' "$_ieh_out"
+        assert_contains "a $_ieh_case install keeps the caller's EXIT handler" 'caller-exit' "$_ieh_out"
+    done
+}
+
 test_sha256_unit_failure() { s5t_digest_failure_install unit; }
 test_sha256_config_install_failure() { s5t_digest_failure_install config; }
 
-SCENARIOS='account_signal cleanup_reload_order fresh_step_messages alpine_group_warning cleanup_stop_failure account_creation_failure account_lifecycle install openrc_logging_warning config_corrupt binary_corrupt unit_corrupt account_corrupt cleanup_temps openrc_runtime locks raw_command_cleanup raw_release_failure raw_candidate_failure raw_signal fresh_stage_failure_cleanup sha256_unit_failure sha256_config_install_failure'
+SCENARIOS='account_signal install_exit_handler cleanup_reload_order fresh_step_messages alpine_group_warning cleanup_stop_failure account_creation_failure account_lifecycle install openrc_logging_warning config_corrupt binary_corrupt unit_corrupt account_corrupt cleanup_temps openrc_runtime locks raw_command_cleanup raw_release_failure raw_candidate_failure raw_signal fresh_stage_failure_cleanup sha256_unit_failure sha256_config_install_failure'
 if [ "$#" -eq 0 ]; then
     # Expand the fixed scenario words into the default argument list.
     # shellcheck disable=SC2086
