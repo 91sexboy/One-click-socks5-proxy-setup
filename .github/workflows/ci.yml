@@ -91,6 +91,22 @@ jobs:
           python3 tests/lib/workflow_contract_regression.py
           python3 -O tests/lib/workflow_contract_regression.py
 
+  # Parsing socks5.sh does not depend on the shell a unit leg runs the suite
+  # under, so it runs once per commit rather than on every leg.
+  syntax:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - name: Install BusyBox
+        run: sudo apt-get update && sudo apt-get install -y busybox
+      - name: Syntax
+        run: |
+          sh -n socks5.sh
+          dash -n socks5.sh
+          bash -n socks5.sh
+          busybox sh -n socks5.sh
+
   unit:
     runs-on: ${{ matrix.shell.runner }}
     timeout-minutes: 20
@@ -111,14 +127,10 @@ jobs:
             command: busybox sh
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-      - name: Install shell implementations
-        run: sudo apt-get update && sudo apt-get install -y dash busybox
-      - name: Syntax
-        run: |
-          sh -n socks5.sh
-          dash -n socks5.sh
-          bash -n socks5.sh
-          busybox sh -n socks5.sh
+      # dash is the runner's /bin/sh and bash its login shell; only BusyBox is
+      # missing from the image.
+      - name: Install BusyBox
+        run: sudo apt-get update && sudo apt-get install -y busybox
       - name: Unit suite
         env:
           S5_TEST_SHELL: ${{ matrix.shell.command }}
@@ -191,8 +203,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-      - name: Install protocol tools
-        run: sudo apt-get update && sudo apt-get install -y python3 curl file iproute2
+      - name: Check the preinstalled runtime tools
+        run: sh .github/scripts/require-runner-tools.sh
       - name: Add the test target addresses
         run: sudo sh .github/scripts/add-test-target-addresses.sh
       - name: Run mixed protocol and duplex checks
@@ -243,8 +255,8 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-      - name: Install runtime dependencies
-        run: sudo apt-get update && sudo apt-get install -y python3 curl file iproute2
+      - name: Check the preinstalled runtime tools
+        run: sh .github/scripts/require-runner-tools.sh
       - name: Add the test target addresses
         run: sudo sh .github/scripts/add-test-target-addresses.sh
       - name: Run real systemd lifecycle
@@ -296,8 +308,8 @@ jobs:
         mutation: [fail, skip, unreachable, swallow]
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-      - name: Install runtime dependencies
-        run: sudo apt-get update && sudo apt-get install -y python3 curl file iproute2
+      - name: Check the preinstalled runtime tools
+        run: sh .github/scripts/require-runner-tools.sh
       - name: Add the test target addresses
         run: sudo sh .github/scripts/add-test-target-addresses.sh
       - name: Exercise native assertion reachability and failure propagation
@@ -312,7 +324,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: ["alpine:3.20", "alpine:3.24"]
+        # What the mutations prove -- that a broken assertion call is caught --
+        # does not depend on the Alpine version; openrc-integration runs the
+        # full gate on every supported image.
+        image: ["alpine:3.24"]
         mutation: [fail, skip, unreachable, swallow]
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
@@ -340,8 +355,8 @@ jobs:
             arch: arm64
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-      - name: Install memory tools
-        run: sudo apt-get update && sudo apt-get install -y python3 curl file iproute2
+      - name: Check the preinstalled runtime tools
+        run: sh .github/scripts/require-runner-tools.sh
       - name: Add the test target addresses
         run: sudo sh .github/scripts/add-test-target-addresses.sh
       - name: Prove descriptor-local peaks with a released high then low workload

@@ -21,13 +21,19 @@ PINNED = re.compile(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+@[0-9a-f]{40}')
 PUBLISH_JOBS = {'prepare', 'assemble', 'publish'}
 # Only the publishing job may write, and only what releasing and attesting need.
 PUBLISH_WRITES = {'contents': 'write', 'id-token': 'write', 'attestations': 'write'}
-JOBS = {'lint', 'unit', 'xray-assets', 'xray-mixed', 'xray-systemd', 'openrc-integration',
+JOBS = {'lint', 'syntax', 'unit', 'xray-assets', 'xray-mixed', 'xray-systemd', 'openrc-integration',
         'systemd-assertion-controls', 'openrc-assertion-controls', 'memory-report'}
 LIFECYCLE_ROWS = {('alpine:3.20', '0', '0'), ('alpine:3.22', '1', '1'),
                   ('alpine:3.24', '0', '0')}
-CONTROL_IMAGES = {'alpine:3.20', 'alpine:3.24'}
+# The mutations prove the assertion calls, which no Alpine version changes.
+CONTROL_IMAGES = {'alpine:3.24'}
 MUTATIONS = {'fail', 'skip', 'unreachable', 'swallow'}
 RUNNERS = {('ubuntu-24.04', 'amd64'), ('ubuntu-24.04-arm', 'arm64')}
+# Packages every runner image already ships; installing them again only spends
+# time. The jobs that need them confirm them with require-runner-tools.sh.
+PREINSTALLED = {'python3', 'curl', 'file', 'iproute2', 'dash', 'bash'}
+TOOL_JOBS = ('xray-mixed', 'xray-systemd', 'systemd-assertion-controls', 'memory-report')
+SYNTAX = ('sh -n socks5.sh', 'dash -n socks5.sh', 'bash -n socks5.sh', 'busybox sh -n socks5.sh')
 
 
 def require(condition, message):
@@ -270,6 +276,17 @@ def check(workflow):
             uploads[0]['with'].get('name') == 'memory-comparison-${{ matrix.arch }}',
             'memory: only the architecture-specific comparison JSON may be uploaded')
     require(uploads[0]['with'].get('if-no-files-found') == 'error', 'memory: missing artifact must fail')
+    for name, job in jobs.items():
+        for step in job['steps']:
+            for packages in re.findall(r'apt-get install -y ([^\n&|;]+)', step.get('run', '')):
+                again = PREINSTALLED & set(packages.split())
+                require(not again, name + ': reinstalls preinstalled ' + ' '.join(sorted(again)))
+    for name in TOOL_JOBS:
+        entry(jobs[name], 'sh .github/scripts/require-runner-tools.sh')
+    for command in SYNTAX:
+        entry(jobs['syntax'], command, 'Syntax')
+    require(not any(step.get('name') == 'Syntax' for step in jobs['unit']['steps']),
+            'unit: syntax runs once, in its own job')
     lint = jobs['lint']
     entry(lint, 'python3 .github/scripts/check-workflow.py .github/workflows/ci.yml')
     entry(lint, 'python3 .github/scripts/check-workflow.py .github/workflows/publish-xray-raw.yml')

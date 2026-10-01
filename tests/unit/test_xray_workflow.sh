@@ -27,7 +27,7 @@ for _entry in 'python3 .github/scripts/check-workflow.py .github/workflows/ci.ym
     'python3 -O tests/lib/workflow_contract_regression.py'; do
     assert_contains "the lint job executes $_entry" "$_entry" "$ci_text"
 done
-for _contract in timeout-minutes continue-on-error CHECKOUT UPLOADER RUNNERS LIFECYCLE_ROWS CONTROL_IMAGES MUTATIONS \
+for _contract in timeout-minutes continue-on-error CHECKOUT UPLOADER RUNNERS LIFECYCLE_ROWS CONTROL_IMAGES MUTATIONS PREINSTALLED SYNTAX \
     'matrix.shell.command' 'memory-report.sh' 'run_xray_mixed.sh' 'lifecycle-assert-control.py'; do
     assert_contains "the parsed workflow oracle covers $_contract" "$_contract" "$workflow_oracle"
 done
