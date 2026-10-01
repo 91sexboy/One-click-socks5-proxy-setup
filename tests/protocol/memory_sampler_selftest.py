@@ -2,9 +2,12 @@
 """Exercise descriptor-local memory.peak accounting without privileged operations."""
 from pathlib import Path
 import importlib.util
+import os
+import select
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -53,13 +56,12 @@ runpy.run_path(helper, run_name="__main__")
             proc.stdin.write(f"{action} {label}\n")
             proc.stdin.flush()
             while True:
-                import select
                 # TextIO may prefetch lines; read the descriptor instead.
                 line = ""
                 while not line.endswith("\n"):
                     ready, _, _ = select.select([proc.stdout], [], [], 3)
                     case.assertTrue(ready, "sampler reply timed out")
-                    char = __import__("os").read(proc.stdout.fileno(), 1).decode()
+                    char = os.read(proc.stdout.fileno(), 1).decode()
                     case.assertTrue(char, "sampler exited before acknowledging stage")
                     line += char
                 output.append(line.strip())
@@ -70,19 +72,18 @@ runpy.run_path(helper, run_name="__main__")
             if batched:
                 # Two commands in one write: the second must be answered without
                 # waiting out the 60-second command timeout.
-                started = __import__("time").monotonic()
+                started = time.monotonic()
                 proc.stdin.write("reset both\nsample both\n")
                 proc.stdin.flush()
                 received = ""
                 while "both_sample=ok\n" not in received:
-                    import select
                     ready, _, _ = select.select([proc.stdout], [], [], 5)
                     case.assertTrue(ready, "the second batched command was never answered")
-                    chunk = __import__("os").read(proc.stdout.fileno(), 65536).decode()
+                    chunk = os.read(proc.stdout.fileno(), 65536).decode()
                     case.assertTrue(chunk, "sampler exited before answering both commands")
                     received += chunk
                 case.assertIn("both_reset=ok\n", received)
-                case.assertLess(__import__("time").monotonic() - started, 10)
+                case.assertLess(time.monotonic() - started, 10)
                 proc.communicate("quit\n", timeout=5)
                 case.assertEqual(proc.returncode, 0, "batched session failed")
                 return
@@ -108,7 +109,7 @@ runpy.run_path(helper, run_name="__main__")
             case.assertGreater(int(values["low_rss_kib"]), 0)
             case.assertEqual(values["low_cgroup_oom"], "0")
             case.assertEqual(values["low_cgroup_oom_kill"], "0")
-            case.assertEqual(values["kernel_release"], __import__("os").uname().release)
+            case.assertEqual(values["kernel_release"], os.uname().release)
         finally:
             if proc.poll() is None:
                 proc.kill()

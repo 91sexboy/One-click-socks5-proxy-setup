@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tests/lib"))
 from release_contract import RAW_ASSETS
 
-LAUNCHER = ROOT / "tests/protocol/start_engine.sh"
+DEFAULT_LAUNCHER = ROOT / "tests/protocol/start_engine.sh"
 
 
 def wait_for(predicate, process, timeout=8):
@@ -35,22 +35,9 @@ def wait_for(predicate, process, timeout=8):
     return False
 
 
-def scenario(shell, marker, mode, stale=False, invalid_pass=False):
-    with tempfile.TemporaryDirectory(prefix="s5ready.") as scratch:
-        root = Path(scratch)
-        tools = root / "bin"
-        tools.mkdir()
-        out = root / "out"
-        out.mkdir()
-        passfile = root / "pass"
-        secret = "fixture_credential_do_not_replay"
-        passfile.write_text("fixture_user\n" + secret + "\n", encoding="ascii")
-        passfile.chmod(0o644 if invalid_pass else 0o600)
-        if stale:
-            for name in ("port", "ready", "ready.tmp"):
-                (out / name).write_text("1\n", encoding="ascii")
-        engine = root / "engine"
-        engine.write_text('''#!/usr/bin/env python3
+TOOLS = ("curl", "sha256sum", "file", "sleep")
+SECRET = "fixture_credential_do_not_replay"
+ENGINE = '''#!/usr/bin/env python3
 import json, os, pathlib, socket, sys, time
 if sys.argv[1:] == ["version"]:
     print("Xray 26.3.27 (synthetic launcher fixture)")
@@ -74,9 +61,8 @@ sock.listen(8)
 while True:
     peer, _ = sock.accept()
     peer.close()
-''', encoding="ascii")
-        engine.chmod(0o755)
-        fixture_tool = f'''#!/usr/bin/env python3
+'''
+FIXTURE_TOOL = f'''#!/usr/bin/env python3
 import os, pathlib, sys, time
 name = pathlib.Path(sys.argv[0]).name
 root = pathlib.Path(os.environ["FIXTURE_ROOT"])
@@ -92,99 +78,140 @@ elif name == "file":
 elif name == "sleep":
     time.sleep(0.01)
 '''
-        for name in ("curl", "sha256sum", "file", "sleep"):
-            path = tools / name
-            path.write_text(fixture_tool, encoding="ascii")
-            path.chmod(0o755)
-        with socket.socket() as reservation:
-            reservation.bind(("127.0.0.1", 0))
-            port = reservation.getsockname()[1]
+
+
+def write_fixtures(root, stale, invalid_pass):
+    """Lay out the fixture engine, tools, password file and output directory."""
+    tools = root / "bin"
+    tools.mkdir()
+    out = root / "out"
+    out.mkdir()
+    passfile = root / "pass"
+    passfile.write_text("fixture_user\n" + SECRET + "\n", encoding="ascii")
+    passfile.chmod(0o644 if invalid_pass else 0o600)
+    if stale:
+        for name in ("port", "ready", "ready.tmp"):
+            (out / name).write_text("1\n", encoding="ascii")
+    engine = root / "engine"
+    engine.write_text(ENGINE, encoding="ascii")
+    engine.chmod(0o755)
+    for name in TOOLS:
+        path = tools / name
+        path.write_text(FIXTURE_TOOL, encoding="ascii")
+        path.chmod(0o755)
+    return tools, out, passfile
+
+
+def free_port():
+    with socket.socket() as reservation:
+        reservation.bind(("127.0.0.1", 0))
+        return reservation.getsockname()[1]
+
+
+def fixture_wrappers():
+    # BusyBox resolves built-in applets before PATH; shell functions keep the
+    # same explicit tool fixtures in all four supported shells.
+    wrappers = "\n".join('%s() { "$FIXTURE_ROOT/bin/%s" "$@"; }' % (name, name) for name in TOOLS)
+    # Replace only the launcher transport and verification command seams.
+    wrappers += '\ncurl_command() { "$FIXTURE_ROOT/bin/curl" "$@"; }'
+    wrappers += '\nsha256_command() { "$FIXTURE_ROOT/bin/sha256sum" "$@"; }'
+    wrappers += '\nfile_type_command() { "$FIXTURE_ROOT/bin/file" -b "$@"; }'
+    wrappers += '\npython3() { : >"$FIXTURE_ROOT/probed"; "$REAL_PYTHON" "$@"; }'
+    return wrappers
+
+
+def observe(process, root, out, marker, mode, port, invalid_pass):
+    """Drive one launch to its end; return (early, published, removed)."""
+    marker_path = out / marker
+    early, published, removed = False, False, False
+    if invalid_pass:
+        process.wait(timeout=5)
+    else:
+        if not wait_for(lambda: (root / "started").exists(), process):
+            raise AssertionError("fixture engine never started")
+        # The listener cannot bind until this test releases it. Wait for a real
+        # readiness probe, not a lucky scheduling gap.
+        if mode != "exit" and not wait_for(lambda: (root / "probed").exists(), process):
+            raise AssertionError("launcher never probed listener readiness")
+        early = marker_path.exists()
+        if mode == "healthy":
+            (root / "release").touch()
+            published = wait_for(marker_path.is_file, process)
+            if published:
+                published = ((root / "listening").exists()
+                             and marker_path.read_text().strip() == str(port))
+                if published:
+                    with socket.create_connection(("127.0.0.1", port), timeout=1):
+                        pass
+        else:
+            process.wait(timeout=8)
+    if mode != "healthy" or invalid_pass:
+        removed = not any((out / name).exists() for name in ("port", "ready", "ready.tmp"))
+    return early, published, removed
+
+
+def stop(process):
+    if process.poll() is None:
+        process.send_signal(signal.SIGTERM)
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        kill_process_group(process)
+        raise AssertionError("launcher fixture cleanup did not finish")
+    # Catch leaked fixture engines even if their parent exited.
+    kill_process_group(process)
+
+
+def scenario(launcher, shell, marker, mode, stale=False, invalid_pass=False):
+    with tempfile.TemporaryDirectory(prefix="s5ready.") as scratch:
+        root = Path(scratch)
+        tools, out, passfile = write_fixtures(root, stale, invalid_pass)
+        port = free_port()
         env = dict(os.environ, PATH=str(tools) + os.pathsep + os.environ["PATH"],
                    OUTDIR=str(out), PASSFILE=str(passfile), PORT=str(port), ARCH="amd64",
                    FIXTURE_ROOT=str(root), FIXTURE_MODE=mode, REAL_PYTHON=sys.executable)
         log_path = root / "launcher.log"
         with log_path.open("w", encoding="ascii") as log:
-            # BusyBox resolves built-in applets before PATH; shell functions
-            # keep the same explicit tool fixtures in all four supported shells.
-            wrappers = "\n".join('%s() { "$FIXTURE_ROOT/bin/%s" "$@"; }' % (name, name)
-                                 for name in ("curl", "sha256sum", "file", "sleep"))
-            # Replace only the launcher transport and verification command seams.
-            wrappers += '\ncurl_command() { "$FIXTURE_ROOT/bin/curl" "$@"; }'
-            wrappers += '\nsha256_command() { "$FIXTURE_ROOT/bin/sha256sum" "$@"; }'
-            wrappers += '\nfile_type_command() { "$FIXTURE_ROOT/bin/file" -b "$@"; }'
-            wrappers += '\npython3() { : >"$FIXTURE_ROOT/probed"; "$REAL_PYTHON" "$@"; }'
-            command = shell + ["-c", wrappers + '\n. "$1"', "launcher-fixture", str(LAUNCHER)]
+            command = shell + ["-c", fixture_wrappers() + '\n. "$1"', "launcher-fixture", str(launcher)]
             process = subprocess.Popen(command, env=env, stdout=log, stderr=log, start_new_session=True)
-            marker_path = out / marker
-            early, published, removed = False, False, False
             try:
-                if invalid_pass:
-                    process.wait(timeout=5)
-                else:
-                    if not wait_for(lambda: (root / "started").exists(), process):
-                        raise AssertionError("fixture engine never started")
-                    # The listener cannot bind until this test releases it. Wait
-                    # for a real readiness probe, not a lucky scheduling gap.
-                    if mode != "exit" and not wait_for(lambda: (root / "probed").exists(), process):
-                        raise AssertionError("launcher never probed listener readiness")
-                    early = marker_path.exists()
-                    if mode == "healthy":
-                        (root / "release").touch()
-                        published = wait_for(marker_path.is_file, process)
-                        if published:
-                            published = ((root / "listening").exists()
-                                         and marker_path.read_text().strip() == str(port))
-                            if published:
-                                with socket.create_connection(("127.0.0.1", port), timeout=1):
-                                    pass
-                    else:
-                        process.wait(timeout=8)
-                if mode != "healthy" or invalid_pass:
-                    removed = not any((out / name).exists() for name in ("port", "ready", "ready.tmp"))
+                early, published, removed = observe(process, root, out, marker, mode, port, invalid_pass)
             finally:
-                if process.poll() is None:
-                    process.send_signal(signal.SIGTERM)
-                try:
-                    process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    kill_process_group(process)
-                    raise AssertionError("launcher fixture cleanup did not finish")
-                # Catch leaked fixture engines even if their parent exited.
-                kill_process_group(process)
+                stop(process)
         log = log_path.read_text(encoding="ascii")
-        if secret in log:
+        if SECRET in log:
             raise AssertionError("launcher diagnostics leaked the fixture credential")
         return early, published, removed, not (out / "ready").exists(), log
 
 
 class LauncherTests(TapTestCase):
+    launcher = DEFAULT_LAUNCHER
     shell = ["sh"]
     marker = "ready"
 
     def test_healthy_listener(self):
-        early, published, _, cleaned, _ = scenario(self.shell, self.marker, "healthy")
+        early, published, _, cleaned, _ = scenario(self.launcher, self.shell, self.marker, "healthy")
         self.check("delayed listener never releases the protocol consumer early", not early)
         self.check("healthy listener publishes the consumer marker after binding", published)
         self.check("launcher shutdown removes its readiness marker", cleaned)
 
     def test_failed_launchers(self):
         for mode in ("exit", "never"):
-            early, published, removed, _, log = scenario(self.shell, self.marker, mode, stale=True)
+            early, published, removed, _, log = scenario(self.launcher, self.shell, self.marker, mode, stale=True)
             self.check(mode + " cannot leave stale or false readiness", not early and not published and removed)
             self.check(mode + " has useful startup diagnostics", "before" in log or "did not become ready" in log)
 
     def test_preflight_failure(self):
-        _, _, removed, _, _ = scenario(self.shell, self.marker, "exit", stale=True, invalid_pass=True)
+        _, _, removed, _, _ = scenario(self.launcher, self.shell, self.marker, "exit", stale=True, invalid_pass=True)
         self.check("preflight failure clears stale output before validation", removed)
 
 
 def main():
-    global LAUNCHER
     parser = argparse.ArgumentParser()
     parser.add_argument("--shell", default="sh")
-    parser.add_argument("--launcher", type=Path, default=LAUNCHER)
+    parser.add_argument("--launcher", type=Path, default=DEFAULT_LAUNCHER)
     args = parser.parse_args()
-    LAUNCHER = args.launcher
+    LauncherTests.launcher = args.launcher
     LauncherTests.shell = shlex.split(args.shell)
     # Follow the real consumer so an early /port publication still fails.
     workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
