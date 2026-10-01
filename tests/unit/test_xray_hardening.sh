@@ -43,6 +43,18 @@ assert_eq "a paused stale-lock reclaimer cannot remove a new live lock" 0 "$T_ST
 assert_contains "the interleaving reaches the lock ownership assertions" \
     'stale-lock interleaving preserves mutual exclusion' "$T_OUT"
 
+# Every locked command enters through one shared opening, so the precheck, lock
+# and trap order cannot drift between them; uninstall used to repeat it by hand.
+# Install takes the rollback traps instead and is the one other lock taker.
+_lock_takers=$(awk '
+    /^s5_[a-z0-9_]*\(\) [{(]/ { fn = $1; sub(/\(\)$/, "", fn); next }
+    /^[})]$/ { fn = ""; next }
+    /^[[:space:]]*#/ { next }
+    fn != "" && /s5_lock_acquire([ ;]|$)/ { print fn }
+' "$ROOT/socks5.sh" | sort -u | tr '\n' ' ')
+assert_eq "only the shared opening and install acquire the lock" \
+    's5_cmd_install s5_enter_locked ' "$_lock_takers"
+
 # Shell variables are global, so a function that shares a variable prefix with
 # anything it calls, directly or further down, can have its values replaced
 # mid-flight. Each function's locals carry its own "_<abbrev>" prefix; along

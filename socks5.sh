@@ -3323,18 +3323,31 @@ s5_cmd_install() {
     return 0
 }
 
-s5_open_locked() {
-    # The shared opening of every locked read command: prechecked, locked,
-    # trapped, then the validated state and configuration the caller works from.
-    # A failure before the lock is held returns directly; one after it releases
-    # the lock through s5_fail_locked, so each caller only handles its own work.
+# s5_enter_locked <mode>: the opening every lock-only command shares --
+# prechecked, locked, then trapped so an interrupt releases the lock. A failure
+# here leaves no lock held, so the caller just returns.
+s5_enter_locked() {
     s5_precheck "$1" || return 1
     s5_lock_acquire || return 1
     s5_trap_lock_only
+}
+
+# s5_accept_state <load-status>: report a failed state load, or read the
+# configuration the caller works from. Either failure releases the lock through
+# s5_fail_locked, so each caller only handles its own work.
+s5_accept_state() {
+    s5_report_state_load "$1" || { s5_fail_locked; return 1; }
+    s5_config_extract || { s5_fail_locked config.unreadable "$S5_CFG"; return 1; }
+}
+
+# The opening of every locked read command: entered, then the validated state
+# and configuration. Uninstall shares both halves but decides between them
+# whether a recovery record or a missing state comes first.
+s5_open_locked() {
+    s5_enter_locked "$1" || return 1
     case "$1" in restart) _sol_cap=operate ;; *) _sol_cap=inspect ;; esac
     s5_open_managed_state "$_sol_cap"
-    s5_report_state_load $? || { s5_fail_locked; return 1; }
-    s5_config_extract || { s5_fail_locked config.unreadable "$S5_CFG"; return 1; }
+    s5_accept_state $?
 }
 
 # The one place that maps the two state probes onto reported values, so status
@@ -3988,9 +4001,7 @@ s5_namespace_absent() {
 }
 
 s5_cmd_uninstall() {
-    s5_precheck uninstall || return 1
-    s5_lock_acquire || return 1
-    s5_trap_lock_only
+    s5_enter_locked uninstall || return 1
     if [ -f "$S5_UNINSTALL_FINAL" ] && [ ! -L "$S5_UNINSTALL_FINAL" ]; then
         s5_uninstall_recovery_load "$S5_UNINSTALL_FINAL" || { s5_fail_locked state.invalid "$S5_UNINSTALL_FINAL"; return 1; }
         s5_uninstall_verify_recovery || { s5_fail_locked uninstall.residue "$S5_UNINSTALL_FINAL"; return 1; }
@@ -4009,8 +4020,7 @@ s5_cmd_uninstall() {
             s5_fail_locked state.invalid "$S5_STATE"
             return 1
         fi
-        s5_report_state_load "$_scu_state" || { s5_fail_locked; return 1; }
-        s5_config_extract || { s5_fail_locked config.unreadable "$S5_CFG"; return 1; }
+        s5_accept_state "$_scu_state" || return 1
         s5_confirm uninstall s5_lock_release || return 1
         s5_uninstall_preflight || { s5_fail_locked; return 1; }
         s5_account_identity || { s5_fail_locked account.identity; return 1; }
