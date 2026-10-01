@@ -36,6 +36,14 @@ done
 # nothing else, so these run the same parser a real response goes through.
 S5_TEST_ADDR_PATH=$S5_TEST_ROOT/body
 
+# Every body file the reader creates is recorded, so each outcome below can be
+# checked for leftovers in the shared temporary directory.
+mktemp() {
+    _s5t_temp=$(command mktemp "$@") || return 1
+    printf '%s\n' "$_s5t_temp" >>"$S5_TEST_ROOT/address-temps"
+    printf '%s\n' "$_s5t_temp"
+}
+
 # s5t_body <printf-format>: write one exact response body and read it back.
 s5t_body() {
     # Interpret the fixture's deliberate escape sequences as bytes.
@@ -85,6 +93,16 @@ s5t_body '255.255.255.2555\n'
 assert_eq "an over-long octet parses as a line" 0 "$?"
 s5_ipv4_is_public "$S5_PUBLIC_IPV4_CANDIDATE"
 assert_ne "an over-long octet is not a usable address" 0 "$?"
+
+unset -f mktemp
+_addr_temps=0
+_addr_left=''
+while IFS= read -r _addr_temp; do
+    _addr_temps=$((_addr_temps + 1))
+    if [ -e "$_addr_temp" ] || [ -L "$_addr_temp" ]; then _addr_left="$_addr_left $_addr_temp"; fi
+done <"$S5_TEST_ROOT/address-temps"
+assert_ne "the reader's body files were observed" 0 "$_addr_temps"
+assert_eq "no body file survives an accepted or refused response" '' "$_addr_left"
 
 # s5t_card: render into a file. t_run would capture through a command
 # substitution, and S5_ADVERTISED_KIND is set by the subject, so a subshell would lose

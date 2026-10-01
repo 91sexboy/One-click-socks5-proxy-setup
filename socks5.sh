@@ -991,21 +991,23 @@ s5_mkdir_private() {
 
 s5_lock_try() {
     mkdir "$S5_LOCKDIR" 2>/dev/null || return 1
-    _sltmp=$(mktemp "$S5_LOCKDIR/.owner.XXXXXX") || { rmdir "$S5_LOCKDIR" 2>/dev/null || true; return 1; }
     _slboot=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || uname -n)
     _sltoken="$_slboot
 $$"
-    if ! printf '%s\n' "$_sltoken" >"$_sltmp" || ! chmod 0600 "$_sltmp"; then
-        rm -f "$_sltmp" 2>/dev/null || true
+    _slstatus=1
+    if _sltmp=$(mktemp "$S5_LOCKDIR/.owner.XXXXXX") &&
+        printf '%s\n' "$_sltoken" >"$_sltmp" && chmod 0600 "$_sltmp" &&
+        ln -T "$_sltmp" "$S5_LOCK_OWNER" 2>/dev/null; then
+        _slstatus=0
+    fi
+    # The one exit. The owner temp goes either way; without a linked owner the
+    # directory this call created is removed too, so it never reads as held.
+    [ -z "$_sltmp" ] || rm -f "$_sltmp" 2>/dev/null || true
+    _sltmp=''
+    if [ "$_slstatus" -ne 0 ]; then
         rmdir "$S5_LOCKDIR" 2>/dev/null || true
         return 1
     fi
-    if ! ln -T "$_sltmp" "$S5_LOCK_OWNER" 2>/dev/null; then
-        rm -f "$_sltmp" 2>/dev/null || true
-        rmdir "$S5_LOCKDIR" 2>/dev/null || true
-        return 1
-    fi
-    rm -f "$_sltmp" 2>/dev/null || true
     S5_LOCK_TOKEN=$_sltoken
     S5_LOCK_HELD=1
     return 0
@@ -3400,60 +3402,53 @@ s5_cmd_status() {
 s5_read_public_ipv4() {
     S5_PUBLIC_IPV4_CANDIDATE=''
     _sripv4_file=$(mktemp "$(s5_tmp_base)/.s5ip.XXXXXX") || return 1
+    s5_fetch_public_ipv4 "$_sripv4_file" && s5_parse_public_ipv4 "$_sripv4_file"
+    _sripv4_status=$?
+    # The one exit: the body file goes whatever the outcome, and a refused body
+    # leaves no candidate behind.
+    rm -f "$_sripv4_file"
+    _sripv4_file=''
+    [ "$_sripv4_status" -eq 0 ] || S5_PUBLIC_IPV4_CANDIDATE=''
+    return "$_sripv4_status"
+}
+
+# s5_fetch_public_ipv4 <file>: write the response body to the caller's file.
+s5_fetch_public_ipv4() {
     if [ "${S5_TEST_MODE:-0}" = 1 ] && [ -n "${S5_TEST_ADDR_PATH:-}" ]; then
-        cp "$S5_TEST_ADDR_PATH" "$_sripv4_file" || { rm -f "$_sripv4_file"; _sripv4_file=''; return 1; }
-    else
-        if [ ! -x /usr/bin/curl ]; then
-            rm -f "$_sripv4_file"
-            _sripv4_file=''
-            return 1
-        fi
-        if ! s5_curl_command -q -4 --noproxy '*' --proto '=https' --fail --silent \
-            --connect-timeout 3 --max-time 5 --max-filesize 17 \
-            --output "$_sripv4_file" "$S5_ADDR_ENDPOINT" </dev/null 2>/dev/null; then
-            rm -f "$_sripv4_file"
-            _sripv4_file=''
-            return 1
-        fi
+        cp "$S5_TEST_ADDR_PATH" "$1"
+        return $?
     fi
-    _sripv4_size=$(s5_bytecount "$_sripv4_file" 2>/dev/null)
-    case "$_sripv4_size" in '' | *[!0-9]*) _sripv4_size=18 ;; esac
+    [ -x /usr/bin/curl ] || return 1
+    s5_curl_command -q -4 --noproxy '*' --proto '=https' --fail --silent \
+        --connect-timeout 3 --max-time 5 --max-filesize 17 \
+        --output "$1" "$S5_ADDR_ENDPOINT" </dev/null 2>/dev/null
+}
+
+# s5_parse_public_ipv4 <file>: accept a body of one line and one optional
+# terminator into S5_PUBLIC_IPV4_CANDIDATE.
+s5_parse_public_ipv4() {
+    _sppi_size=$(s5_bytecount "$1" 2>/dev/null)
+    case "$_sppi_size" in '' | *[!0-9]*) _sppi_size=18 ;; esac
     # The longest address is 15 bytes and one terminator is allowed two, so a
     # larger body cannot be a single address. Checked before the read so an
     # endpoint that ignores --max-filesize cannot stream an unbounded line.
-    if [ "$_sripv4_size" -gt 17 ]; then
-        rm -f "$_sripv4_file"
-        _sripv4_file=''
-        _sripv4_size=''
-        return 1
-    fi
-    IFS= read -r S5_PUBLIC_IPV4_CANDIDATE <"$_sripv4_file" 2>/dev/null || true
-    rm -f "$_sripv4_file"
-    _sripv4_file=''
+    [ "$_sppi_size" -le 17 ] || return 1
+    IFS= read -r S5_PUBLIC_IPV4_CANDIDATE <"$1" 2>/dev/null || true
     # The raw line still carries the CR of a CRLF terminator, so its length is
     # the exact byte count of everything before the LF.
-    _sripv4_length=${#S5_PUBLIC_IPV4_CANDIDATE}
+    _sppi_length=${#S5_PUBLIC_IPV4_CANDIDATE}
     # read leaves that CR on the line, and a command substitution strips trailing
     # newlines but not a CR.
-    _sripv4_cr=$(printf 'x\r')
-    _sripv4_cr=${_sripv4_cr#x}
-    S5_PUBLIC_IPV4_CANDIDATE=${S5_PUBLIC_IPV4_CANDIDATE%"$_sripv4_cr"}
-    _sripv4_cr=''
+    _sppi_cr=$(printf 'x\r')
+    _sppi_cr=${_sppi_cr#x}
+    S5_PUBLIC_IPV4_CANDIDATE=${S5_PUBLIC_IPV4_CANDIDATE%"$_sppi_cr"}
     # The body has to be one line and one optional terminator. Comparing the
     # file's byte count against the raw line plus that terminator rejects a
     # second line, a double terminator and unterminated trailing bytes without
     # enumerating them, which a command substitution cannot do because it strips
     # every trailing newline.
-    if [ "$_sripv4_size" -gt "$((_sripv4_length + 1))" ]; then
-        S5_PUBLIC_IPV4_CANDIDATE=''
-        _sripv4_size=''
-        _sripv4_length=''
-        return 1
-    fi
-    _sripv4_size=''
-    _sripv4_length=''
-    [ -n "$S5_PUBLIC_IPV4_CANDIDATE" ] || return 1
-    return 0
+    [ "$_sppi_size" -le "$((_sppi_length + 1))" ] || return 1
+    [ -n "$S5_PUBLIC_IPV4_CANDIDATE" ]
 }
 
 # Resolves once per card, so the SOCKS5 and HTTP URIs always agree. Validation
