@@ -377,15 +377,21 @@ s5_language_save() {
     printf '%s\n' "$S5_LANG" | s5_atomic_write "$S5_LANG_FILE" root:root 0644
 }
 
+# The language every command but `language` speaks: the saved preference, or a
+# fresh answer. Failing to save that answer only costs the next run a prompt, so
+# it is a warning here and never this command's failure.
 s5_init_language() {
-    if [ "$#" -ne 1 ] || [ "$1" != language ]; then
-        s5_language_load && return 0
-    fi
+    s5_language_load && return 0
     s5_select_language || return 1
-    if ! s5_language_save; then
-        s5_msg_warn lang.unsaved
-        [ "${1:-}" != language ]
-    fi
+    s5_language_save || s5_msg_warn lang.unsaved
+    return 0
+}
+
+# The language command exists to save a preference, so an unsaved one fails it.
+s5_cmd_language() {
+    s5_select_language || return 1
+    s5_language_save || { s5_msg_warn lang.unsaved; return 1; }
+    s5_msg_print lang.saved
 }
 
 s5_osrel_get() {
@@ -4029,7 +4035,12 @@ s5_cmd_uninstall() {
 }
 
 s5_main() {
-    s5_init_language "$@" || return 1
+    # A bare `language` asks afresh in s5_cmd_language; every other invocation,
+    # including `language` with extra arguments, speaks the saved preference.
+    case "$#:${1:-}" in
+    1:language) ;;
+    *) s5_init_language || return 1 ;;
+    esac
     _smcmd=${1:-}
     # shift is a POSIX special built-in, so shifting past the end terminates a
     # non-interactive shell outright -- neither the redirect nor the `|| true`
@@ -4048,7 +4059,7 @@ s5_main() {
     show) s5_cmd_show ;;
     restart) s5_cmd_restart ;;
     uninstall) s5_cmd_uninstall ;;
-    language) s5_msg_print lang.saved ;;
+    language) s5_cmd_language ;;
     help | -h | --help) s5_msg_print usage ;;
     *) s5_msg_err usage.unknown "$_smcmd"; s5_msg_print usage >&2; return 64 ;;
     esac
