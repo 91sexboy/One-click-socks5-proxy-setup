@@ -15,17 +15,17 @@ printf 'lifecycle: start\n'
 work=$(mktemp -d)
 printf 'lifecycle: workdir-ready\n'
 lifecycle_cleanup_namespace() {
-  sh .github/scripts/remove-xray-namespace.sh
+    sh .github/scripts/remove-xray-namespace.sh
 }
 lifecycle_cleanup_init
 chmod 0700 "$work"
 lifecycle_write_fixtures "$work"
 sudo chown root:root "$work"/answers* "$work"/pass*
 sudo sh -c 'python3 tests/protocol/terminal_install.py "$1" "$2" 23456 1 >"$3"' \
-  sh "$work/answers" "$work/pass" "$work/install.log"
+    sh "$work/answers" "$work/pass" "$work/install.log"
 printf 'lifecycle: install-ok\n'
 sudo find /etc/xray-socks5 /var/lib/xray-socks5 /usr/local/libexec/xray-socks5 \
-  -maxdepth 2 -printf '%M %u:%g %p\n' 2>&1 || true
+    -maxdepth 2 -printf '%M %u:%g %p\n' 2>&1 || true
 test -e /etc/xray-socks5
 printf 'lifecycle: config-dir-entry-ok\n'
 sudo test -f /etc/xray-socks5/config.json
@@ -38,7 +38,7 @@ printf 'lifecycle: binary-file-ok\n'
 # the amd64 pins independently of the installer; this job runs on amd64 only.
 test "$(sudo stat -c '%s' /usr/local/libexec/xray-socks5/xray)" = 36577406
 test "$(sudo sha256sum /usr/local/libexec/xray-socks5/xray | awk '{print $1}')" = \
-  8255dd939c34cf966cc91517b6324dd3c8d0bcf49ffac8beca049a38c46845ed
+    8255dd939c34cf966cc91517b6324dd3c8d0bcf49ffac8beca049a38c46845ed
 printf 'lifecycle: binary-bytes-ok\n'
 printf 'lifecycle: files-ok\n'
 test "$(sudo stat -c '%a' /etc/xray-socks5/config.json)" = 640
@@ -52,7 +52,7 @@ s = socket.create_connection(('127.0.0.1', 23456), 5)
 s.close()
 PY
 sudo sh .github/scripts/run-socks5.sh restart \
-  "$work/answers.empty" "$work/restart.log" "$work/pass"
+    "$work/answers.empty" "$work/restart.log" "$work/pass"
 printf 'lifecycle: restart-command-ok\n'
 sudo systemctl is-active --quiet xray-socks5.service
 printf 'lifecycle: restart-active-ok\n'
@@ -63,8 +63,8 @@ crash_pid=$(systemctl show xray-socks5.service -p MainPID --value)
 test "$crash_pid" -gt 0
 sudo kill -9 "$crash_pid"
 crash_recovered() {
-  new_pid=$(systemctl show xray-socks5.service -p MainPID --value)
-  test "$new_pid" != "$crash_pid" && test "$new_pid" -gt 0
+    new_pid=$(systemctl show xray-socks5.service -p MainPID --value)
+    test "$new_pid" != "$crash_pid" && test "$new_pid" -gt 0
 }
 # The assertions below also observe changes during the final sleep.
 lifecycle_wait_until 60 1 crash_recovered || true
@@ -80,15 +80,15 @@ sudo cp /etc/xray-socks5/config.json "$work/good.json"
 printf '{broken\n' | sudo tee /etc/xray-socks5/config.json >/dev/null
 sudo systemctl restart xray-socks5.service || true
 service_stopped() {
-  if sudo systemctl is-active --quiet xray-socks5.service; then return 1; fi
+    if sudo systemctl is-active --quiet xray-socks5.service; then return 1; fi
 }
 lifecycle_wait_until 30 1 service_stopped || true
 # set -e does not apply to a command a ! inverts, so `! systemctl is-active` did
 # not fail the gate when the broken config left the service running: the check
 # below was dead, and SPEC 5's guarantee was unproven on this backend.
 if sudo systemctl is-active --quiet xray-socks5.service; then
-  printf 'a broken config left the service running\n' >&2
-  exit 1
+    printf 'a broken config left the service running\n' >&2
+    exit 1
 fi
 test "$(systemctl show xray-socks5.service -p ExecMainStatus --value)" = 23
 loop_restarts=$(systemctl show xray-socks5.service -p NRestarts --value)
@@ -102,20 +102,20 @@ test "$(sudo stat -c '%U:%G %a' /etc/xray-socks5/config.json)" = "root:xray-sock
 test "$(systemctl is-active xray-socks5.service || true)" = failed
 failed_status=0
 sudo sh .github/scripts/run-socks5.sh status \
-  "$work/answers.empty" "$work/failed-status.log" "$work/pass" || failed_status=$?
+    "$work/answers.empty" "$work/failed-status.log" "$work/pass" || failed_status=$?
 lifecycle_assert_exited_status "$failed_status" "$work/failed-status.log" failed 23456 sudo
 # A failed unit has no MainPID, which the listener probe reports as
 # unobservable; either non-ready line is correct, a ready one is not.
 sudo grep -qxE 'Xray is not listening on port 23456\.|the listen state of port 23456 could not be verified\.' \
-  "$work/failed-status.log"
+    "$work/failed-status.log"
 if sudo grep -qxF 'Xray is listening on port 23456.' "$work/failed-status.log"; then
-  printf 'a failed unit was reported listening\n' >&2
-  exit 1
+    printf 'a failed unit was reported listening\n' >&2
+    exit 1
 fi
 test ! -e /run/xray-socks5.lock
 printf 'lifecycle: failed-status-ok\n'
 sudo sh .github/scripts/run-socks5.sh restart \
-  "$work/answers.empty" "$work/failed-restart.log" "$work/pass"
+    "$work/answers.empty" "$work/failed-restart.log" "$work/pass"
 sudo systemctl is-active --quiet xray-socks5.service
 printf 'lifecycle: failed-restart-ok\n'
 python3 tests/protocol/duplex_target.py --host 0.0.0.0 --host6 :: --ready-file "$work/target.port" --count-file "$work/count" --report-file "$work/report" >"$work/target.log" 2>&1 &
@@ -124,8 +124,8 @@ lifecycle_wait_until 50 0.1 test -s "$work/target.port" || true
 target_port=$(cat "$work/target.port")
 test "$(sudo python3 -c 'import json; print(json.load(open("/etc/xray-socks5/config.json"))["inbounds"][0]["listen"])')" = 0.0.0.0
 sudo env PROXY_HOST=192.0.2.1 PASSFILE="$work/pass" PORT=23456 TARGET_PORT="$target_port" \
-  REPORT="$work/report" OUT="$work/probe" \
-  sh tests/protocol/run_xray_mixed.sh
+    REPORT="$work/report" OUT="$work/probe" \
+    sh tests/protocol/run_xray_mixed.sh
 # The root-run probe owns only this output directory; remove it after all
 # counter reconciliation so the unprivileged EXIT trap can remove the workdir.
 sudo rm -rf "$work/probe"
@@ -135,10 +135,10 @@ printf 'lifecycle: audit-ok\n'
 # in-place update. Rotate the credentials, keep the port, and require
 # the new identity in both the config and the state.
 sudo sh .github/scripts/run-socks5.sh install \
-  "$work/answers.update" "$work/update.log" "$work/pass.update" "$work/pass"
+    "$work/answers.update" "$work/update.log" "$work/pass.update" "$work/pass"
 printf 'lifecycle: update-ok\n'
 sudo sh .github/scripts/run-socks5.sh status \
-  "$work/answers.empty" "$work/status.log" "$work/pass.update" "$work/pass"
+    "$work/answers.empty" "$work/status.log" "$work/pass.update" "$work/pass"
 printf 'lifecycle: status-ok\n'
 # This healthy systemd status is informational, so output evidence rather than
 # a zero exit alone proves the listener is ready.
@@ -153,7 +153,7 @@ printf 'lifecycle: update-audit-ok\n'
 live_pid=$(systemctl show xray-socks5.service -p MainPID --value)
 test "$live_pid" -gt 0
 sudo sh -c '. .github/scripts/lifecycle-common.sh && lifecycle_process_clean "$@"' \
-  process-clean "$live_pid" "$work" "$work/pass" "$work/pass.update"
+    process-clean "$live_pid" "$work" "$work/pass" "$work/pass.update"
 printf 'lifecycle: process-credentials-ok\n'
 printf 'lifecycle: uninstall-preflight\n'
 sudo systemctl is-active xray-socks5.service || true
@@ -162,7 +162,7 @@ sudo id xray-socks5
 sudo stat -c '%M %U:%G %n' /etc/xray-socks5/config.json /var/lib/xray-socks5/state /usr/local/libexec/xray-socks5/xray
 sudo find /etc/xray-socks5 /var/lib/xray-socks5 /usr/local/libexec/xray-socks5 -maxdepth 2 -printf '%M %U:%G %p\n'
 sudo sh .github/scripts/run-socks5.sh uninstall \
-  "$work/answers.uninstall" "$work/uninstall.log" "$work/pass.update" "$work/pass"
+    "$work/answers.uninstall" "$work/uninstall.log" "$work/pass.update" "$work/pass"
 test ! -e /etc/xray-socks5
 test ! -e /var/lib/xray-socks5
 test ! -e /usr/local/libexec/xray-socks5
@@ -170,12 +170,12 @@ test ! -e /etc/systemd/system/xray-socks5.service
 if sudo systemctl is-enabled --quiet xray-socks5.service; then exit 1; fi
 if getent passwd xray-socks5 >/dev/null 2>&1 || getent group xray-socks5 >/dev/null 2>&1; then exit 1; fi
 sudo sh .github/scripts/run-socks5.sh uninstall \
-  "$work/answers.uninstall" "$work/uninstall-second.log" "$work/pass.update" "$work/pass"
+    "$work/answers.uninstall" "$work/uninstall-second.log" "$work/pass.update" "$work/pass"
 # The repeated uninstall is idempotent; a fresh install must recreate the namespace.
 sudo sh -c 'python3 tests/protocol/terminal_install.py "$1" "$2" 23456 0 >"$3"' \
-  sh "$work/answers.reinstall" "$work/pass" "$work/reinstall.log"
+    sh "$work/answers.reinstall" "$work/pass" "$work/reinstall.log"
 sudo sh .github/scripts/run-socks5.sh uninstall \
-  "$work/answers.uninstall" "$work/uninstall-reinstall.log" "$work/pass"
+    "$work/answers.uninstall" "$work/uninstall-reinstall.log" "$work/pass"
 sudo sh -c 'sh socks5.sh help </dev/null >"$1"' sh "$work/help-after-uninstall.log"
 sudo grep -q 'Usage: sh socks5.sh' "$work/help-after-uninstall.log"
 lifecycle_assert_logs_redacted "$work" sudo

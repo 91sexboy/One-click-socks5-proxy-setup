@@ -15,6 +15,13 @@ systemd_text=$(cat "$SYSTEMD_GATE")
 gates_text=$(printf '%s\n%s\n' "$systemd_text" "$alpine_text")
 workflow_oracle=$(cat "$ROOT/.github/scripts/check-workflow.py")
 
+# Both gates indent in 4-space steps like every other script; their heredoc
+# bodies start at column 0, so any indented line is shell.
+for _gate in "$ALPINE_GATE" "$SYSTEMD_GATE"; do
+    assert_eq "${_gate##*/} indents in 4-space steps" '' \
+        "$(grep -nE '^(    )* {1,3}[^ ]' "$_gate" || true)"
+done
+
 for _entry in 'python3 .github/scripts/check-workflow.py .github/workflows/ci.yml' \
     'python3 tests/lib/workflow_contract_regression.py' \
     'python3 -O tests/lib/workflow_contract_regression.py'; do
