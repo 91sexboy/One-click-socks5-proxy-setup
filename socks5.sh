@@ -87,6 +87,16 @@ S5_UNINSTALL_CONFIG_ID=''
 S5_UNINSTALL_BINARY_ID=''
 S5_UNINSTALL_STATE_ID=''
 S5_RCV_INIT=''
+# The shell's default field separators -- space, tab and newline -- for
+# s5_split_words; the x keeps the command substitution from eating the newline.
+S5_WORD_IFS=$(printf ' \t\nx')
+S5_WORD_IFS=${S5_WORD_IFS%x}
+# Credentials generated or entered from now on use the first set; values read
+# back from an installation made before the narrowing may use the wider ones.
+S5_CREDENTIAL_CHARS='A-Za-z0-9'
+S5_CREDENTIAL_ALPHABET='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+S5_STORED_USERNAME_CHARS='A-Za-z0-9_-'
+S5_STORED_PASSWORD_CHARS='A-Za-z0-9._~-'
 S5_UNIT_TYPE=''
 S5_UNIT_MODE=''
 S5_RCV_FAMILY=''
@@ -323,8 +333,9 @@ s5_msg() {
     show.service) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '服务：%s' "$1" ;; en) printf 'service: %s' "$1" ;; esac ;;
     show.heading) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '凭据卡（mixed：SOCKS5 + HTTP）：' ;; en) printf 'credential card (mixed: SOCKS5 + HTTP):' ;; esac ;;
     show.placeholder) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '警告：无法确定服务器的公网地址，请把下面的 %s 替换为该服务器的公网 IPv4。' "$1" ;; en) printf "WARNING: the server's public address could not be determined; replace %s below with the server's public IPv4." "$1" ;; esac ;;
-    show.nat) [ "$#" -eq 3 ] || return 1; case "$S5_LANG" in zh) printf '警告：%s 是本服务器出站流量的来源地址，本机并未持有它（本机地址：%s）。代理监听在端口 %s。只有当上级把发往该地址的入站连接转发到本机时，下面的链接才可用；否则请用 S5_SERVER_IPV4 和 S5_SERVER_PORT 指定客户端真正使用的地址和端口。' "$1" "$2" "$3" ;; en) printf 'WARNING: %s is the address this server egresses from, and this machine does not hold it (local address: %s). The proxy listens on port %s. The links below work only if something upstream forwards inbound connections for that address to this machine; otherwise set S5_SERVER_IPV4 and S5_SERVER_PORT to the address and port your clients actually use.' "$1" "$2" "$3" ;; esac ;;
-    show.nat.unnamed) [ "$#" -eq 2 ] || return 1; case "$S5_LANG" in zh) printf '警告：%s 是本服务器出站流量的来源地址，本机并未持有它。代理监听在端口 %s。只有当上级把发往该地址的入站连接转发到本机时，下面的链接才可用；否则请用 S5_SERVER_IPV4 和 S5_SERVER_PORT 指定客户端真正使用的地址和端口。' "$1" "$2" ;; en) printf 'WARNING: %s is the address this server egresses from, and this machine does not hold it. The proxy listens on port %s. The links below work only if something upstream forwards inbound connections for that address to this machine; otherwise set S5_SERVER_IPV4 and S5_SERVER_PORT to the address and port your clients actually use.' "$1" "$2" ;; esac ;;
+    show.nat) [ "$#" -eq 3 ] || return 1; _smnat=$(s5_msg show.nat.forward) || return 1; case "$S5_LANG" in zh) printf '警告：%s 是本服务器出站流量的来源地址，本机并未持有它（本机地址：%s）。代理监听在端口 %s。%s' "$1" "$2" "$3" "$_smnat" ;; en) printf 'WARNING: %s is the address this server egresses from, and this machine does not hold it (local address: %s). The proxy listens on port %s. %s' "$1" "$2" "$3" "$_smnat" ;; esac ;;
+    show.nat.unnamed) [ "$#" -eq 2 ] || return 1; _smnat=$(s5_msg show.nat.forward) || return 1; case "$S5_LANG" in zh) printf '警告：%s 是本服务器出站流量的来源地址，本机并未持有它。代理监听在端口 %s。%s' "$1" "$2" "$_smnat" ;; en) printf 'WARNING: %s is the address this server egresses from, and this machine does not hold it. The proxy listens on port %s. %s' "$1" "$2" "$_smnat" ;; esac ;;
+    show.nat.forward) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '只有当上级把发往该地址的入站连接转发到本机时，下面的链接才可用；否则请用 S5_SERVER_IPV4 和 S5_SERVER_PORT 指定客户端真正使用的地址和端口。' ;; en) printf 'The links below work only if something upstream forwards inbound connections for that address to this machine; otherwise set S5_SERVER_IPV4 and S5_SERVER_PORT to the address and port your clients actually use.' ;; esac ;;
     show.port.mapped) [ "$#" -eq 2 ] || return 1; case "$S5_LANG" in zh) printf '下面的链接使用端口 %s，而代理监听在端口 %s。该映射来自 S5_SERVER_PORT，脚本不会创建它。' "$1" "$2" ;; en) printf 'the links below use port %s while the proxy listens on port %s. That mapping comes from S5_SERVER_PORT; the script does not create it.' "$1" "$2" ;; esac ;;
     show.socks) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf 'SOCKS5：%s' "$1" ;; en) printf 'SOCKS5: %s' "$1" ;; esac ;;
     show.http) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf 'HTTP：%s' "$1" ;; en) printf 'HTTP: %s' "$1" ;; esac ;;
@@ -584,40 +595,55 @@ s5_require_commands() {
     return 0
 }
 
-s5_valid_port() {
+# s5_valid_port_from <port> <lowest>: a canonical decimal port from <lowest> to
+# 65535.
+s5_valid_port_from() {
     case "${1:-}" in '' | 0* | *[!0-9]*) return 1 ;; esac
     [ "${#1}" -le 5 ] || return 1
-    [ "$1" -ge 1024 ] 2>/dev/null && [ "$1" -le 65535 ] 2>/dev/null
+    [ "$1" -ge "$2" ] 2>/dev/null && [ "$1" -le 65535 ] 2>/dev/null
 }
+
+s5_valid_port() { s5_valid_port_from "${1:-}" 1024; }
 
 # The advertised port is what a client dials, so it has no privilege
 # constraint: a provider mapping external 443 to an internal high port is a
 # common shape, chosen precisely to survive restrictive client networks.
 # s5_valid_port's 1024 floor exists because the listener runs unprivileged,
 # which says nothing about what the other end of a forward looks like.
-s5_valid_advertised_port() {
-    case "${1:-}" in '' | 0* | *[!0-9]*) return 1 ;; esac
-    [ "${#1}" -le 5 ] || return 1
-    [ "$1" -ge 1 ] 2>/dev/null && [ "$1" -le 65535 ] 2>/dev/null
+s5_valid_advertised_port() { s5_valid_port_from "${1:-}" 1; }
+
+# s5_split_words <separators> <text> <command> [args...]: run the command with its
+# args followed by the fields of text, split at the separators with pathname
+# expansion off, so no field can expand into file names.
+s5_split_words() {
+    _sspl_oldifs=$IFS
+    IFS=$1
+    _sspl_text=$2
+    shift 2
+    set -f
+    # Splitting is the point; globbing is off.
+    # shellcheck disable=SC2086
+    set -- "$@" $_sspl_text
+    set +f
+    IFS=$_sspl_oldifs
+    _sspl_text=''
+    "$@"
 }
 
 s5_ipv4_is_canonical() {
     case "${1:-}" in '' | *[!0-9.]*) return 1 ;; esac
     case "$1" in .* | *. | *..*) return 1 ;; esac
-    _siic_oldifs=$IFS
-    IFS=.
-    set -f
-    # Split the canonical address at dots with pathname expansion disabled.
-    # shellcheck disable=SC2086
-    set -- $1
-    set +f
-    IFS=$_siic_oldifs
+    s5_split_words . "$1" s5_ipv4_octets_valid
+}
+
+# s5_ipv4_octets_valid <octet>...: four canonical decimal octets.
+s5_ipv4_octets_valid() {
     [ "$#" -eq 4 ] || return 1
-    for _siic_octet in "$1" "$2" "$3" "$4"; do
-        case "$_siic_octet" in '' | *[!0-9]*) return 1 ;; esac
-        [ "${#_siic_octet}" -le 3 ] || return 1
-        case "$_siic_octet" in 0 | 0*) [ "$_siic_octet" = 0 ] || return 1 ;; esac
-        [ "$_siic_octet" -le 255 ] 2>/dev/null || return 1
+    for _siov_octet in "$1" "$2" "$3" "$4"; do
+        case "$_siov_octet" in '' | *[!0-9]*) return 1 ;; esac
+        [ "${#_siov_octet}" -le 3 ] || return 1
+        case "$_siov_octet" in 0 | 0*) [ "$_siov_octet" = 0 ] || return 1 ;; esac
+        [ "$_siov_octet" -le 255 ] 2>/dev/null || return 1
     done
     return 0
 }
@@ -707,41 +733,36 @@ s5_local_ipv4() {
 # The third state is what keeps the card advisory: a host that cannot enumerate
 # its own addresses must not have its card annotated with a guess.
 s5_ipv4_is_local() {
-    # Stashed before the `set --` below, which destroys the positional parameters.
     _siil_want=${1:-}
     s5_ipv4_is_canonical "$_siil_want" || return 2
-    _siil=${2:-}
-    [ -n "$_siil" ] || return 2
-    _siil_found=1
-    set -f
-    # Split the newline-separated list with pathname expansion disabled.
-    # shellcheck disable=SC2086
-    set -- $_siil
-    set +f
-    _siil=''
-    for _siil_addr in "$@"; do
-        [ "$_siil_addr" = "$_siil_want" ] || continue
-        _siil_found=0
-        break
-    done
+    [ -n "${2:-}" ] || return 2
+    s5_split_words "$S5_WORD_IFS" "$2" s5_word_listed "$_siil_want"
+    _siil_found=$?
     _siil_want=''
     return "$_siil_found"
+}
+
+# s5_word_listed <word> <list>...: whether the word is one of the list.
+s5_word_listed() {
+    _swl_word=$1
+    shift
+    for _swl_item in "$@"; do
+        [ "$_swl_item" != "$_swl_word" ] || return 0
+    done
+    return 1
 }
 
 # The first non-loopback address, named in the NAT advisory so the operator can
 # see what this host actually holds. Fails when there is nothing to name.
 s5_local_ipv4_hint() {
-    _slih=${1:-}
-    [ -n "$_slih" ] || return 1
-    set -f
-    # Word splitting is the point: one address per field, globbing disabled.
-    # shellcheck disable=SC2086
-    set -- $_slih
-    set +f
-    _slih=''
-    for _slih_addr in "$@"; do
-        case "$_slih_addr" in 127.*) continue ;; esac
-        printf '%s' "$_slih_addr"
+    [ -n "${1:-}" ] || return 1
+    s5_split_words "$S5_WORD_IFS" "$1" s5_first_nonloopback
+}
+
+s5_first_nonloopback() {
+    for _sfnl_addr in "$@"; do
+        case "$_sfnl_addr" in 127.*) continue ;; esac
+        printf '%s' "$_sfnl_addr"
         return 0
     done
     return 1
@@ -751,14 +772,15 @@ s5_local_ipv4_hint() {
 # only, so nothing in the printed socks5:// and http:// URIs can be mis-parsed by
 # a client that treats the userinfo component loosely. These two gate every write
 # path: the prompts, the rendered config, and the state record.
-s5_valid_username() {
-    case "${1:-}" in '' | *[!A-Za-z0-9]*) return 1 ;; esac
-    [ "${#1}" -ge 3 ] && [ "${#1}" -le 32 ]
-}
+s5_valid_username() { s5_valid_credential "${1:-}" "$S5_CREDENTIAL_CHARS" 3 32; }
+s5_valid_password() { s5_valid_credential "${1:-}" "$S5_CREDENTIAL_CHARS" 12 128; }
 
-s5_valid_password() {
-    case "${1:-}" in '' | *[!A-Za-z0-9]*) return 1 ;; esac
-    [ "${#1}" -ge 12 ] && [ "${#1}" -le 128 ]
+# s5_valid_credential <value> <chars> <shortest> <longest>: a value of only the
+# bracket-expression characters <chars>, within the length bounds.
+s5_valid_credential() {
+    # The set is expanded unquoted on purpose: it is the bracket expression.
+    case "$1" in '' | *[!$2]*) return 1 ;; esac
+    [ "${#1}" -ge "$3" ] && [ "${#1}" -le "$4" ]
 }
 
 # The read-back pair, deliberately wider than the write pair above: it still
@@ -769,15 +791,8 @@ s5_valid_password() {
 # strand the installation with no supported way to remove it. An update rotates
 # the credential through the strict pair, which is the only way a legacy value
 # leaves an installation.
-s5_valid_stored_username() {
-    case "${1:-}" in '' | *[!A-Za-z0-9_-]*) return 1 ;; esac
-    [ "${#1}" -ge 3 ] && [ "${#1}" -le 32 ]
-}
-
-s5_valid_stored_password() {
-    case "${1:-}" in '' | *[!A-Za-z0-9._~-]*) return 1 ;; esac
-    [ "${#1}" -ge 12 ] && [ "${#1}" -le 128 ]
-}
+s5_valid_stored_username() { s5_valid_credential "${1:-}" "$S5_STORED_USERNAME_CHARS" 3 32; }
+s5_valid_stored_password() { s5_valid_credential "${1:-}" "$S5_STORED_PASSWORD_CHARS" 12 128; }
 
 s5_random_string() {
     _srsn=$1
@@ -934,40 +949,7 @@ s5_prompt_username() {
     # rotated without a word. On a fresh install S5_USERNAME is empty -- the
     # globals are unset and re-blanked at the top of this script, so a caller's
     # environment cannot forge a current value -- and a blank answer generates.
-    #
-    # A value from before the narrowing cannot be kept: s5_config_extract reads
-    # it back through the wide validator, while s5_config_render and
-    # s5_state_write both gate on the narrow one, so keeping it would abort the
-    # update inside the config candidate with nothing naming the credential. It
-    # is reported and offered for replacement instead.
-    _spu_current=${S5_USERNAME:-}
-    if [ -n "$_spu_current" ] && ! s5_valid_username "$_spu_current"; then
-        s5_msg_warn input.username.legacy
-        _spu_current=''
-    fi
-    while :; do
-        if [ -n "$_spu_current" ]; then
-            s5_msg_ask input.username.keep "$_spu_current" || return 1
-        else
-            s5_msg_ask input.username || return 1
-        fi
-        _spu=''
-        IFS= read -r _spu || return 1
-        if [ -z "$_spu" ]; then
-            if [ -n "$_spu_current" ]; then
-                S5_USERNAME=$_spu_current
-                _spu_current=''
-                return 0
-            fi
-            _spu=$(s5_random_string 12 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789') || return 1
-        fi
-        if s5_valid_username "$_spu"; then
-            S5_USERNAME=$_spu
-            _spu_current=''
-            return 0
-        fi
-        s5_msg_err input.username.invalid
-    done
+    s5_prompt_credential username
 }
 
 s5_prompt_password() {
@@ -976,37 +958,53 @@ s5_prompt_password() {
     # stderr without passing it through s5_redact, so input.password.keep takes
     # no argument; the card and show stay the only places a password is printed,
     # and both gate on root and a real TTY.
-    _sppw_current=${S5_PASSWORD:-}
-    if [ -n "$_sppw_current" ] && ! s5_valid_password "$_sppw_current"; then
-        s5_msg_warn input.password.legacy
-        _sppw_current=''
+    s5_prompt_credential password
+}
+
+# s5_prompt_credential username|password: ask for one credential, keeping the
+# current value on a blank answer when there is one and generating one otherwise.
+#
+# A value from before the narrowing cannot be kept: s5_config_extract reads it
+# back through the wide validator, while s5_config_render and s5_state_write both
+# gate on the narrow one, so keeping it would abort the update inside the config
+# candidate with nothing naming the credential. It is reported and offered for
+# replacement instead.
+s5_prompt_credential() {
+    case "$1" in
+    username) _spcr_current=${S5_USERNAME:-}; _spcr_length=12; _spcr_keep=$_spcr_current ;;
+    password) _spcr_current=${S5_PASSWORD:-}; _spcr_length=32; _spcr_keep='' ;;
+    *) return 1 ;;
+    esac
+    if [ -n "$_spcr_current" ] && ! "s5_valid_$1" "$_spcr_current"; then
+        s5_msg_warn "input.$1.legacy"
+        _spcr_current=''
     fi
     while :; do
-        if [ -n "$_sppw_current" ]; then
-            s5_msg_ask input.password.keep || return 1
+        if [ -z "$_spcr_current" ]; then
+            s5_msg_ask "input.$1" || return 1
+        elif [ -n "$_spcr_keep" ]; then
+            s5_msg_ask "input.$1.keep" "$_spcr_keep" || return 1
         else
-            s5_msg_ask input.password || return 1
+            s5_msg_ask "input.$1.keep" || return 1
         fi
-        _sppw=''
-        IFS= read -r _sppw || return 1
-        if [ -z "$_sppw" ]; then
-            if [ -n "$_sppw_current" ]; then
-                S5_PASSWORD=$_sppw_current
-                S5_SECRET=$_sppw_current
-                _sppw=''
-                _sppw_current=''
-                return 0
-            fi
-            _sppw=$(s5_random_string 32 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789') || return 1
+        _spcr_answer=''
+        IFS= read -r _spcr_answer || return 1
+        if [ -z "$_spcr_answer" ]; then
+            _spcr_answer=$_spcr_current
+            [ -n "$_spcr_answer" ] ||
+                _spcr_answer=$(s5_random_string "$_spcr_length" "$S5_CREDENTIAL_ALPHABET") || return 1
         fi
-        if s5_valid_password "$_sppw"; then
-            S5_PASSWORD=$_sppw
-            S5_SECRET=$_sppw
-            _sppw=''
-            _sppw_current=''
+        if "s5_valid_$1" "$_spcr_answer"; then
+            case "$1" in
+            username) S5_USERNAME=$_spcr_answer ;;
+            password) S5_PASSWORD=$_spcr_answer; S5_SECRET=$_spcr_answer ;;
+            esac
+            _spcr_answer=''
+            _spcr_current=''
+            _spcr_keep=''
             return 0
         fi
-        s5_msg_err input.password.invalid
+        s5_msg_err "input.$1.invalid"
     done
 }
 
@@ -1251,8 +1249,10 @@ s5_config_extract() {
     [ -f "$S5_CFG" ] && [ ! -L "$S5_CFG" ] || return 1
     # The account keys sit inside the accounts array, so they are matched
     # anywhere on their line rather than anchored to its start.
-    _sceuser=$(sed -n 's/.*"user":[[:space:]]*"\([A-Za-z0-9_-]*\)".*/\1/p' "$S5_CFG" | head -n 1)
-    _scepass=$(sed -n 's/.*"pass":[[:space:]]*"\([A-Za-z0-9._~-]*\)".*/\1/p' "$S5_CFG" | head -n 1)
+    _sceuser=$(sed -n "s/.*\"user\":[[:space:]]*\"\([$S5_STORED_USERNAME_CHARS]*\)\".*/\1/p" \
+        "$S5_CFG" | head -n 1)
+    _scepass=$(sed -n "s/.*\"pass\":[[:space:]]*\"\([$S5_STORED_PASSWORD_CHARS]*\)\".*/\1/p" \
+        "$S5_CFG" | head -n 1)
     [ "$(grep -cF '"protocol": "mixed"' "$S5_CFG")" = 1 ] || return 1
     [ "$(grep -cF '"auth": "password"' "$S5_CFG")" = 1 ] || return 1
     [ "$(grep -cF '"udp": false' "$S5_CFG")" = 1 ] || return 1
@@ -1357,16 +1357,16 @@ s5_curl_command() { /usr/bin/curl "$@"; }
 # before PATH.
 s5_sha256_command() { /usr/bin/sha256sum "$1"; }
 
+s5_first_word() {
+    [ "$#" -ge 1 ] || return 1
+    printf '%s' "$1"
+}
+
 s5_sha256() {
     _ssha_output=$(s5_sha256_command "$1" 2>/dev/null) || return 1
-    set -f
-    # Split "digest  path" into fields; the digest is the first, globbing off.
-    # shellcheck disable=SC2086
-    set -- $_ssha_output
-    set +f
+    # "digest  path": the digest is the first field.
+    _ssha_hash=$(s5_split_words "$S5_WORD_IFS" "$_ssha_output" s5_first_word) || return 1
     _ssha_output=''
-    [ "$#" -ge 1 ] || return 1
-    _ssha_hash=$1
     [ "${#_ssha_hash}" -eq 64 ] || return 1
     case "$_ssha_hash" in *[!0-9a-fA-F]*) return 1 ;; esac
     printf '%s\n' "$_ssha_hash"
@@ -1551,14 +1551,24 @@ s5_download_engine() {
         s5_release_prefix_private
         return $?
     fi
-    # Release a partial candidate before restoring traversal to an existing
-    # install. Both operations are attempted so both diagnostics survive.
-    s5_cleanup_binary_temp || _sde_cleanup=$?
-    s5_release_prefix_private || _sde_restore=$?
+    s5_close_staging
+    _sde_close=$?
     [ "$_sde_stage" -eq 0 ] || return "$_sde_stage"
-    [ "$_sde_cleanup" -eq 0 ] || return "$_sde_cleanup"
-    [ "$_sde_restore" -eq 0 ] || return "$_sde_restore"
+    [ "$_sde_close" -eq 0 ] || return 1
     return 0
+}
+
+# s5_close_staging: release a partial prefix-local candidate, then hand an
+# existing installation's prefix back its traversal; a fresh prefix stays private
+# until its cleanup removes it. Both steps are attempted so both diagnostics
+# survive. Returns 1 when the candidate stayed, 2 when the prefix did, 3 for both.
+s5_close_staging() {
+    _scst=0
+    s5_cleanup_binary_temp || _scst=1
+    if [ "$S5_CREATED_PREFIX" != 1 ] && ! s5_release_prefix_private; then
+        _scst=$((_scst + 2))
+    fi
+    return "$_scst"
 }
 
 # A configuration-only update hashes the installed executable three times, and
@@ -2746,15 +2756,14 @@ s5_cleanup() {
     S5_IN_CLEANUP=1
     _sclstatus=0
     _scldownload=0
-    # Release a partial prefix-local candidate before restoring traversal to an
-    # existing install. A fresh prefix remains private until namespace cleanup.
-    if ! s5_cleanup_binary_temp; then _scldownload=1; fi
     # A handled signal can enter cleanup from inside the staging function, before
-    # s5_download_engine regains control. Restore an existing installation here;
-    # a fresh prefix stays private until its partial files and directory are removed.
-    if [ "$S5_CREATED_PREFIX" != 1 ] && ! s5_release_prefix_private; then
-        _sclstatus=1
-    fi
+    # s5_download_engine regains control, so staging is closed here too.
+    s5_close_staging
+    case $? in
+    1) _scldownload=1 ;;
+    2) _sclstatus=1 ;;
+    3) _scldownload=1; _sclstatus=1 ;;
+    esac
     if [ "$S5_INSTALL_COMPLETE" != 1 ] && [ "$S5_SERVICE_STARTED" = 1 ]; then
         if ! s5_svc stop || ! s5_wait_stopped; then
             s5_msg_err cleanup.service
@@ -2899,12 +2908,9 @@ s5_install_runtime_dependencies() {
     command -v apk >/dev/null 2>&1 || return 1
     # Package names are fixed, and only runtime tools are requested.
     # No compiler, VCS, build system, or source headers are installed.
-    set -f
-    # One package per word, so the list is split deliberately, globbing off.
-    # shellcheck disable=SC2086
-    apk add --no-cache $_sird >/dev/null 2>&1
+    # One package per word.
+    s5_split_words "$S5_WORD_IFS" "$_sird" apk add --no-cache >/dev/null 2>&1
     _sird_status=$?
-    set +f
     [ "$_sird_status" -eq 0 ] || {
         s5_msg_err packages.failed apk
         return 1
