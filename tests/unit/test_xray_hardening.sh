@@ -55,6 +55,30 @@ _lock_takers=$(awk '
 assert_eq "only the shared opening and install acquire the lock" \
     's5_cmd_install s5_enter_locked ' "$_lock_takers"
 
+# One layout for socks5.sh: case alternatives are spaced, an early return is
+# written `x || return n`, and no line passes 120 columns. The message catalog
+# keeps one entry per line because the catalog tests parse it that way, so it is
+# exempt from the width rule; the width counts bytes, which only that
+# catalog's Chinese text would inflate.
+s5t_unspaced_case() {
+    grep -nE '^[[:space:]]*[^[:space:]#()|]+(\|[^[:space:]()|]+)+(\)|\| \\$)|[[:space:]]in [^[:space:]()|]+(\|[^[:space:]()|]+)+\)'
+}
+s5t_one_line_if_return() { grep -nE 'if ! [^;]*; then return [0-9]*; fi'; }
+s5t_wide_lines() {
+    LC_ALL=C awk '/^s5_msg\(\) \{/ { catalog = 1 } catalog && /^}$/ { catalog = 0; next }
+        !catalog && length > 120 { print NR }'
+}
+assert_eq "case alternatives are spaced" '' "$(s5t_unspaced_case <"$ROOT/socks5.sh")"
+assert_eq "early returns use one idiom" '' "$(s5t_one_line_if_return <"$ROOT/socks5.sh")"
+assert_eq "no line outside the catalog passes 120 columns" '' "$(s5t_wide_lines <"$ROOT/socks5.sh")"
+# Controls: each rule recognises the shape it forbids.
+_layout_bad=$(printf '    a|b)\n        "x"|"y"| \\\n    case "$v" in 2:*|*:2) ;; esac\n')
+assert_eq "the case rule recognises unspaced alternatives" 3 "$(printf '%s\n' "$_layout_bad" | s5t_unspaced_case | wc -l | tr -d ' ')"
+assert_ne "the return rule recognises a one-line if" '' \
+    "$(printf '    if ! true; then return 1; fi\n' | s5t_one_line_if_return)"
+assert_ne "the width rule recognises a wide line" '' \
+    "$(printf '%0121d\n' 0 | s5t_wide_lines)"
+
 # Shell variables are global, so a function that shares a variable prefix with
 # anything it calls, directly or further down, can have its values replaced
 # mid-flight. Each function's locals carry its own "_<abbrev>" prefix; along
