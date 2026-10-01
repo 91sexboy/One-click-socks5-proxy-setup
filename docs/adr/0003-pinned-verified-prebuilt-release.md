@@ -53,7 +53,7 @@ recorded hash on every later command. See `s5_asset_select` in the
   amd64 binary size and digest that three further files repeat: the two native
   lifecycle gates `.github/scripts/alpine-lifecycle.sh` and
   `.github/scripts/systemd-lifecycle.sh`, which re-check the installed bytes from
-  outside the installer, and `tests/unit/test_xray_docs.sh`, which requires that
+  outside the installer, and `tests/unit/test_xray_workflow.sh`, which requires that
   they do. That list is enforced rather than remembered: the release contract
   names the first four as `FILES` and the last three as `PIN_MIRRORS`, and a bump
   that misses one is refused — including a 64-hex digest left in a mirror that is

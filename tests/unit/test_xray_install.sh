@@ -432,57 +432,66 @@ MANAGER
     return "$_scrstatus"
 }
 
+# Language changes one assertion only, the retained-resources diagnosis, so every
+# backend and fault runs in English and one retaining case also runs in Chinese.
 test_cleanup_stop_failure() {
+    _cscases=''
     for _csbackend in systemd openrc; do
         for _csfault in stop-failure active unknown start-failure stopped; do
-            for _cslang in en zh; do
-                t_xray_fixture 23456
-                S5_INIT=$_csbackend
-                if [ "$S5_INIT" = openrc ]; then S5_OS_FAMILY=alpine; fi
-                S5_LANG=$_cslang
-                s5_select_service_artifact
-                t_run s5t_cleanup_run "$_csfault"
-                _cscase="$_csbackend/$_csfault/$_cslang"
-                assert_ne "$_cscase remains an installation failure" 0 "$T_STATUS"
-                if [ "$_csfault" != start-failure ]; then
-                    assert_file_exists "$_cscase failed verification after starting" "$S5_TEST_ROOT/verification-failed"
-                fi
-                assert_file_exists "$_cscase attempts native stop" "$S5_TEST_ROOT/stop-attempted"
-                assert_file_exists "$_cscase stops under its owned lock" "$S5_TEST_ROOT/stop-under-lock"
-                if [ "$_csfault" = stopped ]; then
-                    assert_file_absent "$_cscase proves the service stopped" "$S5_TEST_ROOT/svc_active"
-                    assert_eq "$_cscase clears service ownership" 0 "$(cat "$S5_TEST_ROOT/service-owned")"
-                    for _cspath in "$S5_CFG" "$S5_BIN" "$S5_SERVICE_ARTIFACT" "$S5_TEST_ROOT/user-exists" "$S5_TEST_ROOT/group-exists"; do
-                        assert_file_absent "$_cscase removes the stopped installation" "$_cspath"
-                    done
-                    if [ "$S5_INIT" = openrc ]; then
-                        assert_file_absent "$_cscase removes its stopped supervisor pid" "$S5_PIDFILE"
-                        assert_file_absent "$_cscase removes its stopped child pid" "$S5_OPENRC_OPTION_DIR/child_pid"
-                    fi
-                else
-                    assert_file_exists "$_cscase still has a live service" "$S5_TEST_ROOT/svc_active"
-                    assert_eq "$_cscase retains service ownership" 1 "$(cat "$S5_TEST_ROOT/service-owned")"
-                    for _cspath in "$S5_CFG" "$S5_BIN" "$S5_SERVICE_ARTIFACT" "$S5_TEST_ROOT/user-exists" "$S5_TEST_ROOT/group-exists"; do
-                        assert_file_exists "$_cscase retains live resources" "$_cspath"
-                    done
-                    assert_mode "$_cscase keeps the retained config private" 640 "$S5_CFG"
-                    if [ "$S5_INIT" = openrc ]; then
-                        assert_eq "$_cscase preserves supervisor tracking" 100 "$(cat "$S5_PIDFILE" 2>/dev/null)"
-                        assert_eq "$_cscase preserves child tracking" 101 "$(cat "$S5_OPENRC_OPTION_DIR/child_pid" 2>/dev/null)"
-                    fi
-                    case "$_cslang" in
-                    en) _csdiagnosis='installation files and account were retained' ;;
-                    zh) _csdiagnosis='已保留安装文件和账户' ;;
-                    esac
-                    assert_contains "$_cscase explains retained resources" "$_csdiagnosis" "$T_OUT"
-                    assert_not_contains "$_cscase does not disable the live service" 'disable' "$(cat "$S5_TEST_ROOT/manager-calls")"
-                    assert_not_contains "$_cscase does not remove OpenRC boot registration" 'del' "$(cat "$S5_TEST_ROOT/manager-calls")"
-                fi
-                assert_file_absent "$_cscase releases its lock" "$S5_LOCKDIR"
-                assert_file_absent "$_cscase removes the verification secret" "$S5_TEST_ROOT/verify-temp"
-                assert_not_contains "$_cscase does not expose the password" "$S5_PASSWORD" "$T_OUT"
-            done
+            _cscases="$_cscases $_csbackend:$_csfault:en"
         done
+    done
+    for _csspec in $_cscases systemd:active:zh; do
+        _csbackend=${_csspec%%:*}
+        _csfault=${_csspec#*:}
+        _csfault=${_csfault%:*}
+        _cslang=${_csspec##*:}
+        t_xray_fixture 23456
+        S5_INIT=$_csbackend
+        if [ "$S5_INIT" = openrc ]; then S5_OS_FAMILY=alpine; fi
+        S5_LANG=$_cslang
+        s5_select_service_artifact
+        t_run s5t_cleanup_run "$_csfault"
+        _cscase="$_csbackend/$_csfault/$_cslang"
+        assert_ne "$_cscase remains an installation failure" 0 "$T_STATUS"
+        if [ "$_csfault" != start-failure ]; then
+            assert_file_exists "$_cscase failed verification after starting" "$S5_TEST_ROOT/verification-failed"
+        fi
+        assert_file_exists "$_cscase attempts native stop" "$S5_TEST_ROOT/stop-attempted"
+        assert_file_exists "$_cscase stops under its owned lock" "$S5_TEST_ROOT/stop-under-lock"
+        if [ "$_csfault" = stopped ]; then
+            assert_file_absent "$_cscase proves the service stopped" "$S5_TEST_ROOT/svc_active"
+            assert_eq "$_cscase clears service ownership" 0 "$(cat "$S5_TEST_ROOT/service-owned")"
+            for _cspath in "$S5_CFG" "$S5_BIN" "$S5_SERVICE_ARTIFACT" "$S5_TEST_ROOT/user-exists" "$S5_TEST_ROOT/group-exists"; do
+                assert_file_absent "$_cscase removes the stopped installation" "$_cspath"
+            done
+            if [ "$S5_INIT" = openrc ]; then
+                assert_file_absent "$_cscase removes its stopped supervisor pid" "$S5_PIDFILE"
+                assert_file_absent "$_cscase removes its stopped child pid" "$S5_OPENRC_OPTION_DIR/child_pid"
+            fi
+        else
+            assert_file_exists "$_cscase still has a live service" "$S5_TEST_ROOT/svc_active"
+            assert_eq "$_cscase retains service ownership" 1 "$(cat "$S5_TEST_ROOT/service-owned")"
+            for _cspath in "$S5_CFG" "$S5_BIN" "$S5_SERVICE_ARTIFACT" "$S5_TEST_ROOT/user-exists" "$S5_TEST_ROOT/group-exists"; do
+                assert_file_exists "$_cscase retains live resources" "$_cspath"
+            done
+            assert_mode "$_cscase keeps the retained config private" 640 "$S5_CFG"
+            if [ "$S5_INIT" = openrc ]; then
+                assert_eq "$_cscase preserves supervisor tracking" 100 "$(cat "$S5_PIDFILE" 2>/dev/null)"
+                assert_eq "$_cscase preserves child tracking" 101 "$(cat "$S5_OPENRC_OPTION_DIR/child_pid" 2>/dev/null)"
+            fi
+            case "$_cslang" in
+            en) _csdiagnosis='installation files and account were retained' ;;
+            zh) _csdiagnosis='已保留安装文件和账户' ;;
+            esac
+            assert_contains "$_cscase explains retained resources" "$_csdiagnosis" "$T_OUT"
+            assert_not_contains "$_cscase does not disable the live service" 'disable' "$(cat "$S5_TEST_ROOT/manager-calls")"
+            assert_not_contains "$_cscase does not remove OpenRC boot registration" 'del' "$(cat "$S5_TEST_ROOT/manager-calls")"
+        fi
+        assert_file_absent "$_cscase releases its lock" "$S5_LOCKDIR"
+        assert_file_absent "$_cscase removes the verification secret" "$S5_TEST_ROOT/verify-temp"
+        assert_not_contains "$_cscase does not expose the password" "$S5_PASSWORD" "$T_OUT"
+
     done
 }
 

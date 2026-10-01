@@ -34,7 +34,7 @@ address it resolves to. This is the only routing rule. See the
 ## Consequences
 
 - The renderer and the independent protocol launcher encode the same twelve
-  ranges. `tests/unit/test_xray_docs.sh` checks both against the independent
+  ranges. `tests/unit/test_xray_workflow.sh` checks both against the independent
   [destination-boundary fixture](../../tests/fixtures/denied-destinations.txt),
   so dropping a range from both implementations cannot hide a regression.
 - This boundary is distinct from the **advertise-safety check**

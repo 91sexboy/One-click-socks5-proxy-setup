@@ -1,7 +1,8 @@
 #!/bin/sh
-# Memory evidence contracts remain separate from native workflow execution.
+# The memory-report gate: what it samples and asserts, and that it refuses to run
+# outside GitHub Actions.
 
-S5T_NAME=test_xray_memory_contract
+S5T_NAME=test_xray_memory_report
 . "${S5_REPO_ROOT}/tests/lib/assert.sh"
 ROOT=${S5_REPO_ROOT}
 t_mktestroot

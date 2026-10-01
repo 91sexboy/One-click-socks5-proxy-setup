@@ -62,7 +62,7 @@ done
 
 # Exercise the real document checks without letting local-only files satisfy them.
 SHELL_UNDER_TEST=${S5_TEST_SHELL:-sh}
-for contract in docs readme boundary probe_contract memory_contract; do
+for contract in workflow readme boundary probe_contract memory_report; do
     # Split multiword shell commands such as busybox sh.
     # shellcheck disable=SC2086
     t_run env S5_REPO_ROOT="$snapshot" S5_SRC="$snapshot/socks5.sh" \

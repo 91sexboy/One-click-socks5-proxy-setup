@@ -1,7 +1,7 @@
 #!/bin/sh
 # Workflow wiring, lint coverage and native lifecycle assertion contracts.
 
-S5T_NAME=test_xray_docs
+S5T_NAME=test_xray_workflow
 . "${S5_REPO_ROOT}/tests/lib/assert.sh"
 ROOT=${S5_REPO_ROOT}
 t_mktestroot
