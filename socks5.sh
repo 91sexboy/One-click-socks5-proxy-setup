@@ -4105,12 +4105,9 @@ s5_uninstall_confirm_stopped() {
         return $?
     fi
     if [ "$S5_INIT" = openrc ]; then
-        _sucs_pid=$S5_OPENRC_OPTION_DIR/child_pid
-        [ -e "$_sucs_pid" ] || [ -L "$_sucs_pid" ] || return 0
-        _sucs_pid=$(cat "$_sucs_pid" 2>/dev/null) || return 1
-        case "$_sucs_pid" in '' | *[!0-9]* | 0) return 1 ;; esac
-        if kill -0 "$_sucs_pid" 2>/dev/null; then return 1; fi
-        return 0
+        s5_openrc_child_state
+        case $? in 1) return 0 ;; esac
+        return 1
     fi
     s5_service_state
     case $? in 1 | 4) return 0 ;; esac

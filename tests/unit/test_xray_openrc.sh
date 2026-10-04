@@ -224,7 +224,9 @@ s5t_crashed_restart() (
     # Scoped to this subshell on purpose: the stubs must not outlive the case.
     # shellcheck disable=SC2030
     PATH="$S5_TEST_ROOT/crashed-bin:$PATH"
-    s5_open_locked() { return 0; }
+    s5_enter_locked() { return 0; }
+    s5_open_managed_state() { return 0; }
+    s5_accept_state() { return 0; }
     s5_config_test() { return 0; }
     s5_lock_release() { return 0; }
     s5_wait_listening() { return 0; }
