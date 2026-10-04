@@ -305,6 +305,8 @@ s5_msg() {
     service.reload) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '服务管理器无法重新加载服务定义。' ;; en) printf 'the service manager could not reload the service definitions.' ;; esac ;;
     service.enable) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '无法设置 Xray 服务开机启动。' ;; en) printf 'could not enable the Xray service at boot.' ;; esac ;;
     service.disable) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '无法取消 Xray 服务开机启动。' ;; en) printf 'could not disable the Xray service at boot.' ;; esac ;;
+    service.child.alive) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf 'OpenRC 守护进程已不在，但被守护的进程 %s 仍在运行；未重置 OpenRC 记录，也未启动服务。请先停止该进程，再运行 sh socks5.sh restart。' "$1" ;; en) printf 'the OpenRC supervisor is gone, but supervised process %s is still running; the OpenRC record was not reset and the service was not started. Stop that process, then run sh socks5.sh restart again.' "$1" ;; esac ;;
+    service.child.unknown) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法确定 %s 中记录的被守护进程是否已退出；未重置 OpenRC 记录，也未启动服务。请确认该服务没有残留进程后删除该文件，再运行 sh socks5.sh restart。' "$1" ;; en) printf 'could not determine whether the supervised process recorded in %s has exited; the OpenRC record was not reset and the service was not started. Make sure no process of this service remains, remove that file, then run sh socks5.sh restart again.' "$1" ;; esac ;;
     service.stop) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '无法确认 Xray 服务已停止。' ;; en) printf 'could not verify that the Xray service stopped.' ;; esac ;;
     service.inactive) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '无法确认 Xray 服务正在运行。' ;; en) printf 'could not verify that the Xray service is running.' ;; esac ;;
     service.listen) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf 'Xray 未在端口 %s 上监听。' "$1" ;; en) printf 'Xray is not listening on port %s.' "$1" ;; esac ;;
@@ -3628,38 +3630,55 @@ s5_cmd_show() {
     return "$S5_SERVICE_RC"
 }
 
-# A supervised child still alive after its supervisor died: OpenRC's crashed
-# state does not say whether one is, so child_pid is asked directly.
-s5_openrc_child_alive() {
-    _soca_pid=$(cat "$S5_OPENRC_OPTION_DIR/child_pid" 2>/dev/null) || return 1
-    case "$_soca_pid" in '' | *[!0-9]* | 0) return 1 ;; esac
-    kill -0 "$_soca_pid" 2>/dev/null
+# Whether the supervised child recorded in child_pid survives its supervisor.
+# OpenRC's crashed and unsupervised states do not say, so the record is asked
+# directly: 0 alive (S5_OPENRC_CHILD_PID names it), 1 none (no record, or a
+# recorded pid confirmed gone), 2 unknown. A record that exists but cannot be
+# read or holds no pid is unknown, as s5_listener_state treats it, and so is a
+# pid kill -0 refuses while /proc still lists it.
+s5_openrc_child_state() {
+    S5_OPENRC_CHILD_PID=''
+    [ -e "$S5_OPENRC_OPTION_DIR/child_pid" ] || [ -L "$S5_OPENRC_OPTION_DIR/child_pid" ] || return 1
+    _socs_pid=$(cat "$S5_OPENRC_OPTION_DIR/child_pid" 2>/dev/null) || return 2
+    case "$_socs_pid" in '' | *[!0-9]* | 0) return 2 ;; esac
+    S5_OPENRC_CHILD_PID=$_socs_pid
+    kill -0 "$_socs_pid" 2>/dev/null && return 0
+    [ -d "/proc/$_socs_pid" ] && return 2
+    return 1
 }
 
 # OpenRC reports crashed (3 here) or unsupervised (5) when the supervisor is
 # gone while the service is still marked started. Its restart then has no
 # supervisor to stop and fails, so the service stays that way until the record
 # is reset. That reset (zap) is sound only when no supervised child survives: a
-# live child could still hold the port, so it stays fail closed. Every other
-# state restarts normally.
+# live child could still hold the port, and a child that cannot be observed may
+# be one, so both stay fail closed and are named here (3). Every other state
+# restarts normally.
 s5_restart_service() {
     if [ "$S5_INIT" = openrc ]; then
         s5_service_state
         _srsvc_state=$?
         if [ "$_srsvc_state" -eq 3 ] || [ "$_srsvc_state" -eq 5 ]; then
-            s5_openrc_child_alive && return 1
+            s5_openrc_child_state
+            case $? in
+            1) ;;
+            0) s5_msg_err service.child.alive "$S5_OPENRC_CHILD_PID"; return 3 ;;
+            *) s5_msg_err service.child.unknown "$S5_OPENRC_OPTION_DIR/child_pid"; return 3 ;;
+            esac
             rc-service "$S5_PROJECT" zap >/dev/null 2>&1 || return 1
-            s5_svc start
-            return $?
+            s5_svc start || return 1
+            return 0
         fi
     fi
-    s5_svc restart
+    s5_svc restart || return 1
 }
 
 s5_cmd_restart() {
     s5_open_locked restart || return 1
     s5_config_test "$S5_CFG" || { s5_fail_locked config.invalid.installed; return 1; }
-    s5_restart_service || { s5_fail_locked service.start; return 1; }
+    # 3: s5_restart_service refused a crashed OpenRC service and named why.
+    s5_restart_service
+    case $? in 0) ;; 3) s5_fail_locked; return 1 ;; *) s5_fail_locked service.start; return 1 ;; esac
     s5_wait_listening "$S5_PORT"
     _scr_status=$?
     if [ "$_scr_status" -eq 0 ]; then
