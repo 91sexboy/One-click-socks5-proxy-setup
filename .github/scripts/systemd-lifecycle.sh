@@ -171,8 +171,10 @@ sudo sh .github/scripts/run-socks5.sh uninstall \
 # The repeated uninstall is idempotent; a fresh install must recreate the namespace.
 sudo sh -c 'python3 tests/protocol/terminal_install.py "$1" "$2" 23456 0 >"$3"' \
     sh "$work/answers.reinstall" "$work/pass" "$work/reinstall.log"
-sudo sh .github/scripts/run-socks5.sh uninstall \
-    "$work/answers.uninstall" "$work/uninstall-reinstall.log" "$work/pass"
+# SPEC 5: an interrupted uninstall resumes only after proving the service is
+# stopped again, and still recognises its config directory once the service
+# group is gone. Its last resume writes uninstall-reinstall.log.
+sudo sh .github/scripts/lifecycle-uninstall-recovery.sh systemd "$work"
 sudo sh -c 'sh socks5.sh help </dev/null >"$1"' sh "$work/help-after-uninstall.log"
 sudo grep -q 'Usage: sh socks5.sh' "$work/help-after-uninstall.log"
 lifecycle_assert_logs_redacted "$work" sudo

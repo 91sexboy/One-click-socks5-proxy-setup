@@ -113,7 +113,8 @@ test_systemd_unproven_stop_keeps_resources() {
 
 # s5t_openrc_fixture <port>: OpenRC as Alpine runs it. rc-service answers only
 # while its init script exists -- without one it says the service does not exist
-# and exits 1 -- and a crashed marker makes status report 32 and stop fail.
+# and exits 1 -- and a crashed marker holds the status rc-service reports while
+# its stop fails.
 s5t_openrc_fixture() {
     t_xray_openrc_fixture "$1"
     S5T_INITSCRIPT=$S5_SERVICE_ARTIFACT
@@ -133,7 +134,7 @@ stop)
     rm -f "$S5_TEST_ROOT/svc_active"
     ;;
 status)
-    [ ! -f "$S5_TEST_ROOT/rc-crashed" ] || exit 32
+    [ ! -f "$S5_TEST_ROOT/rc-crashed" ] || exit "$(cat "$S5_TEST_ROOT/rc-crashed")"
     [ -f "$S5_TEST_ROOT/svc_active" ] && exit 0
     exit 3
     ;;
@@ -156,14 +157,18 @@ test_openrc_running_again_before_resume() {
         "$(grep -v ' status$' "$S5_TEST_ROOT/transcript" | head -n 1)"
     s5t_assert_uninstalled "OpenRC resume"
 
-    s5t_openrc_fixture 23456
-    s5t_interrupted_uninstall stopped
-    : >"$S5_TEST_ROOT/rc-crashed"
-    t_run s5_cmd_uninstall </dev/null
-    assert_ne "OpenRC resume refuses a crashed service" 0 "$T_STATUS"
-    assert_contains "OpenRC crashed resume names the unproven stop" \
-        'could not verify that the Xray service stopped' "$T_OUT"
-    s5t_assert_retained "OpenRC crashed resume"
+    # crashed (32) and unsupervised (64) both leave a supervised child unproven.
+    for _sor_status in 32:crashed 64:unsupervised; do
+        _sor_word=${_sor_status#*:}
+        s5t_openrc_fixture 23456
+        s5t_interrupted_uninstall stopped
+        printf '%s\n' "${_sor_status%%:*}" >"$S5_TEST_ROOT/rc-crashed"
+        t_run s5_cmd_uninstall </dev/null
+        assert_ne "OpenRC resume refuses a $_sor_word service" 0 "$T_STATUS"
+        assert_contains "OpenRC $_sor_word resume names the unproven stop" \
+            'could not verify that the Xray service stopped' "$T_OUT"
+        s5t_assert_retained "OpenRC $_sor_word resume"
+    done
 }
 
 # s5t_child <none|stale|live|unreadable|empty>: what supervise-daemon left in
