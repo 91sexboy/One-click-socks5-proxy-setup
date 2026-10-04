@@ -201,9 +201,13 @@ assert_ne "uninstall refuses a crashed OpenRC service" 0 "$T_STATUS"
 assert_contains "the refusal says the service did not stop" 'could not verify that the Xray service stopped' "$T_OUT"
 assert_eq "a crashed service never reaches the stopped phase" '' "$(cat "$S5_TEST_ROOT/uninstall-phases")"
 
-# restart on a crashed OpenRC service: the supervisor is gone, so OpenRC's own
-# restart cannot stop it. With no live child the record is zapped and the
-# service started; a live child still holding the port stays fail closed.
+# restart on a crashed or unsupervised OpenRC service: the supervisor is gone, so
+# OpenRC's own restart cannot stop it, and its state does not say whether the
+# supervised child survived. The child record decides. Only a missing record or a
+# recorded pid confirmed gone proves no child survives, and only then is the
+# record zapped and the service started. A live child, or a record that cannot be
+# read, holds no pid, or names a pid whose existence cannot be decided, refuses
+# before zap and start and names why; unknown is never taken for no child.
 mkdir -p "$S5_TEST_ROOT/crashed-bin"
 cat >"$S5_TEST_ROOT/crashed-bin/rc-service" <<'RC'
 #!/bin/sh
@@ -213,37 +217,98 @@ exit 0
 RC
 chmod 0755 "$S5_TEST_ROOT/crashed-bin/rc-service"
 s5t_crashed_restart() (
+    S5_LANG=${3:-en}
+    S5_PORT=23456
     printf '%s\n' "$1" >"$S5_TEST_ROOT/statuscode"
     : >"$S5_TEST_ROOT/crashed-calls"
-    # Scoped to this subshell on purpose: the stub must not outlive the case.
+    # Scoped to this subshell on purpose: the stubs must not outlive the case.
     # shellcheck disable=SC2030
     PATH="$S5_TEST_ROOT/crashed-bin:$PATH"
-    s5_restart_service
+    s5_open_locked() { return 0; }
+    s5_config_test() { return 0; }
+    s5_lock_release() { return 0; }
+    s5_wait_listening() { return 0; }
+    s5_verify_dataplane() { return 0; }
+    # kill -0 also fails for a process it may not signal, which leaves the pid
+    # in /proc: whether that child is gone cannot be decided.
+    if [ "${2:-}" = kill-refused ]; then kill() { return 1; }; fi
+    s5_cmd_restart
 )
+_cr_record=$S5_OPENRC_OPTION_DIR/child_pid
 mkdir -p "$S5_OPENRC_OPTION_DIR"
-rm -f "$S5_OPENRC_OPTION_DIR/child_pid"
-t_run s5t_crashed_restart 32
-assert_eq "a crashed service without a child restarts" 0 "$T_STATUS"
-assert_eq "a crashed service is zapped, then started" 'status
-zap
-start' "$(cat "$S5_TEST_ROOT/crashed-calls")"
+sh -c ':' &
+_cr_dead=$!
+wait "$_cr_dead" 2>/dev/null || true
 sleep 30 &
-_crashed_child=$!
-printf '%s\n' "$_crashed_child" >"$S5_OPENRC_OPTION_DIR/child_pid"
-t_run s5t_crashed_restart 32
-assert_ne "a crashed service with a live child is not restarted" 0 "$T_STATUS"
-assert_not_contains "a live child is never zapped past" zap "$(cat "$S5_TEST_ROOT/crashed-calls")"
-kill "$_crashed_child" 2>/dev/null || true
-wait "$_crashed_child" 2>/dev/null || true
-t_run s5t_crashed_restart 64
-assert_eq "an unsupervised service without a child restarts" 0 "$T_STATUS"
-assert_eq "an unsupervised service is zapped, then started" 'status
+_cr_live=$!
+for _cr_case in missing:recover dead:recover alive:alive unreadable:unknown \
+    empty:unknown malformed:unknown zero:unknown kill-refused:unknown; do
+    _cr_name=${_cr_case%%:*}
+    _cr_expect=${_cr_case#*:}
+    rm -rf "$_cr_record"
+    case "$_cr_name" in
+    missing) ;;
+    dead) printf '%s\n' "$_cr_dead" >"$_cr_record" ;;
+    alive) printf '%s\n' "$_cr_live" >"$_cr_record" ;;
+    # A directory makes cat fail even for root.
+    unreadable) mkdir "$_cr_record" ;;
+    empty) : >"$_cr_record" ;;
+    malformed) printf '12x\n' >"$_cr_record" ;;
+    zero) printf '0\n' >"$_cr_record" ;;
+    kill-refused)
+        if [ ! -d "/proc/$$" ]; then
+            t_skip "a child record whose pid kill -0 refuses" "no /proc/$$ shows the pid exists"
+            continue
+        fi
+        printf '%s\n' "$$" >"$_cr_record"
+        ;;
+    esac
+    for _cr_state in 32:crashed 64:unsupervised; do
+        _cr_label="$_cr_name child record, ${_cr_state#*:} service"
+        t_run s5t_crashed_restart "${_cr_state%%:*}" "$_cr_name"
+        _cr_calls=$(cat "$S5_TEST_ROOT/crashed-calls")
+        case "$_cr_expect" in
+        recover)
+            assert_eq "$_cr_label restarts" 0 "$T_STATUS"
+            assert_eq "$_cr_label is zapped, then started" 'status
 zap
-start' "$(cat "$S5_TEST_ROOT/crashed-calls")"
+start' "$_cr_calls"
+            ;;
+        *)
+            assert_ne "$_cr_label is refused" 0 "$T_STATUS"
+            assert_eq "$_cr_label is neither zapped nor started" status "$_cr_calls"
+            assert_not_contains "$_cr_label is not misreported as a start failure" \
+                'failed to start' "$T_OUT"
+            ;;
+        esac
+        case "$_cr_expect" in
+        alive)
+            assert_contains "$_cr_label names the surviving child" \
+                "supervised process $_cr_live is still running" "$T_OUT"
+            ;;
+        unknown)
+            assert_contains "$_cr_label names the undecidable record" \
+                "could not determine whether the supervised process recorded in $_cr_record has exited" "$T_OUT"
+            ;;
+        esac
+    done
+done
+kill "$_cr_live" 2>/dev/null || true
+wait "$_cr_live" 2>/dev/null || true
+# Both refusals render in Chinese too, so neither falls back to an internal error.
+: >"$_cr_record"
+t_run s5t_crashed_restart 64 empty zh
+assert_contains "the undecidable child record is named in Chinese" \
+    "无法确定 $_cr_record 中记录的被守护进程是否已退出" "$T_OUT"
+printf '%s\n' "$$" >"$_cr_record"
+t_run s5t_crashed_restart 64 alive zh
+assert_contains "the surviving child is named in Chinese" \
+    "被守护的进程 $$ 仍在运行" "$T_OUT"
+rm -rf "$_cr_record"
 t_run s5t_crashed_restart 0
-assert_eq "a running service restarts normally" 'status
+assert_eq "a running service restarts normally" 0 "$T_STATUS"
+assert_eq "a running service is restarted, not zapped" 'status
 restart' "$(cat "$S5_TEST_ROOT/crashed-calls")"
-rm -f "$S5_OPENRC_OPTION_DIR/child_pid"
 
 # An unsupervised service (supervisor gone, child record kept) is named, fails
 # status, and is never accepted as stopped: its child may still run.

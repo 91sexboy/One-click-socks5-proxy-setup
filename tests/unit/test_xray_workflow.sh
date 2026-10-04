@@ -100,6 +100,19 @@ assert_contains "Alpine gate requires a killed supervisor to be OpenRC's unsuper
     'lifecycle_wait_until 20 1 openrc_state_is 64' "$alpine_text"
 assert_contains "Alpine gate requires status to fail and name the unsupervised service" \
     'lifecycle_assert_exited_status "$crashed_status" "$work/crashed-status.log" unsupervised 23456' "$alpine_text"
+# The same supervisor loss with a child record that holds no pid is the
+# negative case: restart must refuse, name why, and leave OpenRC's state as it
+# was. Only once the record is absent does restart recover it.
+assert_contains "Alpine gate corrupts the child record of a killed supervisor" \
+    'for bad_record in malformed empty; do' "$alpine_text"
+assert_contains "Alpine gate requires restart to name the undecidable child record" \
+    'could not determine whether the supervised process recorded in $child_record has exited' "$alpine_text"
+assert_contains "Alpine gate requires a refused restart to leave the OpenRC state unchanged" \
+    'openrc_state_is "$bad_state"' "$alpine_text"
+assert_contains "Alpine gate requires a refused restart to leave the record unreset" \
+    'test "$(cat "$child_record")" = "$bad_content"' "$alpine_text"
+assert_contains "Alpine gate recovers once the child record is absent" \
+    "printf 'openrc: absent-child-record-restart-ok\n'" "$alpine_text"
 assert_contains "Alpine gate proves the listener returns after each crash" \
     'grep -q "pid=$new_pid,"' "$alpine_text"
 assert_contains "Alpine gate keeps both deaths inside the retry period" \
