@@ -1261,8 +1261,10 @@ s5_config_extract() {
     s5_valid_stored_username "$_sceuser" && s5_valid_stored_password "$_scepass" || return 1
     S5_USERNAME=$_sceuser
     S5_PASSWORD=$_scepass
-    _scepass=''
+    # The redactor's copy is taken before the temporary is cleared; clearing it
+    # first left S5_SECRET empty, and s5_redact passes everything through then.
     S5_SECRET=$_scepass
+    _scepass=''
     return 0
 }
 

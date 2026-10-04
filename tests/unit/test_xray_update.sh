@@ -900,6 +900,40 @@ test_readonly_recovery_signal() {
     t_xray_assert_healthy
 }
 
+# SPEC 7 across a credential switch: an update interrupted after it published a
+# rotated password leaves the old account in the transaction backup. The next
+# command recovers that backup before it reads the configuration back, so the
+# redactor must end up holding the restored password, not the rotated one and
+# not nothing. The config-test double quotes whatever password the live config
+# carries when it is called, as a controlled leak; the redactor is production's.
+test_recovery_redacts_restored_password() {
+    t_xray_fixture 23999
+    t_xray_install
+    s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
+    mkdir -m 0700 "$S5_TXNDIR"
+    cp "$S5_CFG" "$S5_TXNDIR/old.config.json"
+    cp "$S5_STATE" "$S5_TXNDIR/old.state"
+    printf 'stopping\n' >"$S5_TXN_STOPPING"
+    chmod 0600 "$S5_TXNDIR"/old.* "$S5_TXN_STOPPING"
+    sed 's/"pass": "Secret123xyz"/"pass": "Rotated456pass"/' \
+        "$S5_TXNDIR/old.config.json" >"$S5_CFG"
+    assert_contains "the interrupted update published the rotated password" \
+        Rotated456pass "$(cat "$S5_CFG")"
+    T_OUT=$( (
+        S5_SECRET=''
+        s5_config_test() {
+            s5_warn "xray: rejected \"pass\": \"$(sed -n 's/.*"pass": "\([^"]*\)".*/\1/p' "$1")\""
+            return 1
+        }
+        s5_cmd_restart
+    ) 2>&1) && T_STATUS=0 || T_STATUS=$?
+    assert_ne "restart reports the rejected restored config" 0 "$T_STATUS"
+    assert_file_absent "restart recovered the interrupted update first" "$S5_TXNDIR"
+    assert_contains "the restored password reaches the operator as the marker" \
+        'xray: rejected "pass": "<REDACTED>"' "$T_OUT"
+    assert_not_contains "the restored password is not printed" Secret123xyz "$T_OUT"
+}
+
 # The cleanup claims itself only after it ignores signals; in the other order
 # a signal between the two statements entered a nested cleanup that returned
 # at once, skipping rollback and lock release.
@@ -1626,7 +1660,7 @@ test_openrc_logging_warning() {
     t_xray_assert_healthy
 }
 
-SCENARIOS='failed_unit_operations readonly_recovery_signal cleanup_entry_order owned_dir_symlink openrc_update_messages update_listener_unverified rollback_binary_restore_failure rollback_cleanup_interruption_recovery openrc_committed_unit_cleanup_recovery openrc_unit_migration openrc_unit_migration_rollback openrc_unit_transaction_recovery openrc_logging_warning uninstall_confirmation uninstall_messages family update owned_port rejected_candidate listener_failure rejected_command publish_signal config_symlink uninstall_leftovers uninstall_residue verifier_cleanup txn_mkdir_failure txn_copy_failure txn_chmod_failure stop_failure wait_stopped_failure publication_failure new_start_failure dataplane_failure state_write_failure rollback_restart_failure restore_failure uninstall_unknown rollback_exit uninstall_group_residue uninstall_resume uninstall_signal_resume uninstall_resume_drift uninstall_phase_gap_resume uninstall_final_window older_release_operations older_release_update binary_ready_gate older_release_download_failure transaction_contract_drift unit_replacing_requires_stopping_marker rollback_backup_drift uninstall_directory_drift transaction_all_commands transaction_unknown_residue sha256_binary_update_failure sha256_config_update_failure update_commit_cleanup_failure existing_stage_failure existing_stage_cleanup_failure existing_stage_cleanup_restore_failure schema1_provenance_preserved legacy_normalizes_without_relabelling raw_zip_upgrade'
+SCENARIOS='failed_unit_operations readonly_recovery_signal recovery_redacts_restored_password cleanup_entry_order owned_dir_symlink openrc_update_messages update_listener_unverified rollback_binary_restore_failure rollback_cleanup_interruption_recovery openrc_committed_unit_cleanup_recovery openrc_unit_migration openrc_unit_migration_rollback openrc_unit_transaction_recovery openrc_logging_warning uninstall_confirmation uninstall_messages family update owned_port rejected_candidate listener_failure rejected_command publish_signal config_symlink uninstall_leftovers uninstall_residue verifier_cleanup txn_mkdir_failure txn_copy_failure txn_chmod_failure stop_failure wait_stopped_failure publication_failure new_start_failure dataplane_failure state_write_failure rollback_restart_failure restore_failure uninstall_unknown rollback_exit uninstall_group_residue uninstall_resume uninstall_signal_resume uninstall_resume_drift uninstall_phase_gap_resume uninstall_final_window older_release_operations older_release_update binary_ready_gate older_release_download_failure transaction_contract_drift unit_replacing_requires_stopping_marker rollback_backup_drift uninstall_directory_drift transaction_all_commands transaction_unknown_residue sha256_binary_update_failure sha256_config_update_failure update_commit_cleanup_failure existing_stage_failure existing_stage_cleanup_failure existing_stage_cleanup_restore_failure schema1_provenance_preserved legacy_normalizes_without_relabelling raw_zip_upgrade'
 
 # A configuration-only update must retain the acquisition provenance loaded from
 # state. It may refresh service/config/account fields, but identical executable
