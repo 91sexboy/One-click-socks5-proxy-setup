@@ -202,7 +202,7 @@ S5_SERVER_PORT=56447 sh socks5.sh show
 
 ### 如何卸载 Xray SOCKS5 代理？
 
-以 root 运行 `sh socks5.sh uninstall` 并确认。它会移除受管安装、服务单元和专用账户；保存在 `/etc/xray-socks5.lang` 的语言偏好会保留。
+以 root 运行 `sh socks5.sh uninstall` 并确认。它会移除受管安装、服务单元和专用账户；保存在 `/etc/xray-socks5.lang` 的语言偏好会保留。如果卸载被中断，请重新运行 `uninstall`：它会从已记录的进度继续，但会先再次停止服务并确认已停止；无法确认时会保留剩余资源并说明原因。卸载完成前，`restart` 和配置更新会拒绝执行。
 
 ## 故障排查
 
