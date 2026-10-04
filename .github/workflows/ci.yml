@@ -224,12 +224,15 @@ jobs:
           OUTDIR="$root/out" PASSFILE="$root/pass" PORT=23456 ARCH=amd64 \
             sh tests/protocol/start_engine.sh >"$root/engine.log" 2>&1 &
           engine_pid=$!
-          for n in $(seq 1 600); do
-            test -s "$root/out/ready" && break
-            kill -0 "$engine_pid" 2>/dev/null || break
-            sleep 0.2
-          done
+          # The wait ends on readiness or an engine exit, at most 120 seconds;
+          # the verdict below still needs the marker and a live engine.
+          lifecycle_wait_until 600 0.2 lifecycle_ready_or_exited "$root/out/ready" "$engine_pid" || true
           if ! test -s "$root/out/ready" || ! kill -0 "$engine_pid" 2>/dev/null; then
+            if kill -0 "$engine_pid" 2>/dev/null; then
+              echo "the engine launcher was not ready within 120 seconds" >&2
+            else
+              echo "the engine launcher exited before readiness" >&2
+            fi
             # Replace, never drop: dropping every line with a secret also
             # dropped the diagnostic the secret appeared in.
             lifecycle_redaction_file "$root/redact.pat" "$root/pass"
