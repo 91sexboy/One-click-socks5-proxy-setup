@@ -474,26 +474,41 @@ s5_osrel_get() {
     ' "$1"
 }
 
+# s5_ver_valid <version>: dot-separated decimal fields, none empty -- no leading,
+# trailing or doubled dot -- and none longer than 18 digits once leading zeros
+# are dropped, the width s5_ver_ge compares without shell arithmetic.
+s5_ver_valid() {
+    # The colon is named for VERSION_ID=1:0, which once passed as a separator.
+    case "$1" in '' | .* | *. | *..* | *[!0-9.]*) return 1 ;; esac
+    _svv_rest=$1
+    while [ -n "$_svv_rest" ]; do
+        _svv_field=${_svv_rest%%.*}
+        _svv_field=${_svv_field#"${_svv_field%%[!0]*}"}
+        [ "${#_svv_field}" -le 18 ] || return 1
+        case "$_svv_rest" in
+        *.*) _svv_rest=${_svv_rest#*.} ;;
+        *) _svv_rest='' ;;
+        esac
+    done
+    return 0
+}
+
+# s5_ver_ge <left> <right>: 0 when left >= right, 1 when lower, 2 when either is
+# malformed. Both are validated whole before any field is compared: an early
+# answer from a larger first field let 23.bad and 23. pass as at least 22.04.
+# A missing trailing field reads as zero, so 22 equals 22.0.
 s5_ver_ge() {
     _svg_left=$1
     _svg_right=$2
     # An absent version is not version 0.
-    [ -n "$_svg_left" ] && [ -n "$_svg_right" ] || return 2
+    s5_ver_valid "$_svg_left" && s5_ver_valid "$_svg_right" || return 2
     while [ -n "$_svg_left" ] || [ -n "$_svg_right" ]; do
         _svg_left_part=${_svg_left%%.*}
         _svg_right_part=${_svg_right%%.*}
-        [ -n "$_svg_left_part" ] || _svg_left_part=0
-        [ -n "$_svg_right_part" ] || _svg_right_part=0
-        # Each field on its own: checked joined by a colon, a colon inside a
-        # field (VERSION_ID=1:0) passed as a digit separator and compared as a
-        # three-character number.
-        case "$_svg_left_part" in *[!0-9]*) return 2 ;; esac
-        case "$_svg_right_part" in *[!0-9]*) return 2 ;; esac
         _svg_left_part=${_svg_left_part#"${_svg_left_part%%[!0]*}"}
         _svg_right_part=${_svg_right_part#"${_svg_right_part%%[!0]*}"}
         [ -n "$_svg_left_part" ] || _svg_left_part=0
         [ -n "$_svg_right_part" ] || _svg_right_part=0
-        [ "${#_svg_left_part}" -le 18 ] && [ "${#_svg_right_part}" -le 18 ] || return 2
         if [ "${#_svg_left_part}" -gt "${#_svg_right_part}" ]; then return 0; fi
         if [ "${#_svg_left_part}" -lt "${#_svg_right_part}" ]; then return 1; fi
         if [ "$_svg_left_part" != "$_svg_right_part" ]; then
@@ -505,11 +520,11 @@ s5_ver_ge() {
             return 1
         fi
         case "$_svg_left" in
-        *.*) _svg_left=${_svg_left#*.}; [ -n "$_svg_left" ] || return 2 ;;
+        *.*) _svg_left=${_svg_left#*.} ;;
         *) _svg_left='' ;;
         esac
         case "$_svg_right" in
-        *.*) _svg_right=${_svg_right#*.}; [ -n "$_svg_right" ] || return 2 ;;
+        *.*) _svg_right=${_svg_right#*.} ;;
         *) _svg_right='' ;;
         esac
     done
