@@ -111,6 +111,40 @@ test_systemd_unproven_stop_keeps_resources() {
     done
 }
 
+# systemd 250 and later exit 4, not 3, from is-active for a unit it no longer
+# has loaded, still printing its state word; stop then fails for want of a unit.
+# Once the unit file is gone and the manager reloaded, that not-found inactive
+# unit is the stop evidence, so a resume after the reload must finish.
+s5t_resume_unit_not_found() (
+    systemctl() {
+        case "$1" in
+        is-active) printf '%s\n' "$S5T_NOT_FOUND_WORD"; return 4 ;;
+        stop) printf 'systemctl stop\n' >>"$S5_TEST_ROOT/transcript"; return 5 ;;
+        esac
+        command systemctl "$@"
+    }
+    s5_cmd_uninstall </dev/null
+)
+
+test_systemd_removed_unit_not_found_is_stopped() {
+    for S5T_NOT_FOUND_WORD in inactive failed; do
+        t_xray_fixture 23456
+        s5t_interrupted_uninstall manager-reloaded
+        t_run s5t_resume_unit_not_found
+        assert_eq "resume accepts a not-found $S5T_NOT_FOUND_WORD unit as stopped" 0 "$T_STATUS"
+        assert_eq "a not-found $S5T_NOT_FOUND_WORD unit is not stopped again" '' \
+            "$(grep 'systemctl stop' "$S5_TEST_ROOT/transcript")"
+        s5t_assert_uninstalled "resume with a not-found $S5T_NOT_FOUND_WORD unit"
+    done
+    # Any other word stays unproven even when the unit is not found.
+    t_xray_fixture 23456
+    s5t_interrupted_uninstall manager-reloaded
+    S5T_NOT_FOUND_WORD=activating
+    t_run s5t_resume_unit_not_found
+    assert_ne "a not-found activating unit refuses the resumed uninstall" 0 "$T_STATUS"
+    assert_file_exists "a not-found activating unit keeps the recovery record" "$S5_UNINSTALL_STATE"
+}
+
 # s5t_openrc_fixture <port>: OpenRC as Alpine runs it. rc-service answers only
 # while its init script exists -- without one it says the service does not exist
 # and exits 1 -- and a crashed marker holds the status rc-service reports while
@@ -381,6 +415,7 @@ test_group_deleted_identity_mismatch() {
 }
 
 SCENARIOS='systemd_running_again_before_resume systemd_unproven_stop_keeps_resources'
+SCENARIOS="$SCENARIOS systemd_removed_unit_not_found_is_stopped"
 SCENARIOS="$SCENARIOS openrc_running_again_before_resume openrc_late_phase_child_evidence"
 SCENARIOS="$SCENARIOS pending_uninstall_refuses_restart_and_update owned_uninstall_baseline"
 SCENARIOS="$SCENARIOS group_deleted_before_directory_removal group_deleted_identity_mismatch"

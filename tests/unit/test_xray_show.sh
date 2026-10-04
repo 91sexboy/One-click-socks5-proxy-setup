@@ -402,12 +402,13 @@ if [ "$T_STATUS" -ne 0 ]; then printf '%s\n' "$T_OUT" >&2; fi
 t_xray_fixture 23456
 t_xray_install
 s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
-# systemctl is-active exits 3 for every state that is not active, so the word
-# it prints decides the mapping: inactive is stopped, failed (exit 23 or a
+# systemctl is-active exits 3 for every state that is not active, or 4 on
+# systemd 250+ when the unit is not loaded, so the word it prints decides the
+# mapping: inactive is stopped, failed (exit 23 or a
 # spent restart budget) is failed and fails the command like OpenRC's crashed,
 # and any other word, or another exit, is unverified.
 for _status_word in active:0:running inactive:3:stopped failed:3:failed \
-    activating:3:unverified deactivating:3:unverified :1:unverified; do
+    inactive:4:stopped failed:4:failed activating:4:unverified activating:3:unverified deactivating:3:unverified :1:unverified; do
     _status_case=${_status_word##*:}
     _status_rc=${_status_word#*:}
     _status_rc=${_status_rc%%:*}

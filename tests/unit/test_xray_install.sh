@@ -639,14 +639,16 @@ s5t_install_window() {
     s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
     s5_install_runtime_dependencies() { return 0; }
     # Each double reports the pathname its command created or replaced: the
-    # last operand.
+    # last operand. Their failures return $? explicitly: under bash a bare return
+    # inside a trap handler -- cleanup calls these doubles from one -- returns the
+    # status from before the trap, so is-active's 3 would read as active.
     mkdir() {
-        command mkdir "$@" || return
+        command mkdir "$@" || return $?
         for _siw_last do :; done
         s5t_window_hit "$_siw_last"
     }
     mv() {
-        command mv "$@" || return
+        command mv "$@" || return $?
         for _siw_last do :; done
         s5t_window_hit "$_siw_last"
     }
@@ -655,7 +657,7 @@ s5t_install_window() {
         enable) : >"$S5_TEST_ROOT/boot-enabled" ;;
         disable) rm -f "$S5_TEST_ROOT/boot-enabled" ;;
         esac
-        "$S5_TEST_ROOT/bin/systemctl" "$@" || return
+        "$S5_TEST_ROOT/bin/systemctl" "$@" || return $?
         s5t_window_hit "${1:-}"
     }
     export S5T_WINDOW
@@ -736,7 +738,7 @@ s5t_install_fault() {
         ;;
     unit-taken)
         mv() {
-            command mv "$@" || return
+            command mv "$@" || return $?
             for _sif_last do :; done
             if [ "$_sif_last" = "$S5_CFG" ]; then
                 printf 'foreign unit\n' >"$S5_SERVICE_ARTIFACT"

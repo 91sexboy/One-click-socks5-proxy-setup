@@ -2506,12 +2506,14 @@ s5_service_state() {
         # restart budget. Failed is final and its processes are gone, but it is
         # not what the operator asked for, so it gets its own 4. activating
         # (including a pending auto-restart), deactivating and any unrecognised
-        # word leave the state unproven.
+        # word leave the state unproven. systemd 250 and later exit 4 instead
+        # for a unit it has not loaded -- one whose file a resumed uninstall has
+        # already removed -- while still printing the unit's state word.
         _sssword=$(systemctl is-active "$S5_PROJECT.service" 2>/dev/null)
         case "$?:$_sssword" in
         0:*) return 0 ;;
-        3:inactive) return 1 ;;
-        3:failed) return 4 ;;
+        3:inactive | 4:inactive) return 1 ;;
+        3:failed | 4:failed) return 4 ;;
         *) return 2 ;;
         esac
         ;;
