@@ -1155,7 +1155,7 @@ test_rollback_backup_drift() {
         esac
         _rbd_live_cfg=$(t_sha256 "$S5_CFG")
         _rbd_live_state=$(t_sha256 "$S5_STATE")
-        t_run s5_update_rollback "$S5_TXNDIR/old.config.json" "$S5_TXNDIR/old.state"
+        t_run s5_update_rollback
         assert_ne "rollback refuses $_rbd_target backup drift" 0 "$T_STATUS"
         assert_eq "$_rbd_target drift leaves live config unchanged" \
             "$_rbd_live_cfg" "$(t_sha256 "$S5_CFG")"
@@ -1454,7 +1454,7 @@ test_rollback_cleanup_interruption_recovery() {
         fi
         "$_rci_real_rm" "$@"
     }
-    t_run s5_update_rollback "$S5_TXNDIR/old.config.json" "$S5_TXNDIR/old.state"
+    t_run s5_update_rollback
     assert_ne "interrupted rollback cleanup reports incomplete cleanup" 0 "$T_STATUS"
     assert_file_absent "interrupted cleanup already removed old.config" \
         "$S5_TXNDIR/old.config.json"

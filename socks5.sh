@@ -2724,14 +2724,14 @@ s5_transaction_recover() {
         [ -f "$S5_TXNDIR/old.config.json" ] && [ -f "$S5_TXNDIR/old.state" ] || return 1
         S5_SERVICE_TOUCHED=1
         [ -f "$S5_TXNDIR/old.xray" ] || S5_BINARY_REPLACED=0
-        s5_update_rollback "$S5_TXNDIR/old.config.json" "$S5_TXNDIR/old.state"
+        s5_update_rollback
         return $?
     fi
     if [ -f "$S5_TXNDIR/old.xray" ]; then
         [ -f "$S5_TXNDIR/old.config.json" ] && [ -f "$S5_TXNDIR/old.state" ] || return 1
         S5_SERVICE_TOUCHED=0
         S5_BINARY_REPLACED=1
-        s5_update_rollback "$S5_TXNDIR/old.config.json" "$S5_TXNDIR/old.state"
+        s5_update_rollback
         return $?
     fi
     # Before binary replacement or stop, every live resource is untouched. A
@@ -2826,7 +2826,7 @@ s5_cleanup() {
         # when a signal interrupts publication or only one backup is readable.
         if [ "$S5_CONFIG_REPLACED" = 1 ] || [ "$S5_BINARY_REPLACED" = 1 ] ||
             [ "$S5_SERVICE_TOUCHED" = 1 ]; then
-            s5_update_rollback "$S5_TXNDIR/old.config.json" "$S5_TXNDIR/old.state" || true
+            s5_update_rollback || true
         elif [ "$S5_CREATED_TRANSACTION" = 1 ]; then
             # Before binary replacement/service stop/publication the live files
             # were untouched, so deleting only this invocation's complete or
@@ -3093,16 +3093,17 @@ ROLLBACK_FIELDS
     return 0
 }
 
+# Restores the transaction's own backups, the same fixed files
+# s5_transaction_verify_rollback has just checked; there is no other source.
 s5_restore_transaction() {
-    _srtcfg=$1
-    _srtstate=$2
     if [ -f "$S5_TXNDIR/old.unit" ] && [ ! -L "$S5_TXNDIR/old.unit" ]; then
         if ! s5_atomic_write "$S5_SERVICE_ARTIFACT" root:root 0755 \
             <"$S5_TXNDIR/old.unit"; then return 1; fi
         s5_svc reload || return 1
     fi
-    s5_atomic_write "$S5_CFG" "root:$S5_SERVICE_GROUP" 0640 <"$_srtcfg" || return 1
-    s5_atomic_write "$S5_STATE" root:root 0600 <"$_srtstate" || return 1
+    s5_atomic_write "$S5_CFG" "root:$S5_SERVICE_GROUP" 0640 \
+        <"$S5_TXNDIR/old.config.json" || return 1
+    s5_atomic_write "$S5_STATE" root:root 0600 <"$S5_TXNDIR/old.state" || return 1
     return 0
 }
 
@@ -3113,7 +3114,7 @@ s5_update_rollback() {
         s5_msg_err transaction.restore "$S5_TXNDIR"
         return 1
     }
-    if ! s5_restore_transaction "$1" "$2"; then
+    if ! s5_restore_transaction; then
         s5_msg_err transaction.restore "$S5_TXNDIR"
         return 1
     fi
@@ -3153,7 +3154,7 @@ ROLLED_BACK
 # fails without a word. A failed rollback reports transaction.restore itself.
 s5_update_abort() {
     [ "$#" -eq 0 ] || s5_msg_err "$@"
-    s5_update_rollback "$S5_TXNDIR/old.config.json" "$S5_TXNDIR/old.state" || return 1
+    s5_update_rollback || return 1
     s5_msg_err transaction.rolledback
     return 1
 }
