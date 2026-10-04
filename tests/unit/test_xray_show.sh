@@ -328,6 +328,41 @@ s5_lock_acquire() { return 0; }
 s5_lock_release() { return 0; }
 s5_state_load() { return 0; }
 s5_report_state_load() { return 0; }
+
+# SPEC 7 through the restart entrypoint: restart reads the installed account back
+# and config-tests the installed file, and a rejection reaches the operator as a
+# warning. Extraction, the config-test wrapper and the redactor stay production
+# code; the engine is a stand-in that quotes the password it reads from the
+# config, a controlled leak rather than a claim about a pinned Xray release. The
+# historical password carries every character the read-back still accepts.
+mkdir -p "$S5_SYSCONFDIR"
+cat >"$S5_CFG" <<'CFG'
+{"inbounds": [{"protocol": "mixed", "settings": {"auth": "password",
+  "accounts": [{"user": "legacy_user-1", "pass": "Legacy_pass~123.x"}],
+  "udp": false}}]}
+CFG
+_rr_bin=$S5_BIN
+S5_BIN="$S5_TEST_ROOT/xray-quoting"
+cat >"$S5_BIN" <<'XRAY'
+#!/bin/sh
+printf 'xray: config %s rejected near "pass": "%s"\n' "$4" \
+    "$(sed -n 's/.*"pass": "\([^"]*\)".*/\1/p' "$4")" >&2
+exit 23
+XRAY
+chmod 0755 "$S5_BIN"
+S5_SECRET=''
+t_run s5_cmd_restart
+assert_ne "restart refuses an installed config the engine rejects" 0 "$T_STATUS"
+assert_contains "restart keeps the engine diagnostic context" \
+    "xray: config $S5_CFG rejected near" "$T_OUT"
+assert_contains "restart shows the password as the redaction marker" \
+    '"pass": "<REDACTED>"' "$T_OUT"
+assert_not_contains "restart's engine diagnostic carries no password" \
+    'Legacy_pass~123.x' "$T_OUT"
+S5_BIN=$_rr_bin
+S5_USERNAME=alice
+S5_PASSWORD='Secret123xyz'
+
 s5_config_extract() { return 0; }
 s5_config_test() { return 0; }
 s5_svc() { return 0; }

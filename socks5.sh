@@ -474,26 +474,41 @@ s5_osrel_get() {
     ' "$1"
 }
 
+# s5_ver_valid <version>: dot-separated decimal fields, none empty -- no leading,
+# trailing or doubled dot -- and none longer than 18 digits once leading zeros
+# are dropped, the width s5_ver_ge compares without shell arithmetic.
+s5_ver_valid() {
+    # The colon is named for VERSION_ID=1:0, which once passed as a separator.
+    case "$1" in '' | .* | *. | *..* | *[!0-9.]*) return 1 ;; esac
+    _svv_rest=$1
+    while [ -n "$_svv_rest" ]; do
+        _svv_field=${_svv_rest%%.*}
+        _svv_field=${_svv_field#"${_svv_field%%[!0]*}"}
+        [ "${#_svv_field}" -le 18 ] || return 1
+        case "$_svv_rest" in
+        *.*) _svv_rest=${_svv_rest#*.} ;;
+        *) _svv_rest='' ;;
+        esac
+    done
+    return 0
+}
+
+# s5_ver_ge <left> <right>: 0 when left >= right, 1 when lower, 2 when either is
+# malformed. Both are validated whole before any field is compared: an early
+# answer from a larger first field let 23.bad and 23. pass as at least 22.04.
+# A missing trailing field reads as zero, so 22 equals 22.0.
 s5_ver_ge() {
     _svg_left=$1
     _svg_right=$2
     # An absent version is not version 0.
-    [ -n "$_svg_left" ] && [ -n "$_svg_right" ] || return 2
+    s5_ver_valid "$_svg_left" && s5_ver_valid "$_svg_right" || return 2
     while [ -n "$_svg_left" ] || [ -n "$_svg_right" ]; do
         _svg_left_part=${_svg_left%%.*}
         _svg_right_part=${_svg_right%%.*}
-        [ -n "$_svg_left_part" ] || _svg_left_part=0
-        [ -n "$_svg_right_part" ] || _svg_right_part=0
-        # Each field on its own: checked joined by a colon, a colon inside a
-        # field (VERSION_ID=1:0) passed as a digit separator and compared as a
-        # three-character number.
-        case "$_svg_left_part" in *[!0-9]*) return 2 ;; esac
-        case "$_svg_right_part" in *[!0-9]*) return 2 ;; esac
         _svg_left_part=${_svg_left_part#"${_svg_left_part%%[!0]*}"}
         _svg_right_part=${_svg_right_part#"${_svg_right_part%%[!0]*}"}
         [ -n "$_svg_left_part" ] || _svg_left_part=0
         [ -n "$_svg_right_part" ] || _svg_right_part=0
-        [ "${#_svg_left_part}" -le 18 ] && [ "${#_svg_right_part}" -le 18 ] || return 2
         if [ "${#_svg_left_part}" -gt "${#_svg_right_part}" ]; then return 0; fi
         if [ "${#_svg_left_part}" -lt "${#_svg_right_part}" ]; then return 1; fi
         if [ "$_svg_left_part" != "$_svg_right_part" ]; then
@@ -505,11 +520,11 @@ s5_ver_ge() {
             return 1
         fi
         case "$_svg_left" in
-        *.*) _svg_left=${_svg_left#*.}; [ -n "$_svg_left" ] || return 2 ;;
+        *.*) _svg_left=${_svg_left#*.} ;;
         *) _svg_left='' ;;
         esac
         case "$_svg_right" in
-        *.*) _svg_right=${_svg_right#*.}; [ -n "$_svg_right" ] || return 2 ;;
+        *.*) _svg_right=${_svg_right#*.} ;;
         *) _svg_right='' ;;
         esac
     done
@@ -1261,8 +1276,10 @@ s5_config_extract() {
     s5_valid_stored_username "$_sceuser" && s5_valid_stored_password "$_scepass" || return 1
     S5_USERNAME=$_sceuser
     S5_PASSWORD=$_scepass
-    _scepass=''
+    # The redactor's copy is taken before the temporary is cleared; clearing it
+    # first left S5_SECRET empty, and s5_redact passes everything through then.
     S5_SECRET=$_scepass
+    _scepass=''
     return 0
 }
 
@@ -2707,14 +2724,14 @@ s5_transaction_recover() {
         [ -f "$S5_TXNDIR/old.config.json" ] && [ -f "$S5_TXNDIR/old.state" ] || return 1
         S5_SERVICE_TOUCHED=1
         [ -f "$S5_TXNDIR/old.xray" ] || S5_BINARY_REPLACED=0
-        s5_update_rollback "$S5_TXNDIR/old.config.json" "$S5_TXNDIR/old.state"
+        s5_update_rollback
         return $?
     fi
     if [ -f "$S5_TXNDIR/old.xray" ]; then
         [ -f "$S5_TXNDIR/old.config.json" ] && [ -f "$S5_TXNDIR/old.state" ] || return 1
         S5_SERVICE_TOUCHED=0
         S5_BINARY_REPLACED=1
-        s5_update_rollback "$S5_TXNDIR/old.config.json" "$S5_TXNDIR/old.state"
+        s5_update_rollback
         return $?
     fi
     # Before binary replacement or stop, every live resource is untouched. A
@@ -2809,7 +2826,7 @@ s5_cleanup() {
         # when a signal interrupts publication or only one backup is readable.
         if [ "$S5_CONFIG_REPLACED" = 1 ] || [ "$S5_BINARY_REPLACED" = 1 ] ||
             [ "$S5_SERVICE_TOUCHED" = 1 ]; then
-            s5_update_rollback "$S5_TXNDIR/old.config.json" "$S5_TXNDIR/old.state" || true
+            s5_update_rollback || true
         elif [ "$S5_CREATED_TRANSACTION" = 1 ]; then
             # Before binary replacement/service stop/publication the live files
             # were untouched, so deleting only this invocation's complete or
@@ -3076,16 +3093,17 @@ ROLLBACK_FIELDS
     return 0
 }
 
+# Restores the transaction's own backups, the same fixed files
+# s5_transaction_verify_rollback has just checked; there is no other source.
 s5_restore_transaction() {
-    _srtcfg=$1
-    _srtstate=$2
     if [ -f "$S5_TXNDIR/old.unit" ] && [ ! -L "$S5_TXNDIR/old.unit" ]; then
         if ! s5_atomic_write "$S5_SERVICE_ARTIFACT" root:root 0755 \
             <"$S5_TXNDIR/old.unit"; then return 1; fi
         s5_svc reload || return 1
     fi
-    s5_atomic_write "$S5_CFG" "root:$S5_SERVICE_GROUP" 0640 <"$_srtcfg" || return 1
-    s5_atomic_write "$S5_STATE" root:root 0600 <"$_srtstate" || return 1
+    s5_atomic_write "$S5_CFG" "root:$S5_SERVICE_GROUP" 0640 \
+        <"$S5_TXNDIR/old.config.json" || return 1
+    s5_atomic_write "$S5_STATE" root:root 0600 <"$S5_TXNDIR/old.state" || return 1
     return 0
 }
 
@@ -3096,7 +3114,7 @@ s5_update_rollback() {
         s5_msg_err transaction.restore "$S5_TXNDIR"
         return 1
     }
-    if ! s5_restore_transaction "$1" "$2"; then
+    if ! s5_restore_transaction; then
         s5_msg_err transaction.restore "$S5_TXNDIR"
         return 1
     fi
@@ -3136,7 +3154,7 @@ ROLLED_BACK
 # fails without a word. A failed rollback reports transaction.restore itself.
 s5_update_abort() {
     [ "$#" -eq 0 ] || s5_msg_err "$@"
-    s5_update_rollback "$S5_TXNDIR/old.config.json" "$S5_TXNDIR/old.state" || return 1
+    s5_update_rollback || return 1
     s5_msg_err transaction.rolledback
     return 1
 }

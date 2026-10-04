@@ -147,6 +147,53 @@ exit 0
 XRAY
 chmod 0755 "$S5_BIN"
 
+# SPEC 7: once a management command has read the installed account back, the
+# redactor has to hold that password. Only the engine seam is replaced here: a
+# stand-in whose config-test diagnostic quotes the password it was given, as a
+# controlled leak. Extraction, the config-test wrapper and the redactor are all
+# production code, so this proves the protection, not that a pinned Xray release
+# prints the password on its own. S5_SECRET starts empty so only the read-back
+# can fill it, and every character a historical password may carry is covered.
+_rd_bin=$S5_BIN
+_rd_cfg=$S5_CFG
+S5_CFG="$S5_TEST_ROOT/read-back.json"
+S5_BIN="$S5_TEST_ROOT/xray-quoting"
+cat >"$S5_BIN" <<'XRAY'
+#!/bin/sh
+printf 'xray: config %s rejected near "pass": "%s"\n' "$4" \
+    "$(sed -n 's/.*"pass": "\([^"]*\)".*/\1/p' "$4")" >&2
+exit 23
+XRAY
+chmod 0755 "$S5_BIN"
+for _rd_pair in alice:Secret123xyz legacy_user-1:Legacy_pass~123.x \
+    a-b:-.~_Leading9.0; do
+    _rd_user=${_rd_pair%%:*}
+    _rd_pass=${_rd_pair#*:}
+    printf '{"inbounds": [{"protocol": "mixed", "settings": {"auth": "password",\n' >"$S5_CFG"
+    printf '  "accounts": [{"user": "%s", "pass": "%s"}],\n' "$_rd_user" "$_rd_pass" >>"$S5_CFG"
+    printf '  "udp": false}}]}\n' >>"$S5_CFG"
+    S5_USERNAME=''
+    S5_PASSWORD=''
+    S5_SECRET=''
+    if s5_config_extract; then
+        t_ok
+    else
+        t_bad "the account $_rd_user is read back"
+    fi
+    assert_eq "read-back hands the redactor the current password ($_rd_user)" \
+        "$_rd_pass" "$S5_SECRET"
+    t_run s5_config_test "$S5_CFG"
+    assert_ne "the quoting engine rejects the config ($_rd_user)" 0 "$T_STATUS"
+    assert_contains "the engine diagnostic keeps its context ($_rd_user)" \
+        "xray: config $S5_CFG rejected near" "$T_OUT"
+    assert_contains "the password is replaced by the marker ($_rd_user)" \
+        '"pass": "<REDACTED>"' "$T_OUT"
+    assert_not_contains "the engine diagnostic carries no password ($_rd_user)" \
+        "$_rd_pass" "$T_OUT"
+done
+S5_BIN=$_rd_bin
+S5_CFG=$_rd_cfg
+
 # A malformed candidate must be rejected before it can be published.
 S5_CFG="$S5_TEST_ROOT/published.json"
 printf '{broken\n' >"$S5_TEST_ROOT/candidate.json"
