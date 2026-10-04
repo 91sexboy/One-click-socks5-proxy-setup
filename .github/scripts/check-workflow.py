@@ -265,7 +265,8 @@ def check(workflow):
     entry(jobs['xray-systemd'], 'sh .github/scripts/systemd-lifecycle.sh')
     mixed = body(entry(jobs['xray-mixed'], 'sh tests/protocol/run_xray_mixed.sh'))
     for required in ('lifecycle_start_duplex_target "$root"', 'sh tests/protocol/start_engine.sh',
-                     'test -s "$root/out/ready"', 'lifecycle_write_fixtures "$root"'):
+                     'test -s "$root/out/ready"', 'lifecycle_write_fixtures "$root"',
+                     'lifecycle_wait_until 600 0.2 lifecycle_ready_or_exited "$root/out/ready" "$engine_pid"'):
         require(required in mixed, 'mixed gate lost ' + required)
     memory = entry(jobs['memory-report'], 'sh .github/scripts/memory-report.sh')
     require(memory.get('env', {}).get('XRAY_ARCH') == '${{ matrix.arch }}', 'memory: architecture binding changed')

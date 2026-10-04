@@ -25,6 +25,17 @@ UNFORWARDED_QUOTA_RUN = ('docker run --rm --privileged -v "$PWD:/src" -w /src \\
                          '  sh /src/.github/scripts/alpine-lifecycle.sh\n')
 
 
+BOUNDED_ENGINE_WAIT = 'lifecycle_wait_until 600 0.2 lifecycle_ready_or_exited "$root/out/ready" "$engine_pid"'
+
+
+def unbound_engine_wait(jobs):
+    # The same predicate in a hand loop has no attempt bound.
+    step = next(step for step in jobs['xray-mixed']['steps'] if 'start_engine.sh' in step.get('run', ''))
+    step['run'] = step['run'].replace(
+        BOUNDED_ENGINE_WAIT,
+        'while ! lifecycle_ready_or_exited "$root/out/ready" "$engine_pid"; do sleep 0.2; done')
+
+
 def on(workflow):
     # YAML 1.1 loads a bare `on` key as True.
     return workflow[True]
@@ -138,6 +149,7 @@ class WorkflowContractTests(unittest.TestCase):
             'quota-container-env': lambda jobs: next(step for step in jobs['openrc-integration']['steps'] if 'run' in step)['env'].pop('ALPINE_QUOTA_BLIND'),
             'hostile-container-forward': lambda jobs: next(step for step in jobs['openrc-integration']['steps'] if 'run' in step).update({'run': UNFORWARDED_RUN}),
             'quota-container-forward': lambda jobs: next(step for step in jobs['openrc-integration']['steps'] if 'run' in step).update({'run': UNFORWARDED_QUOTA_RUN}),
+            'unbounded-engine-wait': unbound_engine_wait,
             'reinstall': lambda jobs: jobs['xray-mixed']['steps'].insert(1, {'name': 'Install', 'run': 'sudo apt-get update && sudo apt-get install -y python3 curl'}),
             'runner-tools': lambda jobs: jobs['memory-report']['steps'].pop(1),
             'syntax-per-leg': lambda jobs: jobs['unit']['steps'].insert(1, {'name': 'Syntax', 'run': 'sh -n socks5.sh'}),
@@ -173,6 +185,7 @@ class WorkflowContractTests(unittest.TestCase):
                 'openrc-integration: hostile curl flag not forwarded to the container',
             'quota-container-forward':
                 'openrc-integration: quota-blind flag not forwarded to the container',
+            'unbounded-engine-wait': 'mixed gate lost ' + BOUNDED_ENGINE_WAIT,
             'reinstall': 'xray-mixed: reinstalls preinstalled curl python3',
             'runner-tools': 'expected one executable entrypoint: sh .github/scripts/require-runner-tools.sh',
             'syntax-per-leg': 'unit: syntax runs once, in its own job',

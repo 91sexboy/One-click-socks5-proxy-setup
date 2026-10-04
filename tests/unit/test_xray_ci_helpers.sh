@@ -144,6 +144,30 @@ assert_eq "waiting is bounded to the given attempts" 3 "$wait_calls"
 assert_eq "an exhausted wait preserves the original full sleep budget" 3 "$(wc -l <"$S5_TEST_ROOT/sleeps" | tr -d '[:space:]')"
 unset -f sleep
 
+# The mixed gate waits until the launcher's ready marker appears or the engine
+# exits, whichever comes first. Ending the wait is not the verdict: an exited
+# engine ends it as early as a ready one, and only a live unready engine runs
+# out the bounded attempts.
+sleep 30 &
+_re_live=$!
+sh -c 'exit 0' &
+_re_dead=$!
+wait "$_re_dead"
+: >"$S5_TEST_ROOT/engine.ready"
+t_run lifecycle_ready_or_exited "$S5_TEST_ROOT/engine.ready" "$_re_live"
+assert_eq "a live engine with an empty ready marker keeps waiting" 1 "$T_STATUS"
+t_run lifecycle_ready_or_exited "$S5_TEST_ROOT/absent.ready" "$_re_live"
+assert_eq "a live engine with no ready marker keeps waiting" 1 "$T_STATUS"
+t_run lifecycle_wait_until 3 0 lifecycle_ready_or_exited "$S5_TEST_ROOT/engine.ready" "$_re_live"
+assert_eq "a live unready engine exhausts the bounded wait" 1 "$T_STATUS"
+t_run lifecycle_ready_or_exited "$S5_TEST_ROOT/engine.ready" "$_re_dead"
+assert_eq "an exited engine ends the wait before the ready marker" 0 "$T_STATUS"
+printf '23456\n' >"$S5_TEST_ROOT/engine.ready"
+t_run lifecycle_ready_or_exited "$S5_TEST_ROOT/engine.ready" "$_re_live"
+assert_eq "a published ready marker ends the wait" 0 "$T_STATUS"
+kill "$_re_live" 2>/dev/null || true
+wait "$_re_live" 2>/dev/null || true
+
 t_run python3 - "$S5_REPO_ROOT" <<'PY'
 import os
 from pathlib import Path

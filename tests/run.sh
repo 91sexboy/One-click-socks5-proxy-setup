@@ -35,9 +35,10 @@ for f in "$UNIT_DIR"/*.sh; do
     # Each test file runs in its own process with a clean environment so that one
     # file's S5_* variables cannot leak into the next. Two kinds are cleared:
     # the test seams production refuses outside test mode, and the operator
-    # overrides production honours on purpose (listen port, card address and
-    # port). The overrides stay legitimate in production, but a maintainer who
-    # exported one for a real install must not see it rewrite test expectations.
+    # overrides production honours on purpose (listen port, advertised endpoint
+    # address and port). The overrides stay legitimate in production, but a
+    # maintainer who exported one for a real install must not see it rewrite
+    # test expectations.
     # $SHELL_UNDER_TEST is unquoted on purpose: S5_TEST_SHELL can be a
     # multi-word command such as `busybox sh`, which must split into words.
     # shellcheck disable=SC2086

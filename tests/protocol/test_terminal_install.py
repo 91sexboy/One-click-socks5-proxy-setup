@@ -110,9 +110,9 @@ class TerminalReadTests(unittest.TestCase):
                 kill_process_group(process)
 
 
-class ShowLivenessTests(unittest.TestCase):
+class ShowServiceAndListenerStateTests(unittest.TestCase):
     def setUp(self):
-        self.directory = tempfile.TemporaryDirectory(prefix="s5-show-liveness-test-")
+        self.directory = tempfile.TemporaryDirectory(prefix="s5-show-state-test-")
         self.addCleanup(self.directory.cleanup)
         self.work = Path(self.directory.name)
         (self.work / ".s5-test-root").touch()
@@ -138,11 +138,11 @@ s5_fail_locked() { return 1; }
 s5_cmd_show
 """
         return shlex.split(os.environ.get("S5_TEST_SHELL", "sh")) + [
-            "-c", script, "show-liveness-test", str(ROOT / "socks5.sh"),
+            "-c", script, "show-state-test", str(ROOT / "socks5.sh"),
             str(listener_status), str(service_status),
         ]
 
-    def test_liveness_stays_with_card_when_stderr_is_redirected(self):
+    def test_service_and_listener_state_stay_with_card_when_stderr_is_redirected(self):
         cases = ((0, "Xray is listening on port 23456."),
                  (1, "Xray is not listening on port 23456."),
                  (2, "the listen state of port 23456 could not be verified."))
@@ -162,7 +162,7 @@ s5_cmd_show
                     rendered = bytes(output).replace(b"\r\n", b"\n").decode()
                     expected = "service: running\n" + message + "\nsynthetic-credential-card\n"
                     self.assertEqual(rendered, expected)
-                    self.assertEqual(errors, b"", "liveness escaped the verified stdout TTY")
+                    self.assertEqual(errors, b"", "service or listener state escaped the verified stdout TTY")
                 finally:
                     if process is not None and process.poll() is None:
                         kill_process_group(process)

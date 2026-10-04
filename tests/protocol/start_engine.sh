@@ -49,10 +49,32 @@ file_type_isolated() (
     file_type_command "$1"
 )
 
-# Engine logs are echoed on failure with the password removed. The pattern
-# arrives on stdin so it never enters an external command's argv.
+# Engine logs are replayed through the shared CI redactor, so the launcher hides
+# every credential form on its own rather than relying on its caller's second
+# pass: the password, user:pass and its base64 are replaced in place and the
+# rest of each line survives. LIFECYCLE_COMMON locates the redactor for a
+# launcher copied out of the checkout.
+LIFECYCLE_COMMON=${LIFECYCLE_COMMON:-$(dirname -- "$0")/../../.github/scripts/lifecycle-common.sh}
+if [ ! -f "$LIFECYCLE_COMMON" ] || [ ! -r "$LIFECYCLE_COMMON" ]; then
+    fail 'cannot find the shared log redactor'
+fi
+# shellcheck source=.github/scripts/lifecycle-common.sh
+. "$LIFECYCLE_COMMON"
+
+# redact <log>: replay <log> on stderr with every credential form replaced.
+# The patterns are rebuilt from PASSFILE into a private file in WORK, so they
+# never enter argv or the environment. A pattern file that cannot be written,
+# or that no longer describes the credential this launch configured, withholds
+# the raw log instead of replaying it.
 redact() {
-    printf '%s\n' "$pass" | grep -vFf - "$1" >&2 || true
+    if lifecycle_redaction_file "$WORK/redact.pat" "$PASSFILE" &&
+        [ "$(sed -n '2p' "$WORK/redact.pat")" = "$user:$pass" ]; then
+        lifecycle_redact "$WORK/redact.pat" <"$1" >&2 ||
+            printf 'xray launcher: engine log replay failed\n' >&2
+    else
+        printf 'xray launcher: engine log withheld: cannot rebuild its redaction patterns\n' >&2
+    fi
+    rm -f "$WORK/redact.pat"
 }
 
 [ -f "$PASSFILE" ] || fail 'invalid PASSFILE'

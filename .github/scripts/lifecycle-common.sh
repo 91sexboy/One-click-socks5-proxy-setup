@@ -31,6 +31,14 @@ lifecycle_wait_until() {
     return 1
 }
 
+# lifecycle_ready_or_exited <readyfile> <pid>: the wait condition for a
+# launcher, true once <readyfile> is non-empty or <pid> has exited. It ends a
+# wait, it does not judge it: the caller still requires the marker and a live
+# process afterwards, so an early exit is never read as readiness.
+lifecycle_ready_or_exited() {
+    test -s "$1" || ! kill -0 "$2" 2>/dev/null
+}
+
 # lifecycle_start_duplex_target <dir>: start the duplex target on every address,
 # so one listener answers at both the permitted 192.0.2.1 and the denied
 # 127.0.0.1 -- the boundary case needs a live listener at the denied address, or
