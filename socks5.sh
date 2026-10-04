@@ -55,6 +55,7 @@ S5_CREATED_STATEDIR=0
 S5_CREATED_TRANSACTION=0
 S5_CREATED_BIN=0
 S5_CREATED_CFG=0
+S5_CREATED_STATE=0
 S5_CREATED_UNIT=0
 S5_UNIT_ENABLED=0
 S5_SERVICE_STARTED=0
@@ -305,6 +306,8 @@ s5_msg() {
     service.reload) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '服务管理器无法重新加载服务定义。' ;; en) printf 'the service manager could not reload the service definitions.' ;; esac ;;
     service.enable) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '无法设置 Xray 服务开机启动。' ;; en) printf 'could not enable the Xray service at boot.' ;; esac ;;
     service.disable) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '无法取消 Xray 服务开机启动。' ;; en) printf 'could not disable the Xray service at boot.' ;; esac ;;
+    service.child.alive) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf 'OpenRC 守护进程已不在，但被守护的进程 %s 仍在运行；未重置 OpenRC 记录，也未启动服务。请先停止该进程，再运行 sh socks5.sh restart。' "$1" ;; en) printf 'the OpenRC supervisor is gone, but supervised process %s is still running; the OpenRC record was not reset and the service was not started. Stop that process, then run sh socks5.sh restart again.' "$1" ;; esac ;;
+    service.child.unknown) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法确定 %s 中记录的被守护进程是否已退出；未重置 OpenRC 记录，也未启动服务。请确认该服务没有残留进程后删除该文件，再运行 sh socks5.sh restart。' "$1" ;; en) printf 'could not determine whether the supervised process recorded in %s has exited; the OpenRC record was not reset and the service was not started. Make sure no process of this service remains, remove that file, then run sh socks5.sh restart again.' "$1" ;; esac ;;
     service.stop) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '无法确认 Xray 服务已停止。' ;; en) printf 'could not verify that the Xray service stopped.' ;; esac ;;
     service.inactive) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '无法确认 Xray 服务正在运行。' ;; en) printf 'could not verify that the Xray service is running.' ;; esac ;;
     service.listen) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf 'Xray 未在端口 %s 上监听。' "$1" ;; en) printf 'Xray is not listening on port %s.' "$1" ;; esac ;;
@@ -360,6 +363,8 @@ s5_msg() {
     uninstall.nonempty) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '拒绝删除非空自有目录：%s。' "$1" ;; en) printf 'refusing non-empty owned directory: %s.' "$1" ;; esac ;;
     uninstall.progress) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法记录卸载进度：%s。' "$1" ;; en) printf 'could not record uninstall progress: %s.' "$1" ;; esac ;;
     uninstall.identity) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '无法记录已安装路径的身份；未删除任何内容。' ;; en) printf 'could not record the identity of the installed paths; nothing was removed.' ;; esac ;;
+    uninstall.pending) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '存在中断的卸载；请运行 uninstall 完成卸载。' ;; en) printf 'an interrupted uninstall is pending; run uninstall to finish it.' ;; esac ;;
+    uninstall.running) [ "$#" -eq 0 ] || return 1; case "$S5_LANG" in zh) printf '无法确认 Xray 服务已停止；中断的卸载已保留剩余资源。请停止服务后重新运行 uninstall。' ;; en) printf 'could not verify that the Xray service stopped; the interrupted uninstall kept its remaining resources. Stop the service and run uninstall again.' ;; esac ;;
     uninstall.directory) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '无法删除自有目录：%s。' "$1" ;; en) printf 'could not remove owned directory: %s.' "$1" ;; esac ;;
     usage.unknown) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '未知命令：%s。' "$1" ;; en) printf 'unknown command: %s.' "$1" ;; esac ;;
     usage.extra) [ "$#" -eq 1 ] || return 1; case "$S5_LANG" in zh) printf '命令不接受额外参数：%s。' "$1" ;; en) printf 'the command does not accept extra arguments: %s.' "$1" ;; esac ;;
@@ -474,26 +479,41 @@ s5_osrel_get() {
     ' "$1"
 }
 
+# s5_ver_valid <version>: dot-separated decimal fields, none empty -- no leading,
+# trailing or doubled dot -- and none longer than 18 digits once leading zeros
+# are dropped, the width s5_ver_ge compares without shell arithmetic.
+s5_ver_valid() {
+    # The colon is named for VERSION_ID=1:0, which once passed as a separator.
+    case "$1" in '' | .* | *. | *..* | *[!0-9.]*) return 1 ;; esac
+    _svv_rest=$1
+    while [ -n "$_svv_rest" ]; do
+        _svv_field=${_svv_rest%%.*}
+        _svv_field=${_svv_field#"${_svv_field%%[!0]*}"}
+        [ "${#_svv_field}" -le 18 ] || return 1
+        case "$_svv_rest" in
+        *.*) _svv_rest=${_svv_rest#*.} ;;
+        *) _svv_rest='' ;;
+        esac
+    done
+    return 0
+}
+
+# s5_ver_ge <left> <right>: 0 when left >= right, 1 when lower, 2 when either is
+# malformed. Both are validated whole before any field is compared: an early
+# answer from a larger first field let 23.bad and 23. pass as at least 22.04.
+# A missing trailing field reads as zero, so 22 equals 22.0.
 s5_ver_ge() {
     _svg_left=$1
     _svg_right=$2
     # An absent version is not version 0.
-    [ -n "$_svg_left" ] && [ -n "$_svg_right" ] || return 2
+    s5_ver_valid "$_svg_left" && s5_ver_valid "$_svg_right" || return 2
     while [ -n "$_svg_left" ] || [ -n "$_svg_right" ]; do
         _svg_left_part=${_svg_left%%.*}
         _svg_right_part=${_svg_right%%.*}
-        [ -n "$_svg_left_part" ] || _svg_left_part=0
-        [ -n "$_svg_right_part" ] || _svg_right_part=0
-        # Each field on its own: checked joined by a colon, a colon inside a
-        # field (VERSION_ID=1:0) passed as a digit separator and compared as a
-        # three-character number.
-        case "$_svg_left_part" in *[!0-9]*) return 2 ;; esac
-        case "$_svg_right_part" in *[!0-9]*) return 2 ;; esac
         _svg_left_part=${_svg_left_part#"${_svg_left_part%%[!0]*}"}
         _svg_right_part=${_svg_right_part#"${_svg_right_part%%[!0]*}"}
         [ -n "$_svg_left_part" ] || _svg_left_part=0
         [ -n "$_svg_right_part" ] || _svg_right_part=0
-        [ "${#_svg_left_part}" -le 18 ] && [ "${#_svg_right_part}" -le 18 ] || return 2
         if [ "${#_svg_left_part}" -gt "${#_svg_right_part}" ]; then return 0; fi
         if [ "${#_svg_left_part}" -lt "${#_svg_right_part}" ]; then return 1; fi
         if [ "$_svg_left_part" != "$_svg_right_part" ]; then
@@ -505,11 +525,11 @@ s5_ver_ge() {
             return 1
         fi
         case "$_svg_left" in
-        *.*) _svg_left=${_svg_left#*.}; [ -n "$_svg_left" ] || return 2 ;;
+        *.*) _svg_left=${_svg_left#*.} ;;
         *) _svg_left='' ;;
         esac
         case "$_svg_right" in
-        *.*) _svg_right=${_svg_right#*.}; [ -n "$_svg_right" ] || return 2 ;;
+        *.*) _svg_right=${_svg_right#*.} ;;
         *) _svg_right='' ;;
         esac
     done
@@ -1040,6 +1060,19 @@ s5_mkdir_parents() {
     chmod 0755 "$1"
 }
 
+# s5_mkdir_new <dir>: create a private directory that must not exist yet. Plain
+# mkdir refuses every existing name, a symlink included, so its success alone
+# proves this run created the directory. Returns 2 when nothing was created, so a
+# caller that armed cleanup beforehand disarms it, and 1 when the new directory
+# could not be made private.
+s5_mkdir_new() {
+    _smnew_parent=${1%/*}
+    [ "$_smnew_parent" != "$1" ] || _smnew_parent=.
+    s5_mkdir_parents "$_smnew_parent" || return 2
+    mkdir "$1" || return 2
+    chmod 0700 "$1" || return 1
+}
+
 s5_mkdir_private() {
     if [ -L "$1" ]; then return 1; fi
     _smpriv_parent=${1%/*}
@@ -1261,8 +1294,10 @@ s5_config_extract() {
     s5_valid_stored_username "$_sceuser" && s5_valid_stored_password "$_scepass" || return 1
     S5_USERNAME=$_sceuser
     S5_PASSWORD=$_scepass
-    _scepass=''
+    # The redactor's copy is taken before the temporary is cleared; clearing it
+    # first left S5_SECRET empty, and s5_redact passes everything through then.
     S5_SECRET=$_scepass
+    _scepass=''
     return 0
 }
 
@@ -2096,13 +2131,26 @@ s5_valid_release() {
     [ "$_svr_count" -eq 3 ]
 }
 
+# s5_path_contract <path> <type> <owner:group> <mode>: owners by name.
 s5_path_contract() {
-    # path type owner:group mode. Tests may skip only the host identity lookup;
-    # type, symlink and mode checks remain the production implementation.
-    _spc_path=$1
-    _spc_type=$2
-    _spc_owner=$3
-    _spc_mode=$4
+    s5_path_contract_as '%U:%G' "$@"
+}
+
+# s5_path_contract_ids <path> <type> <uid:gid> <mode>: the same contract with
+# numeric owners, for a resource whose group name may already be deleted.
+s5_path_contract_ids() {
+    s5_path_contract_as '%u:%g' "$@"
+}
+
+s5_path_contract_as() {
+    # stat-owner-format path type owner mode. Tests may skip only the host
+    # identity lookup; type, symlink and mode checks remain the production
+    # implementation.
+    _spc_format=$1
+    _spc_path=$2
+    _spc_type=$3
+    _spc_owner=$4
+    _spc_mode=$5
     [ ! -L "$_spc_path" ] || return 1
     case "$_spc_type" in
     file) [ -f "$_spc_path" ] ;;
@@ -2110,7 +2158,7 @@ s5_path_contract() {
     exec) [ -f "$_spc_path" ] && [ -x "$_spc_path" ] ;;
     *) return 1 ;;
     esac || return 1
-    _spc_stat=$(stat -c '%U:%G %a' "$_spc_path" 2>/dev/null) || return 1
+    _spc_stat=$(stat -c "$_spc_format %a" "$_spc_path" 2>/dev/null) || return 1
     [ "${_spc_stat##* }" = "$_spc_mode" ] || return 1
     if [ "${S5_SKIP_OWNERSHIP:-0}" != 1 ]; then
         [ "${_spc_stat% *}" = "$_spc_owner" ] || return 1
@@ -2458,12 +2506,14 @@ s5_service_state() {
         # restart budget. Failed is final and its processes are gone, but it is
         # not what the operator asked for, so it gets its own 4. activating
         # (including a pending auto-restart), deactivating and any unrecognised
-        # word leave the state unproven.
+        # word leave the state unproven. systemd 250 and later exit 4 instead
+        # for a unit it has not loaded -- one whose file a resumed uninstall has
+        # already removed -- while still printing the unit's state word.
         _sssword=$(systemctl is-active "$S5_PROJECT.service" 2>/dev/null)
         case "$?:$_sssword" in
         0:*) return 0 ;;
-        3:inactive) return 1 ;;
-        3:failed) return 4 ;;
+        3:inactive | 4:inactive) return 1 ;;
+        3:failed | 4:failed) return 4 ;;
         *) return 2 ;;
         esac
         ;;
@@ -2707,14 +2757,14 @@ s5_transaction_recover() {
         [ -f "$S5_TXNDIR/old.config.json" ] && [ -f "$S5_TXNDIR/old.state" ] || return 1
         S5_SERVICE_TOUCHED=1
         [ -f "$S5_TXNDIR/old.xray" ] || S5_BINARY_REPLACED=0
-        s5_update_rollback "$S5_TXNDIR/old.config.json" "$S5_TXNDIR/old.state"
+        s5_update_rollback
         return $?
     fi
     if [ -f "$S5_TXNDIR/old.xray" ]; then
         [ -f "$S5_TXNDIR/old.config.json" ] && [ -f "$S5_TXNDIR/old.state" ] || return 1
         S5_SERVICE_TOUCHED=0
         S5_BINARY_REPLACED=1
-        s5_update_rollback "$S5_TXNDIR/old.config.json" "$S5_TXNDIR/old.state"
+        s5_update_rollback
         return $?
     fi
     # Before binary replacement or stop, every live resource is untouched. A
@@ -2796,6 +2846,7 @@ s5_cleanup() {
         if [ "$S5_INIT" = openrc ] && [ "$_sclruntime" = 1 ]; then
             rm -f "$S5_PIDFILE" "$S5_OPENRC_OPTION_DIR/child_pid" 2>/dev/null || true
         fi
+        if [ "$S5_CREATED_STATE" = 1 ]; then rm -f "$S5_STATE" 2>/dev/null || true; fi
         if [ "$S5_CREATED_CFG" = 1 ]; then rm -f "$S5_CFG" 2>/dev/null || true; fi
         if [ "$S5_CREATED_BIN" = 1 ]; then rm -f "$S5_BIN" 2>/dev/null || true; fi
         if [ "$S5_CREATED_USER" = 1 ] || [ "$S5_CREATED_GROUP" = 1 ]; then
@@ -2809,7 +2860,7 @@ s5_cleanup() {
         # when a signal interrupts publication or only one backup is readable.
         if [ "$S5_CONFIG_REPLACED" = 1 ] || [ "$S5_BINARY_REPLACED" = 1 ] ||
             [ "$S5_SERVICE_TOUCHED" = 1 ]; then
-            s5_update_rollback "$S5_TXNDIR/old.config.json" "$S5_TXNDIR/old.state" || true
+            s5_update_rollback || true
         elif [ "$S5_CREATED_TRANSACTION" = 1 ]; then
             # Before binary replacement/service stop/publication the live files
             # were untouched, so deleting only this invocation's complete or
@@ -3076,16 +3127,17 @@ ROLLBACK_FIELDS
     return 0
 }
 
+# Restores the transaction's own backups, the same fixed files
+# s5_transaction_verify_rollback has just checked; there is no other source.
 s5_restore_transaction() {
-    _srtcfg=$1
-    _srtstate=$2
     if [ -f "$S5_TXNDIR/old.unit" ] && [ ! -L "$S5_TXNDIR/old.unit" ]; then
         if ! s5_atomic_write "$S5_SERVICE_ARTIFACT" root:root 0755 \
             <"$S5_TXNDIR/old.unit"; then return 1; fi
         s5_svc reload || return 1
     fi
-    s5_atomic_write "$S5_CFG" "root:$S5_SERVICE_GROUP" 0640 <"$_srtcfg" || return 1
-    s5_atomic_write "$S5_STATE" root:root 0600 <"$_srtstate" || return 1
+    s5_atomic_write "$S5_CFG" "root:$S5_SERVICE_GROUP" 0640 \
+        <"$S5_TXNDIR/old.config.json" || return 1
+    s5_atomic_write "$S5_STATE" root:root 0600 <"$S5_TXNDIR/old.state" || return 1
     return 0
 }
 
@@ -3096,7 +3148,7 @@ s5_update_rollback() {
         s5_msg_err transaction.restore "$S5_TXNDIR"
         return 1
     }
-    if ! s5_restore_transaction "$1" "$2"; then
+    if ! s5_restore_transaction; then
         s5_msg_err transaction.restore "$S5_TXNDIR"
         return 1
     fi
@@ -3136,7 +3188,7 @@ ROLLED_BACK
 # fails without a word. A failed rollback reports transaction.restore itself.
 s5_update_abort() {
     [ "$#" -eq 0 ] || s5_msg_err "$@"
-    s5_update_rollback "$S5_TXNDIR/old.config.json" "$S5_TXNDIR/old.state" || return 1
+    s5_update_rollback || return 1
     s5_msg_err transaction.rolledback
     return 1
 }
@@ -3170,10 +3222,18 @@ s5_install_new() {
     s5_prompt_username || return 1
     s5_prompt_password || return 1
     s5_download_engine || return 1
-    s5_mkdir_private "$S5_SYSCONFDIR" || return 1
+    # Each cleanup flag is armed before its resource appears. Armed after, a
+    # handled signal between a step's effect and its return left residue that a
+    # retry refuses as a foreign namespace and uninstall has no state to remove.
+    # Arming early is safe only for a name proven free: the directories by an
+    # exclusive mkdir, which disarms when it created nothing, and the files by the
+    # fresh directories that hold them or a re-check of the shared unit directory.
     S5_CREATED_CONFDIR=1
-    s5_mkdir_private "$S5_STATEDIR" || return 1
+    s5_mkdir_new "$S5_SYSCONFDIR"
+    case $? in 0) ;; 2) S5_CREATED_CONFDIR=0; return 1 ;; *) return 1 ;; esac
     S5_CREATED_STATEDIR=1
+    s5_mkdir_new "$S5_STATEDIR"
+    case $? in 0) ;; 2) S5_CREATED_STATEDIR=0; return 1 ;; *) return 1 ;; esac
     s5_account_create || return 1
     if [ "${S5_SKIP_OWNERSHIP:-0}" != 1 ]; then
         chown root:"$S5_SERVICE_GROUP" "$S5_SYSCONFDIR" || return 1
@@ -3184,15 +3244,23 @@ s5_install_new() {
     fi
     chmod 0755 "$S5_PREFIX" || return 1
     _sinc=$(s5_write_config_candidate) || return 1
-    mv -f "$_sinc" "$S5_CFG" || return 1
     S5_CREATED_CFG=1
-    s5_write_unit || { s5_msg_err service.unit "$S5_SERVICE_ARTIFACT"; return 1; }
+    mv -f "$_sinc" "$S5_CFG" || return 1
+    # The prompts and the download ran since the namespace check, and the unit
+    # directory is shared, so the claim waits until the name is free right now.
+    if [ -e "$S5_SERVICE_ARTIFACT" ] || [ -L "$S5_SERVICE_ARTIFACT" ]; then
+        s5_msg_err state.invalid "$S5_PROJECT"
+        return 1
+    fi
     S5_CREATED_UNIT=1
+    s5_write_unit || { s5_msg_err service.unit "$S5_SERVICE_ARTIFACT"; return 1; }
     s5_record_digest service-artifact "$S5_SERVICE_ARTIFACT" || return 1
     S5_UNIT_SHA256=$S5_RECORDED_DIGEST
     s5_svc reload || { s5_msg_err service.reload; return 1; }
-    s5_svc enable || { s5_msg_err service.enable; return 1; }
+    # A partial or interrupted enable can register this run's own unit at boot;
+    # disabling a unit that never got that far is harmless.
     S5_UNIT_ENABLED=1
+    s5_svc enable || { s5_msg_err service.enable; return 1; }
     # A failed start or a signal can still leave a managed process running.
     S5_SERVICE_STARTED=1
     s5_svc start || { s5_msg_err service.start; return 1; }
@@ -3207,6 +3275,7 @@ s5_install_new() {
     s5_verify_dataplane || return 1
     s5_record_digest config "$S5_CFG" || return 1
     S5_CONFIG_SHA256=$S5_RECORDED_DIGEST
+    S5_CREATED_STATE=1
     s5_state_write || { s5_msg_err state.write "$S5_STATE"; return 1; }
     S5_INSTALL_COMPLETE=1
     return 0
@@ -3361,14 +3430,18 @@ s5_cmd_install() {
     # and displace the EXIT handler of whatever sourced the script.
     s5_trap_rollback
     s5_msg_print install.start >&2
-    if [ -f "$S5_STATE" ]; then
+    if s5_uninstall_pending; then
+        # An update would restart a service the record says is stopped and
+        # rewrite the files recovery verifies; uninstall finishes it instead.
+        s5_msg_err uninstall.pending
+        _sci_status=1
+        _sci_update=0
+    elif [ -f "$S5_STATE" ]; then
         s5_install_update
         _sci_status=$?
         _sci_update=1
     else
-        if [ -e "$S5_UNINSTALL_STATE" ] || [ -L "$S5_UNINSTALL_STATE" ] ||
-            [ -e "$S5_UNINSTALL_FINAL" ] || [ -L "$S5_UNINSTALL_FINAL" ] ||
-            ! s5_namespace_absent; then
+        if ! s5_namespace_absent; then
             s5_msg_err state.invalid "$S5_STATE"
             _sci_status=1
         elif s5_confirm_install; then
@@ -3628,38 +3701,60 @@ s5_cmd_show() {
     return "$S5_SERVICE_RC"
 }
 
-# A supervised child still alive after its supervisor died: OpenRC's crashed
-# state does not say whether one is, so child_pid is asked directly.
-s5_openrc_child_alive() {
-    _soca_pid=$(cat "$S5_OPENRC_OPTION_DIR/child_pid" 2>/dev/null) || return 1
-    case "$_soca_pid" in '' | *[!0-9]* | 0) return 1 ;; esac
-    kill -0 "$_soca_pid" 2>/dev/null
+# Whether the supervised child recorded in child_pid survives its supervisor.
+# OpenRC's crashed and unsupervised states do not say, so the record is asked
+# directly: 0 alive (S5_OPENRC_CHILD_PID names it), 1 none (no record, or a
+# recorded pid confirmed gone), 2 unknown. A record that exists but cannot be
+# read or holds no pid is unknown, as s5_listener_state treats it, and so is a
+# pid kill -0 refuses while /proc still lists it.
+s5_openrc_child_state() {
+    S5_OPENRC_CHILD_PID=''
+    [ -e "$S5_OPENRC_OPTION_DIR/child_pid" ] || [ -L "$S5_OPENRC_OPTION_DIR/child_pid" ] || return 1
+    _socs_pid=$(cat "$S5_OPENRC_OPTION_DIR/child_pid" 2>/dev/null) || return 2
+    case "$_socs_pid" in '' | *[!0-9]* | 0) return 2 ;; esac
+    S5_OPENRC_CHILD_PID=$_socs_pid
+    kill -0 "$_socs_pid" 2>/dev/null && return 0
+    [ -d "/proc/$_socs_pid" ] && return 2
+    return 1
 }
 
 # OpenRC reports crashed (3 here) or unsupervised (5) when the supervisor is
 # gone while the service is still marked started. Its restart then has no
 # supervisor to stop and fails, so the service stays that way until the record
 # is reset. That reset (zap) is sound only when no supervised child survives: a
-# live child could still hold the port, so it stays fail closed. Every other
-# state restarts normally.
+# live child could still hold the port, and a child that cannot be observed may
+# be one, so both stay fail closed and are named here (3). Every other state
+# restarts normally.
 s5_restart_service() {
     if [ "$S5_INIT" = openrc ]; then
         s5_service_state
         _srsvc_state=$?
         if [ "$_srsvc_state" -eq 3 ] || [ "$_srsvc_state" -eq 5 ]; then
-            s5_openrc_child_alive && return 1
+            s5_openrc_child_state
+            case $? in
+            1) ;;
+            0) s5_msg_err service.child.alive "$S5_OPENRC_CHILD_PID"; return 3 ;;
+            *) s5_msg_err service.child.unknown "$S5_OPENRC_OPTION_DIR/child_pid"; return 3 ;;
+            esac
             rc-service "$S5_PROJECT" zap >/dev/null 2>&1 || return 1
-            s5_svc start
-            return $?
+            s5_svc start || return 1
+            return 0
         fi
     fi
-    s5_svc restart
+    s5_svc restart || return 1
 }
 
 s5_cmd_restart() {
-    s5_open_locked restart || return 1
+    s5_enter_locked restart || return 1
+    # An interrupted uninstall stopped the service and recovery relies on that;
+    # starting it again here would only make uninstall stop it once more.
+    if s5_uninstall_pending; then s5_fail_locked uninstall.pending; return 1; fi
+    s5_open_managed_state
+    s5_accept_state $? || return 1
     s5_config_test "$S5_CFG" || { s5_fail_locked config.invalid.installed; return 1; }
-    s5_restart_service || { s5_fail_locked service.start; return 1; }
+    # 3: s5_restart_service refused a crashed OpenRC service and named why.
+    s5_restart_service
+    case $? in 0) ;; 3) s5_fail_locked; return 1 ;; *) s5_fail_locked service.start; return 1 ;; esac
     s5_wait_listening "$S5_PORT"
     _scr_status=$?
     if [ "$_scr_status" -eq 0 ]; then
@@ -3818,7 +3913,7 @@ s5_uninstall_verify_file() {
     _suvf_mode=$4
     _suvf_sha=$5
     _suvf_id=$6
-    s5_path_contract "$_suvf_path" "$_suvf_type" "$_suvf_owner" "$_suvf_mode" || return 1
+    s5_path_contract_ids "$_suvf_path" "$_suvf_type" "$_suvf_owner" "$_suvf_mode" || return 1
     s5_path_identity_matches "$_suvf_path" "$_suvf_id" || return 1
     [ "$(s5_sha256 "$_suvf_path" 2>/dev/null)" = "$_suvf_sha" ]
 }
@@ -3852,7 +3947,7 @@ s5_uninstall_verify_accounts() {
     return 0
 }
 
-# s5_uninstall_check_path <expectation> <path> <type> <owner> <mode> <identity>:
+# s5_uninstall_check_path <expectation> <path> <type> <uid:gid> <mode> <identity>:
 # a resource recovery verifies by contract and recorded identity alone.
 s5_uninstall_check_path() {
     case "$1" in
@@ -3861,10 +3956,10 @@ s5_uninstall_check_path() {
     absent) s5_uninstall_expect_absent "$2"; return $? ;;
     *) return 1 ;;
     esac
-    s5_path_contract "$2" "$3" "$4" "$5" && s5_path_identity_matches "$2" "$6"
+    s5_path_contract_ids "$2" "$3" "$4" "$5" && s5_path_identity_matches "$2" "$6"
 }
 
-# s5_uninstall_check_file <expectation> <path> <type> <owner> <mode> <sha> <identity>:
+# s5_uninstall_check_file <expectation> <path> <type> <uid:gid> <mode> <sha> <identity>:
 # a resource recovery also verifies by content.
 s5_uninstall_check_file() {
     case "$1" in
@@ -3879,21 +3974,23 @@ s5_uninstall_verify_recovery() {
     s5_unit_mode || return 1
     # Directories that should remain are always checked before their contents. A
     # directory stays strict while its content exists and is optional from then
-    # until its own removal.
+    # until its own removal. Owners are the recorded numbers: the service group
+    # is deleted before the config directory, and from then its name no longer
+    # resolves while the directory still carries its GID.
     s5_uninstall_check_path "$(s5_uninstall_expect complete complete)" \
-        "$S5_STATEDIR" dir root:root 700 "$S5_UNINSTALL_STATEDIR_ID" || return 1
+        "$S5_STATEDIR" dir 0:0 700 "$S5_UNINSTALL_STATEDIR_ID" || return 1
     s5_uninstall_check_path "$(s5_uninstall_expect binary-removed state-finalizing)" \
-        "$S5_PREFIX" dir root:root 755 "$S5_UNINSTALL_PREFIX_ID" || return 1
+        "$S5_PREFIX" dir 0:0 755 "$S5_UNINSTALL_PREFIX_ID" || return 1
     s5_uninstall_check_path "$(s5_uninstall_expect config-removed state-finalizing)" \
-        "$S5_SYSCONFDIR" dir "root:$S5_SERVICE_GROUP" 750 "$S5_UNINSTALL_CONFDIR_ID" || return 1
+        "$S5_SYSCONFDIR" dir "0:$S5_ACCOUNT_GID" 750 "$S5_UNINSTALL_CONFDIR_ID" || return 1
     s5_uninstall_check_file "$(s5_uninstall_expect disabled disabled)" \
-        "$S5_SERVICE_ARTIFACT" "$S5_UNIT_TYPE" root:root "$S5_UNIT_MODE" \
+        "$S5_SERVICE_ARTIFACT" "$S5_UNIT_TYPE" 0:0 "$S5_UNIT_MODE" \
         "$S5_UNIT_SHA256" "$S5_UNINSTALL_SERVICE_ID" || return 1
     s5_uninstall_check_file "$(s5_uninstall_expect service-artifact-removed service-artifact-removed)" \
-        "$S5_CFG" file "root:$S5_SERVICE_GROUP" 640 \
+        "$S5_CFG" file "0:$S5_ACCOUNT_GID" 640 \
         "$S5_CONFIG_SHA256" "$S5_UNINSTALL_CONFIG_ID" || return 1
     s5_uninstall_check_file "$(s5_uninstall_expect config-removed config-removed)" \
-        "$S5_BIN" exec root:root 755 \
+        "$S5_BIN" exec 0:0 755 \
         "$S5_INSTALLED_BINARY_SHA256" "$S5_UNINSTALL_BINARY_ID" || return 1
     # Account removal can crash between user and group deletion.
     case "$(s5_uninstall_expect manager-reloaded manager-reloaded)" in
@@ -3903,7 +4000,7 @@ s5_uninstall_verify_recovery() {
     *) return 1 ;;
     esac
     s5_uninstall_check_path "$(s5_uninstall_expect account-removed account-removed)" \
-        "$S5_STATE" file root:root 600 "$S5_UNINSTALL_STATE_ID" || return 1
+        "$S5_STATE" file 0:0 600 "$S5_UNINSTALL_STATE_ID" || return 1
     return 0
 }
 
@@ -3995,6 +4092,30 @@ s5_uninstall_step() {
     esac
 }
 
+# s5_uninstall_confirm_stopped: the stop evidence a resumed uninstall needs before
+# its next removal. A recorded phase says which work is done, not that the service
+# stayed down: a reboot starts a unit that is still enabled, and anyone may start
+# one that is still installed. While the service artifact exists the manager can
+# stop it, so it is stopped again exactly as the prepared step does. Once the
+# artifact is gone the manager's own report decides: systemd still knows, and can
+# still stop, a loaded unit whose file was removed, while an OpenRC service without
+# its script is answered only by its supervised child. A live or unreadable child
+# record, crashed, unsupervised or any unknown state keeps what remains.
+s5_uninstall_confirm_stopped() {
+    if [ -e "$S5_SERVICE_ARTIFACT" ] || [ -L "$S5_SERVICE_ARTIFACT" ]; then
+        s5_svc stop && s5_wait_stopped
+        return $?
+    fi
+    if [ "$S5_INIT" = openrc ]; then
+        s5_openrc_child_state
+        case $? in 1) return 0 ;; esac
+        return 1
+    fi
+    s5_service_state
+    case $? in 1 | 4) return 0 ;; esac
+    s5_svc stop && s5_wait_stopped
+}
+
 s5_uninstall_run() {
     while [ "$S5_UNINSTALL_PHASE" != complete ]; do
         s5_uninstall_step "$S5_UNINSTALL_PHASE" || return 1
@@ -4018,6 +4139,13 @@ s5_uninstall_run() {
     s5_remove_owned_dir "$S5_STATEDIR" || return 1
     s5_remove_owned_file "$S5_UNINSTALL_FINAL" || return 1
     return 0
+}
+
+# s5_uninstall_pending: an uninstall record exists, inside the state directory
+# or as the final marker beside it, so only uninstall may act on what remains.
+s5_uninstall_pending() {
+    [ -e "$S5_UNINSTALL_STATE" ] || [ -L "$S5_UNINSTALL_STATE" ] ||
+        [ -e "$S5_UNINSTALL_FINAL" ] || [ -L "$S5_UNINSTALL_FINAL" ]
 }
 
 s5_namespace_absent() {
@@ -4059,6 +4187,11 @@ s5_cmd_uninstall() {
         s5_uninstall_capture_identities || { s5_fail_locked uninstall.identity; return 1; }
         S5_UNINSTALL_PHASE=prepared
         s5_uninstall_checkpoint prepared || { s5_fail_locked; return 1; }
+    fi
+    # The prepared step stops the service itself; a resumed later phase must
+    # prove it stopped again before removing anything.
+    if [ "$S5_UNINSTALL_PHASE" != prepared ]; then
+        s5_uninstall_confirm_stopped || { s5_fail_locked uninstall.running; return 1; }
     fi
     s5_uninstall_run || { s5_fail_locked; return 1; }
     s5_lock_release || return 1

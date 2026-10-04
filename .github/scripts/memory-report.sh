@@ -9,6 +9,8 @@ fi
 . "$(dirname "$0")/lifecycle-common.sh"
 # shellcheck source=.github/scripts/lifecycle-cleanup.sh
 . "$(dirname "$0")/lifecycle-cleanup.sh"
+# shellcheck source=.github/scripts/memory-hold.sh
+. "$(dirname "$0")/memory-hold.sh"
 root=$(mktemp -d)
 # The cleanup seam removes work once its children are stopped.
 work=$root
@@ -68,24 +70,23 @@ sample_request() {
         return 1
     fi
 }
-printf 'memory_workload=held_authenticated_tunnels_target_and_driver_outside_xray_cgroup\n'
+# Each label is evidence only for tunnels that echoed a frame at readiness and
+# again before and after the sample, counted live by the target in every check.
+printf 'memory_workload=held_authenticated_tunnels_echo_verified_around_each_sample_target_and_driver_outside_xray_cgroup\n'
+# The holder failed a check, or its log explains why it never became ready.
+memory_stage_failed() {
+    sudo sh .github/scripts/run-socks5.sh --diagnose memory-holder \
+        "$root/answers" "$root/held.log" "$root/pass" || true
+    exit 1
+}
 sample_request reset idle
+memory_hold_idle "$root" before_sample
 sample_request sample idle
+memory_hold_idle "$root" after_sample
 for stage in 1 32 128; do
     # Reset before establishment so the peak includes opening the tunnels.
     sample_request reset "conn$stage"
-    rm -f "$root/held"
-    python3 tests/protocol/hold_connections.py --host 127.0.0.1 --port 23456 \
-        --target-host 192.0.2.1 --target-port "$target_port" \
-        --passfile "$root/pass" --count "$stage" \
-        --ready-file "$root/held" --max-seconds 60 3>&- >"$root/held.log" 2>&1 &
-    holder_pid=$!
-    lifecycle_wait_until 150 0.2 test -s "$root/held" || true
-    if ! test "$(cat "$root/held" 2>/dev/null)" = "$stage"; then
-        sudo sh .github/scripts/run-socks5.sh --diagnose memory-holder \
-            "$root/answers" "$root/held.log" "$root/pass" || true
-        exit 1
-    fi
+    memory_hold_start "$root" "$stage" 23456 192.0.2.1 "$target_port" || memory_stage_failed
     procs=$(sudo cat "$cgdir/cgroup.procs")
     printf 'conn%s_cgroup_procs=%s\n' "$stage" "$(printf '%s' "$procs" | tr '\n' ' ')"
     if ! printf '%s\n' "$procs" | grep -qx "$pid"; then
@@ -98,10 +99,10 @@ for stage in 1 32 128; do
             exit 1
         fi
     done
+    memory_hold_verify "$root" "$stage" before_sample || memory_stage_failed
     sample_request sample "conn$stage"
-    kill -TERM "$holder_pid" 2>/dev/null || true
-    wait "$holder_pid" 2>/dev/null || true
-    holder_pid=''
+    memory_hold_verify "$root" "$stage" after_sample || memory_stage_failed
+    memory_hold_stop "$root" "$stage" || memory_stage_failed
 done
 printf 'quit\n' >&3
 wait "$sampler_pid"

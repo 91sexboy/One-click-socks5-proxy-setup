@@ -156,6 +156,9 @@ def serve_connection(sock, count_path, report_path):
                 cohort["members"][str(cid)] = 0
                 cohort["active"] += 1
                 cohort["peak"] = max(cohort["peak"], cohort["active"])
+                # The memory gate reads a cohort's live count while its tunnels
+                # are held, after the last accept flush, so publish it here.
+                write_metrics(count_path, report_path)
         writer = FrameWriter(sock)
 
         def send_server_frames():

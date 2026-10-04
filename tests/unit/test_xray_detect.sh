@@ -73,12 +73,16 @@ assert_ne "an absent os-release is refused" 0 "$T_STATUS"
 
 # Equal-width numeric fields are compared lexically, not through signed shell
 # arithmetic, so values around and beyond 64-bit limits behave identically.
+# Leading zeros do not count, and a missing trailing field reads as zero.
 for _dvcase in \
     922337203685477580:922337203685477579:0 \
     999999999999999999:922337203685477580:0 \
     999999999999999999:100000000000000000:0 \
     100000000000000000:999999999999999999:1 \
-    184467440737095516:184467440737095516:0; do
+    184467440737095516:184467440737095516:0 \
+    22.04:22.04:0 24.04:22.04:0 20.04:22.04:1 3.9:3.20:1 3.22:3.20:0 \
+    022.04:22.04:0 22.004:22.4:0 22:22.0:0 22:22.04:1 22.04.1:22.04:0 \
+    3.20.0:3.20:0 13:12:0 11:12:1; do
     _dvleft=${_dvcase%%:*}
     _dvrest=${_dvcase#*:}
     _dvright=${_dvrest%%:*}
@@ -89,7 +93,14 @@ done
 
 # Malformed versions are invalid (2), never ordered. A colon inside a field used
 # to pass as a separator, so VERSION_ID=1:0 compared as a number above 22.04.
-for _dvbad in '1:0|22.04' 'a.b|3.20' '|12' '12|' '22.|22.04' '3.x|3.20'; do
+#
+# Issue #36: every field of both operands is checked before any is compared. A
+# larger leading field once decided the answer first, so 23.bad and 23. passed
+# as at least 22.04 without their later fields ever being read.
+for _dvbad in '1:0|22.04' 'a.b|3.20' '|12' '12|' '22.|22.04' '3.x|3.20' \
+    '23.bad|22.04' '23.|22.04' '23..1|22.04' '.23|22.04' '23.04.|22.04' \
+    '21.bad|22.04' '24.04|22.x' '24.04|22.' '24.04|22..04' '24.04|.22' \
+    '9|12.x' '3.21|3.20-1' '1000000000000000000.0|22.04'; do
     t_run s5_ver_ge "${_dvbad%%|*}" "${_dvbad#*|}"
     assert_eq "malformed version comparison [$_dvbad] is invalid" 2 "$T_STATUS"
 done
@@ -97,6 +108,30 @@ S5_OSRELEASE="$S5_TEST_ROOT/colon-os-release"
 printf 'ID=ubuntu\nVERSION_ID="1:0"\n' >"$S5_OSRELEASE"
 t_run s5_detect_platform
 assert_ne "a colon-bearing VERSION_ID is not a supported Ubuntu" 0 "$T_STATUS"
+
+# The same refusal through the platform-detection entrypoint: a corrupted
+# VERSION_ID whose first field clears the minimum is still not a supported
+# release, whichever family carries it and on either architecture.
+S5_OSRELEASE="$S5_TEST_ROOT/corrupt-os-release"
+while read -r _dcid _dcver _dcarch; do
+    [ -n "$_dcid" ] || continue
+    printf 'ID=%s\nVERSION_ID="%s"\n' "$_dcid" "$_dcver" >"$S5_OSRELEASE"
+    S5_ARCHNAME=$_dcarch
+    S5_OS_FAMILY=''
+    S5_INIT=''
+    t_run s5_detect_platform
+    assert_ne "$_dcid VERSION_ID $_dcver on $_dcarch is refused" 0 "$T_STATUS"
+done <<'CORRUPT'
+ubuntu 23.bad amd64
+ubuntu 24. arm64
+ubuntu 24..04 amd64
+debian 13.x amd64
+debian 13. arm64
+alpine 4..0 amd64
+alpine 3.21.bad arm64
+centos 10.x amd64
+CORRUPT
+S5_ARCHNAME=amd64
 
 # There is no default backend: without S5_INIT the artifact path and the
 # service definition are refused and named, not silently systemd.

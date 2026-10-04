@@ -22,8 +22,8 @@ for _doc in README.md README.zh-CN.md; do
             t_bad "$_doc documents $_platform"
         fi
     done
-    assert_contains "$_doc names the card address endpoint" icanhazip.com "$_doctext"
-    assert_contains "$_doc documents the card address placeholder" SERVER_IPV4 "$_doctext"
+    assert_contains "$_doc names the advertised endpoint address lookup" icanhazip.com "$_doctext"
+    assert_contains "$_doc documents the advertised endpoint placeholder" SERVER_IPV4 "$_doctext"
     assert_not_contains "$_doc does not deny the routing it describes" 'metrics, routing' "$_doctext"
     assert_not_contains "$_doc does not deny the routing it describes (zh)" 'metrics、routing' "$_doctext"
     assert_not_contains "$_doc does not claim install verifies transport" \

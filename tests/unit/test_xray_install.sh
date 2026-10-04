@@ -619,6 +619,185 @@ test_account_signal() {
     done
 }
 
+# A handled signal can land after a fresh-install step has taken effect and before
+# the step returns. Cleanup must already own what the step published, so the
+# interrupted install leaves no namespace residue: the next install would refuse
+# it and uninstall has no state to remove it by.
+s5t_window_hit() {
+    [ ! -e "$S5_TEST_ROOT/window-fired" ] || return 0
+    case "$S5T_WINDOW:$1" in
+    confdir:"$S5_SYSCONFDIR" | statedir:"$S5_STATEDIR" | config:"$S5_CFG" | \
+        unit:"$S5_SERVICE_ARTIFACT" | state:"$S5_STATE" | reload:daemon-reload | \
+        enable:enable | start:start) ;;
+    *) return 0 ;;
+    esac
+    : >"$S5_TEST_ROOT/window-fired"
+    s5t_signal_self
+}
+
+s5t_install_window() {
+    s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
+    s5_install_runtime_dependencies() { return 0; }
+    # Each double reports the pathname its command created or replaced: the
+    # last operand. Their failures return $? explicitly: under bash a bare return
+    # inside a trap handler -- cleanup calls these doubles from one -- returns the
+    # status from before the trap, so is-active's 3 would read as active.
+    mkdir() {
+        command mkdir "$@" || return $?
+        for _siw_last do :; done
+        s5t_window_hit "$_siw_last"
+    }
+    mv() {
+        command mv "$@" || return $?
+        for _siw_last do :; done
+        s5t_window_hit "$_siw_last"
+    }
+    systemctl() {
+        case "${1:-}" in
+        enable) : >"$S5_TEST_ROOT/boot-enabled" ;;
+        disable) rm -f "$S5_TEST_ROOT/boot-enabled" ;;
+        esac
+        "$S5_TEST_ROOT/bin/systemctl" "$@" || return $?
+        s5t_window_hit "${1:-}"
+    }
+    export S5T_WINDOW
+    s5_cmd_install
+}
+
+# OpenRC's boot registration, observable and interruptible like systemctl's.
+s5t_openrc_window_stub() {
+    t_stub rc-update <<'RCUPDATE'
+#!/bin/sh
+printf 'rc-update %s\n' "$*" >>"$S5_TEST_ROOT/transcript"
+case "$1" in
+add) : >"$S5_TEST_ROOT/boot-enabled" ;;
+del) rm -f "$S5_TEST_ROOT/boot-enabled" ;;
+esac
+if [ "$1:$S5T_WINDOW" = add:enable ] && [ ! -e "$S5_TEST_ROOT/window-fired" ]; then
+    : >"$S5_TEST_ROOT/window-fired"
+    kill -TERM "$PPID"
+fi
+exit 0
+RCUPDATE
+}
+
+test_install_signal_window() {
+    for _isw_case in systemd:confdir systemd:statedir systemd:config systemd:unit \
+        systemd:reload systemd:enable systemd:start systemd:state \
+        openrc:confdir openrc:unit openrc:enable; do
+        _isw_backend=${_isw_case%%:*}
+        S5T_WINDOW=${_isw_case#*:}
+        t_xray_fixture 23456
+        if [ "$_isw_backend" = openrc ]; then
+            S5_INIT=openrc
+            S5_OS_FAMILY=alpine
+            s5_select_service_artifact
+            s5t_openrc_window_stub
+        fi
+        _isw_name="$_isw_backend signal after the $S5T_WINDOW step"
+        ( s5t_install_window ) >"$S5_TEST_ROOT/window.log" 2>&1
+        _isw_status=$?
+        assert_file_exists "$_isw_name reached its window" "$S5_TEST_ROOT/window-fired"
+        assert_eq "$_isw_name exits with the signal status" 143 "$_isw_status"
+        for _isw_path in "$S5_SYSCONFDIR" "$S5_STATEDIR" "$S5_PREFIX" "$S5_SERVICE_ARTIFACT" \
+            "$S5_TEST_ROOT/user-exists" "$S5_TEST_ROOT/group-exists" \
+            "$S5_TEST_ROOT/boot-enabled" "$S5_TEST_ROOT/svc_active" "$S5_LOCKDIR"; do
+            assert_file_absent "$_isw_name leaves no residue" "$_isw_path"
+        done
+        : >>"$S5_TEST_ROOT/transcript"
+        assert_eq "$_isw_name disables at most once" 0 \
+            "$(grep -c -e 'systemctl disable' -e 'rc-update del' "$S5_TEST_ROOT/transcript" |
+                awk '{ print ($1 > 1) }')"
+        assert_not_contains "$_isw_name never restarts" restart "$(cat "$S5_TEST_ROOT/transcript")"
+        t_run s5_namespace_absent
+        assert_eq "$_isw_name leaves the namespace free" 0 "$T_STATUS"
+        if [ "$_isw_backend" = systemd ]; then
+            ( s5_install_new ) >"$S5_TEST_ROOT/reinstall.log" 2>&1
+            assert_eq "$_isw_name is followed by a successful install" 0 "$?"
+        fi
+        [ "$_isw_status" -eq 143 ] || cat "$S5_TEST_ROOT/window.log" >&2
+    done
+}
+
+# Arming cleanup early must not let a failed step claim what it did not create:
+# a name taken since the namespace check stays with its owner, while a partial
+# enable of this run's own unit is still undone.
+s5t_install_fault() {
+    s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
+    s5_install_runtime_dependencies() { return 0; }
+    case "$1" in
+    confdir-taken | statedir-taken)
+        case "$1" in confdir-taken) _sif_dir=$S5_SYSCONFDIR ;; *) _sif_dir=$S5_STATEDIR ;; esac
+        mkdir() {
+            if [ "$*" = "$_sif_dir" ]; then
+                command mkdir "$1"
+                return 1
+            fi
+            command mkdir "$@"
+        }
+        ;;
+    unit-taken)
+        mv() {
+            command mv "$@" || return $?
+            for _sif_last do :; done
+            if [ "$_sif_last" = "$S5_CFG" ]; then
+                printf 'foreign unit\n' >"$S5_SERVICE_ARTIFACT"
+            fi
+        }
+        ;;
+    partial-enable)
+        systemctl() {
+            case "${1:-}" in
+            enable)
+                : >"$S5_TEST_ROOT/boot-enabled"
+                "$S5_TEST_ROOT/bin/systemctl" "$@"
+                return 1
+                ;;
+            disable) rm -f "$S5_TEST_ROOT/boot-enabled" ;;
+            esac
+            "$S5_TEST_ROOT/bin/systemctl" "$@"
+        }
+        ;;
+    esac
+    s5_cmd_install
+}
+
+test_install_fault_ownership() {
+    for _ifo_case in confdir-taken statedir-taken unit-taken partial-enable; do
+        t_xray_fixture 23456
+        t_run s5t_install_fault "$_ifo_case"
+        assert_eq "$_ifo_case fails the install" 1 "$T_STATUS"
+        _ifo_kept=''
+        case "$_ifo_case" in
+        confdir-taken) _ifo_kept=$S5_SYSCONFDIR ;;
+        statedir-taken) _ifo_kept=$S5_STATEDIR ;;
+        unit-taken)
+            _ifo_kept=$S5_SERVICE_ARTIFACT
+            assert_eq "$_ifo_case keeps the other owner's unit unchanged" 'foreign unit' \
+                "$(cat "$S5_SERVICE_ARTIFACT" 2>/dev/null)"
+            assert_contains "$_ifo_case names the refused namespace" 'invalid state file' "$T_OUT"
+            ;;
+        partial-enable)
+            assert_contains "$_ifo_case names the failed enable" \
+                'could not enable the Xray service at boot.' "$T_OUT"
+            ;;
+        esac
+        if [ -n "$_ifo_kept" ]; then
+            assert_eq "$_ifo_case keeps the name this run did not create" present \
+                "$(if [ -e "$_ifo_kept" ]; then echo present; fi)"
+        fi
+        for _ifo_path in "$S5_SYSCONFDIR" "$S5_STATEDIR" "$S5_PREFIX" "$S5_SERVICE_ARTIFACT" \
+            "$S5_TEST_ROOT/user-exists" "$S5_TEST_ROOT/group-exists" \
+            "$S5_TEST_ROOT/boot-enabled" "$S5_LOCKDIR"; do
+            [ "$_ifo_path" != "$_ifo_kept" ] || continue
+            assert_file_absent "$_ifo_case removes what this run created" "$_ifo_path"
+        done
+        if [ -n "$_ifo_kept" ]; then rm -rf "$_ifo_kept"; fi
+        ( s5_install_new ) >"$S5_TEST_ROOT/reinstall.log" 2>&1
+        assert_eq "$_ifo_case is followed by a successful install" 0 "$?"
+    done
+}
+
 # e. The manager reloads after the unit file is gone, and whenever this run
 # created it, including when enable was never reached.
 s5t_reload_order() {
@@ -675,6 +854,6 @@ test_install_exit_handler() {
 test_sha256_unit_failure() { s5t_digest_failure_install unit; }
 test_sha256_config_install_failure() { s5t_digest_failure_install config; }
 
-SCENARIOS='account_signal account_remove_halves install_exit_handler cleanup_reload_order fresh_step_messages alpine_group_warning cleanup_stop_failure account_creation_failure account_lifecycle install openrc_logging_warning config_corrupt binary_corrupt unit_corrupt account_corrupt cleanup_temps openrc_runtime locks raw_command_cleanup raw_release_failure raw_candidate_failure raw_signal fresh_stage_failure_cleanup sha256_unit_failure sha256_config_install_failure'
+SCENARIOS='account_signal install_signal_window install_fault_ownership account_remove_halves install_exit_handler cleanup_reload_order fresh_step_messages alpine_group_warning cleanup_stop_failure account_creation_failure account_lifecycle install openrc_logging_warning config_corrupt binary_corrupt unit_corrupt account_corrupt cleanup_temps openrc_runtime locks raw_command_cleanup raw_release_failure raw_candidate_failure raw_signal fresh_stage_failure_cleanup sha256_unit_failure sha256_config_install_failure'
 t_run_scenarios install "$@"
 t_summary

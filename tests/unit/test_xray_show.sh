@@ -328,6 +328,41 @@ s5_lock_acquire() { return 0; }
 s5_lock_release() { return 0; }
 s5_state_load() { return 0; }
 s5_report_state_load() { return 0; }
+
+# SPEC 7 through the restart entrypoint: restart reads the installed account back
+# and config-tests the installed file, and a rejection reaches the operator as a
+# warning. Extraction, the config-test wrapper and the redactor stay production
+# code; the engine is a stand-in that quotes the password it reads from the
+# config, a controlled leak rather than a claim about a pinned Xray release. The
+# historical password carries every character the read-back still accepts.
+mkdir -p "$S5_SYSCONFDIR"
+cat >"$S5_CFG" <<'CFG'
+{"inbounds": [{"protocol": "mixed", "settings": {"auth": "password",
+  "accounts": [{"user": "legacy_user-1", "pass": "Legacy_pass~123.x"}],
+  "udp": false}}]}
+CFG
+_rr_bin=$S5_BIN
+S5_BIN="$S5_TEST_ROOT/xray-quoting"
+cat >"$S5_BIN" <<'XRAY'
+#!/bin/sh
+printf 'xray: config %s rejected near "pass": "%s"\n' "$4" \
+    "$(sed -n 's/.*"pass": "\([^"]*\)".*/\1/p' "$4")" >&2
+exit 23
+XRAY
+chmod 0755 "$S5_BIN"
+S5_SECRET=''
+t_run s5_cmd_restart
+assert_ne "restart refuses an installed config the engine rejects" 0 "$T_STATUS"
+assert_contains "restart keeps the engine diagnostic context" \
+    "xray: config $S5_CFG rejected near" "$T_OUT"
+assert_contains "restart shows the password as the redaction marker" \
+    '"pass": "<REDACTED>"' "$T_OUT"
+assert_not_contains "restart's engine diagnostic carries no password" \
+    'Legacy_pass~123.x' "$T_OUT"
+S5_BIN=$_rr_bin
+S5_USERNAME=alice
+S5_PASSWORD='Secret123xyz'
+
 s5_config_extract() { return 0; }
 s5_config_test() { return 0; }
 s5_svc() { return 0; }
@@ -367,12 +402,13 @@ if [ "$T_STATUS" -ne 0 ]; then printf '%s\n' "$T_OUT" >&2; fi
 t_xray_fixture 23456
 t_xray_install
 s5_precheck_host() { return 0; }; s5_precheck_tools() { return 0; }
-# systemctl is-active exits 3 for every state that is not active, so the word
-# it prints decides the mapping: inactive is stopped, failed (exit 23 or a
+# systemctl is-active exits 3 for every state that is not active, or 4 on
+# systemd 250+ when the unit is not loaded, so the word it prints decides the
+# mapping: inactive is stopped, failed (exit 23 or a
 # spent restart budget) is failed and fails the command like OpenRC's crashed,
 # and any other word, or another exit, is unverified.
 for _status_word in active:0:running inactive:3:stopped failed:3:failed \
-    activating:3:unverified deactivating:3:unverified :1:unverified; do
+    inactive:4:stopped failed:4:failed activating:4:unverified activating:3:unverified deactivating:3:unverified :1:unverified; do
     _status_case=${_status_word##*:}
     _status_rc=${_status_word#*:}
     _status_rc=${_status_rc%%:*}

@@ -35,9 +35,10 @@ for f in "$UNIT_DIR"/*.sh; do
     # Each test file runs in its own process with a clean environment so that one
     # file's S5_* variables cannot leak into the next. Two kinds are cleared:
     # the test seams production refuses outside test mode, and the operator
-    # overrides production honours on purpose (listen port, card address and
-    # port). The overrides stay legitimate in production, but a maintainer who
-    # exported one for a real install must not see it rewrite test expectations.
+    # overrides production honours on purpose (listen port, advertised endpoint
+    # address and port). The overrides stay legitimate in production, but a
+    # maintainer who exported one for a real install must not see it rewrite
+    # test expectations.
     # $SHELL_UNDER_TEST is unquoted on purpose: S5_TEST_SHELL can be a
     # multi-word command such as `busybox sh`, which must split into words.
     # shellcheck disable=SC2086
@@ -93,7 +94,7 @@ done
 # drops it silently and the run still reports green -- so "the tests pass" would
 # survive removing the test that fails. Only meaningful for a full run; a FILTER
 # is expected to select a subset. Bumping this number must be a deliberate act.
-EXPECTED_UNIT_FILES=26
+EXPECTED_UNIT_FILES=27
 if [ -z "$FILTER" ] && [ "$files" -ne "$EXPECTED_UNIT_FILES" ]; then
     bad_files=$((bad_files + 1))
     printf 'FAIL unit file count is %d, expected %d\n' \

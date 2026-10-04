@@ -209,6 +209,80 @@ test "$restarted_pid" -gt 0
 test "$restarted_pid" != "$crash_pid"
 ss -H -ltnp | grep -q "pid=$restarted_pid,"
 printf 'openrc: unsupervised-restart-ok\n'
+
+# The same supervisor loss, but with a child record that holds no pid: nothing
+# in it decides whether a supervised process survived, so restart must refuse
+# and name why, without resetting OpenRC's record or starting anything. OpenRC
+# reports a nonempty record as unsupervised (64) and may report an empty one as
+# crashed (32), so each refusal is held to whichever of the two it reports.
+# Removing the record then leaves no record at all, which restart recovers.
+child_record=/run/openrc/options/xray-socks5/child_pid
+supervisor_pid=$(cat /run/xray-socks5.pid)
+orphan_pid=$(cat "$child_record")
+test "$supervisor_pid" -gt 0
+test "$orphan_pid" -gt 0
+kill -9 "$supervisor_pid"
+kill -9 "$orphan_pid"
+lifecycle_wait_until 20 1 openrc_state_is 64 || true
+if ! openrc_state_is 64; then
+    printf 'a dead supervisor left rc-service status %s, expected 64\n' "$rc_status" >&2
+    exit 1
+fi
+for bad_record in malformed empty; do
+    case "$bad_record" in
+    malformed) bad_content=not-a-pid ;;
+    empty) bad_content='' ;;
+    esac
+    if [ -n "$bad_content" ]; then
+        printf '%s\n' "$bad_content" >"$child_record"
+    else
+        : >"$child_record"
+    fi
+    rc_status=0
+    rc-service xray-socks5 status >/dev/null 2>&1 || rc_status=$?
+    case "$rc_status" in
+    32 | 64) bad_state=$rc_status ;;
+    *)
+        printf 'a %s child record left rc-service status %s, expected 32 or 64\n' \
+            "$bad_record" "$rc_status" >&2
+        exit 1
+        ;;
+    esac
+    bad_restart=0
+    sh .github/scripts/run-socks5.sh restart \
+        "$work/answers.empty" "$work/$bad_record-record-restart.log" "$work/pass.update" "$work/pass" ||
+        bad_restart=$?
+    if [ "$bad_restart" -eq 0 ]; then
+        printf 'restart accepted a %s child record\n' "$bad_record" >&2
+        exit 1
+    fi
+    grep -qF "could not determine whether the supervised process recorded in $child_record has exited" \
+        "$work/$bad_record-record-restart.log"
+    if grep -qF 'failed to start' "$work/$bad_record-record-restart.log"; then
+        printf 'a refused restart was reported as a start failure\n' >&2
+        exit 1
+    fi
+    if ! openrc_state_is "$bad_state"; then
+        printf 'a refused restart moved rc-service status from %s to %s\n' "$bad_state" "$rc_status" >&2
+        exit 1
+    fi
+    test "$(cat "$child_record")" = "$bad_content"
+    test ! -e /run/xray-socks5.lock
+    if ss -H -ltn 2>/dev/null | grep -q ':23456 '; then
+        printf 'a refused restart left a listener on 23456\n' >&2
+        exit 1
+    fi
+    printf 'openrc: %s-child-record-refused status=%s\n' "$bad_record" "$bad_state"
+done
+rm -f "$child_record"
+sh .github/scripts/run-socks5.sh restart \
+    "$work/answers.empty" "$work/absent-record-restart.log" "$work/pass.update" "$work/pass"
+rc-service xray-socks5 status
+restarted_pid=$(cat "$child_record")
+test "$restarted_pid" -gt 0
+test "$restarted_pid" != "$orphan_pid"
+ss -H -ltnp | grep -q "pid=$restarted_pid,"
+printf 'openrc: absent-child-record-restart-ok\n'
 cp /etc/xray-socks5/config.json "$work/good.json"
 printf "{broken\n" >/etc/xray-socks5/config.json
 # First prove the real pinned Xray classifies this exact configuration as exit
@@ -305,8 +379,10 @@ sh .github/scripts/run-socks5.sh uninstall \
     "$work/answers.uninstall" "$work/uninstall-second.log" "$work/pass.update" "$work/pass"
 python3 tests/protocol/terminal_install.py \
     "$work/answers.reinstall" "$work/pass" 23456 0 >"$work/reinstall.log"
-sh .github/scripts/run-socks5.sh uninstall \
-    "$work/answers.uninstall" "$work/uninstall-reinstall.log" "$work/pass"
+# SPEC 5: an interrupted uninstall resumes only after proving the service is
+# stopped again, and still recognises its config directory once the service
+# group is gone. Its last resume writes uninstall-reinstall.log.
+sh .github/scripts/lifecycle-uninstall-recovery.sh openrc "$work"
 # The Alpine 3.22 quota-blind row runs the production writer seam with a
 # deterministic short-write injection. The focused asset suite proves that
 # statfs can report ample capacity while direct raw download writing fails and
