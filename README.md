@@ -204,7 +204,7 @@ No. UDP is disabled (`udp: false`); the inbound handles TCP CONNECT only.
 
 ### How do I uninstall the Xray SOCKS5 proxy?
 
-Run `sh socks5.sh uninstall` as root and confirm. It removes the managed installation, the service unit, and the dedicated account. The saved language preference in `/etc/xray-socks5.lang` is kept.
+Run `sh socks5.sh uninstall` as root and confirm. It removes the managed installation, the service unit, and the dedicated account. The saved language preference in `/etc/xray-socks5.lang` is kept. If uninstall is interrupted, run it again: it resumes from its recorded progress, but first stops the service again and confirms that it stopped. If it cannot confirm that, it keeps what remains and says so. Until it finishes, `restart` and update refuse to run.
 
 ## Troubleshooting
 

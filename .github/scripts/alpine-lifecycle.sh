@@ -379,8 +379,10 @@ sh .github/scripts/run-socks5.sh uninstall \
     "$work/answers.uninstall" "$work/uninstall-second.log" "$work/pass.update" "$work/pass"
 python3 tests/protocol/terminal_install.py \
     "$work/answers.reinstall" "$work/pass" 23456 0 >"$work/reinstall.log"
-sh .github/scripts/run-socks5.sh uninstall \
-    "$work/answers.uninstall" "$work/uninstall-reinstall.log" "$work/pass"
+# SPEC 5: an interrupted uninstall resumes only after proving the service is
+# stopped again, and still recognises its config directory once the service
+# group is gone. Its last resume writes uninstall-reinstall.log.
+sh .github/scripts/lifecycle-uninstall-recovery.sh openrc "$work"
 # The Alpine 3.22 quota-blind row runs the production writer seam with a
 # deterministic short-write injection. The focused asset suite proves that
 # statfs can report ample capacity while direct raw download writing fails and
