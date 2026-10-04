@@ -55,6 +55,7 @@ S5_CREATED_STATEDIR=0
 S5_CREATED_TRANSACTION=0
 S5_CREATED_BIN=0
 S5_CREATED_CFG=0
+S5_CREATED_STATE=0
 S5_CREATED_UNIT=0
 S5_UNIT_ENABLED=0
 S5_SERVICE_STARTED=0
@@ -1055,6 +1056,19 @@ s5_mkdir_parents() {
     s5_mkdir_parents "$_smkp_parent" || return 1
     mkdir "$1" || return 1
     chmod 0755 "$1"
+}
+
+# s5_mkdir_new <dir>: create a private directory that must not exist yet. Plain
+# mkdir refuses every existing name, a symlink included, so its success alone
+# proves this run created the directory. Returns 2 when nothing was created, so a
+# caller that armed cleanup beforehand disarms it, and 1 when the new directory
+# could not be made private.
+s5_mkdir_new() {
+    _smnew_parent=${1%/*}
+    [ "$_smnew_parent" != "$1" ] || _smnew_parent=.
+    s5_mkdir_parents "$_smnew_parent" || return 2
+    mkdir "$1" || return 2
+    chmod 0700 "$1" || return 1
 }
 
 s5_mkdir_private() {
@@ -2815,6 +2829,7 @@ s5_cleanup() {
         if [ "$S5_INIT" = openrc ] && [ "$_sclruntime" = 1 ]; then
             rm -f "$S5_PIDFILE" "$S5_OPENRC_OPTION_DIR/child_pid" 2>/dev/null || true
         fi
+        if [ "$S5_CREATED_STATE" = 1 ]; then rm -f "$S5_STATE" 2>/dev/null || true; fi
         if [ "$S5_CREATED_CFG" = 1 ]; then rm -f "$S5_CFG" 2>/dev/null || true; fi
         if [ "$S5_CREATED_BIN" = 1 ]; then rm -f "$S5_BIN" 2>/dev/null || true; fi
         if [ "$S5_CREATED_USER" = 1 ] || [ "$S5_CREATED_GROUP" = 1 ]; then
@@ -3190,10 +3205,18 @@ s5_install_new() {
     s5_prompt_username || return 1
     s5_prompt_password || return 1
     s5_download_engine || return 1
-    s5_mkdir_private "$S5_SYSCONFDIR" || return 1
+    # Each cleanup flag is armed before its resource appears. Armed after, a
+    # handled signal between a step's effect and its return left residue that a
+    # retry refuses as a foreign namespace and uninstall has no state to remove.
+    # Arming early is safe only for a name proven free: the directories by an
+    # exclusive mkdir, which disarms when it created nothing, and the files by the
+    # fresh directories that hold them or a re-check of the shared unit directory.
     S5_CREATED_CONFDIR=1
-    s5_mkdir_private "$S5_STATEDIR" || return 1
+    s5_mkdir_new "$S5_SYSCONFDIR"
+    case $? in 0) ;; 2) S5_CREATED_CONFDIR=0; return 1 ;; *) return 1 ;; esac
     S5_CREATED_STATEDIR=1
+    s5_mkdir_new "$S5_STATEDIR"
+    case $? in 0) ;; 2) S5_CREATED_STATEDIR=0; return 1 ;; *) return 1 ;; esac
     s5_account_create || return 1
     if [ "${S5_SKIP_OWNERSHIP:-0}" != 1 ]; then
         chown root:"$S5_SERVICE_GROUP" "$S5_SYSCONFDIR" || return 1
@@ -3204,15 +3227,23 @@ s5_install_new() {
     fi
     chmod 0755 "$S5_PREFIX" || return 1
     _sinc=$(s5_write_config_candidate) || return 1
-    mv -f "$_sinc" "$S5_CFG" || return 1
     S5_CREATED_CFG=1
-    s5_write_unit || { s5_msg_err service.unit "$S5_SERVICE_ARTIFACT"; return 1; }
+    mv -f "$_sinc" "$S5_CFG" || return 1
+    # The prompts and the download ran since the namespace check, and the unit
+    # directory is shared, so the claim waits until the name is free right now.
+    if [ -e "$S5_SERVICE_ARTIFACT" ] || [ -L "$S5_SERVICE_ARTIFACT" ]; then
+        s5_msg_err state.invalid "$S5_PROJECT"
+        return 1
+    fi
     S5_CREATED_UNIT=1
+    s5_write_unit || { s5_msg_err service.unit "$S5_SERVICE_ARTIFACT"; return 1; }
     s5_record_digest service-artifact "$S5_SERVICE_ARTIFACT" || return 1
     S5_UNIT_SHA256=$S5_RECORDED_DIGEST
     s5_svc reload || { s5_msg_err service.reload; return 1; }
-    s5_svc enable || { s5_msg_err service.enable; return 1; }
+    # A partial or interrupted enable can register this run's own unit at boot;
+    # disabling a unit that never got that far is harmless.
     S5_UNIT_ENABLED=1
+    s5_svc enable || { s5_msg_err service.enable; return 1; }
     # A failed start or a signal can still leave a managed process running.
     S5_SERVICE_STARTED=1
     s5_svc start || { s5_msg_err service.start; return 1; }
@@ -3227,6 +3258,7 @@ s5_install_new() {
     s5_verify_dataplane || return 1
     s5_record_digest config "$S5_CFG" || return 1
     S5_CONFIG_SHA256=$S5_RECORDED_DIGEST
+    S5_CREATED_STATE=1
     s5_state_write || { s5_msg_err state.write "$S5_STATE"; return 1; }
     S5_INSTALL_COMPLETE=1
     return 0
