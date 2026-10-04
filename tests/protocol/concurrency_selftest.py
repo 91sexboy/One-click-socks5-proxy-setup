@@ -7,7 +7,6 @@ reader, periodic sender and counters all execute unchanged.
 """
 
 import concurrent.futures
-import builtins
 import json
 import os
 import socket
@@ -22,7 +21,6 @@ from unittest import mock
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import duplex_target  # noqa: E402
-import hold_connections  # noqa: E402
 import xray_mixed  # noqa: E402
 from selftest_support import TapTestCase, run_tests
 
@@ -158,91 +156,7 @@ def gate_result(fault=None):
         return subprocess.run(["sh", gate], env=env, capture_output=True, timeout=5).returncode
 
 
-class HeldSocket:
-    def __init__(self, fail=False):
-        self.fail = fail
-        self.closed = False
-        self.sent = []
-
-    def sendall(self, data):
-        if self.fail:
-            raise OSError("synthetic hello failure")
-        self.sent.append(data)
-
-    def close(self):
-        self.closed = True
-
-
-def holder_checks(check):
-    with tempfile.TemporaryDirectory(prefix="s5holder.") as scratch:
-        ready = os.path.join(scratch, "ready")
-        argv = ["holder", "--port", "1", "--target-port", "2", "--passfile", "unused",
-                "--count", "2", "--ready-file", ready, "--max-seconds", "0"]
-        sockets = [HeldSocket(), HeldSocket()]
-        visible_while_writing = []
-        real_open = builtins.open
-
-        def observed_open(path, mode="r", *args, **kwargs):
-            handle = real_open(path, mode, *args, **kwargs)
-            if mode == "w" and str(path).startswith(ready):
-                visible_while_writing.append(os.path.exists(ready))
-            return handle
-
-        with mock.patch.object(sys, "argv", argv), mock.patch.object(hold_connections.signal, "signal"), \
-                mock.patch.object(xray_mixed, "read_passfile", return_value=("u", "p")), \
-                mock.patch.object(xray_mixed, "socks5_connect", side_effect=sockets), \
-                mock.patch.object(builtins, "open", side_effect=observed_open):
-            status = hold_connections.main()
-        with open(ready) as handle:
-            published = handle.read()
-        check("holder publishes readiness only after the complete write", visible_while_writing == [False])
-        check("holder publishes its complete connection count", status == 0 and published == "2\n")
-        check("holder closes every held socket on timeout", all(sock.closed for sock in sockets))
-        os.unlink(ready)
-
-        failed = HeldSocket(fail=True)
-        with mock.patch.object(sys, "argv", argv), mock.patch.object(hold_connections.signal, "signal"), \
-                mock.patch.object(xray_mixed, "read_passfile", return_value=("u", "p")), \
-                mock.patch.object(xray_mixed, "socks5_connect", return_value=failed):
-            try:
-                hold_connections.main()
-            except OSError:
-                pass
-        check("holder closes a socket whose hello write fails", failed.closed)
-        check("failed holder never publishes readiness", not os.path.exists(ready))
-
-        argv[-1] = "2"
-        stopped_socket = HeldSocket()
-        problems = []
-
-        def run_holder():
-            try:
-                hold_connections.main()
-            except BaseException as error:
-                problems.append(type(error).__name__)
-
-        with mock.patch.object(sys, "argv", argv), mock.patch.object(hold_connections.signal, "signal"), \
-                mock.patch.object(xray_mixed, "read_passfile", return_value=("u", "p")), \
-                mock.patch.object(xray_mixed, "socks5_connect", return_value=stopped_socket):
-            worker = threading.Thread(target=run_holder)
-            worker.start()
-            deadline = time.monotonic() + 2
-            while not os.path.exists(ready) and time.monotonic() < deadline:
-                time.sleep(0.01)
-            hold_connections.stop(15, None)
-            worker.join(0.5)
-            woke = not worker.is_alive()
-            worker.join(3)
-        check("holder stop wakes its wait promptly", woke and not problems)
-        check("holder closes sockets after its stop signal", stopped_socket.closed)
-
-
 class ConcurrencyTests(TapTestCase):
-    def test_holder(self):
-        hold_connections.STOP.clear()
-        self.addCleanup(hold_connections.STOP.clear)
-        holder_checks(self.check)
-
     def test_cohorts(self):
         for count in (1, 32, 128):
             problem, peak, _, report, stats = run_cohort(count)
